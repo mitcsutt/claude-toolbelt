@@ -1,0 +1,8 @@
+{
+  "name": "permissions",
+  "version": "2.0.0",
+  "description": "Logs every tool call and provides /permissions-seed, /permissions-audit, and /permissions-promote skills for turning patterns into settings.json allow rules that bypass Auto mode's classifier",
+  "author": {
+    "name": "Mitchell Sutton"
+  }
+}

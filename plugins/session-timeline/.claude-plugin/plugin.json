@@ -1,0 +1,8 @@
+{
+  "name": "session-timeline",
+  "version": "1.0.0",
+  "description": "Generates self-contained HTML timeline visualizations from Claude Code session transcripts — dark-themed, responsive, with stats, tool usage, subagent cards, and chronological event timeline",
+  "author": {
+    "name": "Mitchell Sutton"
+  }
+}

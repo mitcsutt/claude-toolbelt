@@ -1,0 +1,8 @@
+{
+  "name": "find-docs",
+  "version": "1.0.0",
+  "description": "Retrieves up-to-date technical documentation, code examples, and performs people/company research using Context7 MCP and Exa AI MCP",
+  "author": {
+    "name": "Mitchell Sutton"
+  }
+}

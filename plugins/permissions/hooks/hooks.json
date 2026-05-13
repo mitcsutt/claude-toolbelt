@@ -1,0 +1,17 @@
+{
+  "description": "Log every tool call to ~/.claude/permission-log.jsonl so /permissions-audit and /permissions-promote can analyse usage patterns alongside Auto mode.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

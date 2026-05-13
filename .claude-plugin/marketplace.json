@@ -1,0 +1,38 @@
+{
+  "name": "claude-toolbelt",
+  "owner": {
+    "name": "Mitchell Sutton"
+  },
+  "plugins": [
+    {
+      "name": "permissions",
+      "description": "Logs every tool call and provides /permissions-seed, /permissions-audit, and /permissions-promote skills for turning patterns into settings.json allow rules that bypass Auto mode's classifier",
+      "version": "2.0.0",
+      "author": {
+        "name": "Mitchell Sutton"
+      },
+      "source": "./plugins/permissions",
+      "category": "developer-tools"
+    },
+    {
+      "name": "find-docs",
+      "description": "Retrieves up-to-date technical documentation, code examples, and performs people/company research using Context7 MCP and Exa AI MCP",
+      "version": "1.0.0",
+      "author": {
+        "name": "Mitchell Sutton"
+      },
+      "source": "./plugins/find-docs",
+      "category": "documentation"
+    },
+    {
+      "name": "session-timeline",
+      "description": "Generates self-contained HTML timeline visualizations from Claude Code session transcripts — dark-themed, responsive, with stats, tool usage, subagent cards, and chronological event timeline",
+      "version": "1.0.0",
+      "author": {
+        "name": "Mitchell Sutton"
+      },
+      "source": "./plugins/session-timeline",
+      "category": "developer-tools"
+    }
+  ]
+}
