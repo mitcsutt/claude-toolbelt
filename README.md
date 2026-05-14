@@ -29,6 +29,23 @@ Add this marketplace, then install whichever plugins you want:
 /plugin install session-timeline@claude-toolbelt
 ```
 
+## Shared rules (`shared-rules.md`)
+
+`shared-rules.md` is a portable set of agent-behavior rules (voice, verification, minimal-diff, git, bash, etc.) that I import into my user-level `CLAUDE.md` so every project picks them up.
+
+Claude Code resolves `@<path>` lines in `CLAUDE.md` as file imports — the referenced file's contents are loaded into the agent's context just as if they lived inline.
+
+1. Clone this repo somewhere stable (e.g. `~/Documents/projects/claude-toolbelt`).
+2. Add one line to `~/.claude/CLAUDE.md`:
+
+   ```md
+   @~/Documents/projects/claude-toolbelt/shared-rules.md
+   ```
+
+3. Restart Claude Code (or start a new session). The rules now apply to every project.
+
+Per-project override: drop the same `@…` line into a repo's `./CLAUDE.md` to pull the rules in only for that repo, or paired with project-specific additions.
+
 ## Install (statusline)
 
 The statusline lives as a script, not a plugin — Claude Code's `statusLine` config is global, not plugin-level.
