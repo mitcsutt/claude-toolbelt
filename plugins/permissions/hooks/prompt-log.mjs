@@ -11,7 +11,7 @@ const raw = Buffer.concat(chunks).toString("utf-8");
 
 try {
   const input = JSON.parse(raw);
-  const prompt = String(input.user_prompt ?? "");
+  const prompt = String(input.prompt ?? input.user_prompt ?? "");
   const excerpt = prompt.length > EXCERPT_LEN
     ? prompt.slice(0, EXCERPT_LEN) + "…"
     : prompt;
