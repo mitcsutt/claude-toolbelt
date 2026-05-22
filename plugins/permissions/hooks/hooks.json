@@ -1,5 +1,5 @@
 {
-  "description": "Log every tool call to ~/.claude/permission-log.jsonl so /permissions-audit and /permissions-promote can analyse usage patterns alongside Auto mode.",
+  "description": "PreToolUse: log every tool call. PostToolUse(Bash): detect sandbox/SSH/fs denials.",
   "hooks": {
     "PreToolUse": [
       {
@@ -8,6 +8,18 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/sandbox-watch.mjs",
             "timeout": 5
           }
         ]
