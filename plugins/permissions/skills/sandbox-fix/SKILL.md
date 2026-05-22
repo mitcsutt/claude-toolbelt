@@ -1,6 +1,6 @@
 ---
 name: sandbox-fix
-description: This skill should be used when the user asks to "fix sandbox restrictions", "fix permission denied errors", "stop sandbox blocking", "investigate sandbox denials", "review sandbox log", "audit sandbox", "permissions sandbox", "why is sandbox blocking X", or says "/sandbox-fix". Reads ~/.claude/sandbox-denials.jsonl (written by this plugin's PostToolUse hook), groups by signature + matched_path, recommends targeted fixes — either adding a path to permissions.sandbox.filesystem.allowWrite, adding a command head to permissions.sandbox.excludedCommands, or pre-setting dangerouslyDisableSandbox for known remote-network commands.
+description: This skill should be used when the user asks to "fix sandbox restrictions", "fix permission denied errors", "stop sandbox blocking", "investigate sandbox denials", "review sandbox log", "audit sandbox", "permissions sandbox", "why is sandbox blocking X", "EPERM operation not permitted", or says "/sandbox-fix". Reads ~/.claude/sandbox-denials.jsonl (written by this plugin's PostToolUse hook), groups by signature + matched_path, recommends targeted fixes — either adding a path to permissions.sandbox.filesystem.allowWrite, adding a command head to permissions.sandbox.excludedCommands, or pre-setting dangerouslyDisableSandbox for known remote-network commands.
 ---
 
 # Sandbox Denial Triage and Fix
