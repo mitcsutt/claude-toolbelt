@@ -24,6 +24,26 @@ EOF
   const out = sanitizeDetail(cmd);
   assert.ok(out.includes("<<'EOF' …"));
   assert.ok(!out.includes("multi\nline"));
+  assert.ok(out.startsWith("gh pr create"));
+});
+
+test("strips unquoted uppercase heredoc body (<<EOF...EOF)", () => {
+  const cmd = `cat <<EOF
+body
+EOF`;
+  const out = sanitizeDetail(cmd);
+  assert.ok(out.includes("<<'EOF' …"));
+  assert.ok(!out.includes("body"));
+});
+
+test("strips lowercase heredoc body (<<end...end)", () => {
+  const cmd = `ruby -e "puts <<end
+hello
+end
+"`;
+  const out = sanitizeDetail(cmd);
+  assert.ok(out.includes("<<'end' …"));
+  assert.ok(!out.includes("hello"));
 });
 
 test("collapses multi-line bash scripts to first non-blank line + marker", () => {
