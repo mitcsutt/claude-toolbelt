@@ -1,5 +1,5 @@
 {
-  "description": "PreToolUse: log every tool call. PostToolUse(Bash): detect sandbox/SSH/fs denials.",
+  "description": "PreToolUse: log every tool call. PostToolUse(Bash): detect sandbox/SSH/fs denials. UserPromptSubmit: correlation log.",
   "hooks": {
     "PreToolUse": [
       {
@@ -20,6 +20,18 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/sandbox-watch.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/prompt-log.mjs",
             "timeout": 5
           }
         ]
