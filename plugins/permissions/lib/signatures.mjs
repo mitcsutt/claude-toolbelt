@@ -17,6 +17,7 @@ export const SIGNATURES = [
   { id: "fs-eperm-claude-dir",  re: /EPERM:[^\n]*'[^']*\/\.claude\/(agents|skills|worktrees)[^']*'/,            category: "fs-perm",  fix: "claude-sandbox-allowwrite" },
   { id: "fs-eperm-git-dir",     re: /EPERM:[^\n]*'[^']*\/\.git\/[^']*'/,                                        category: "fs-perm",  fix: "claude-sandbox-allowwrite" },
   { id: "fs-eperm-claude-settings", re: /EPERM:[^\n]*'[^']*\/\.claude\/settings\.json'/,                        category: "fs-perm",  fix: "claude-sandbox-allowwrite" },
+  { id: "coreutil-permission-denied", re: /^(touch|mkdir|cp|mv|rm|ln|chmod|chown): [^\n]+: Permission denied/m, category: "fs-perm",  fix: "claude-sandbox-allowwrite" },
 ];
 
 export function matchSignature(text) {
