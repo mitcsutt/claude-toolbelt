@@ -134,3 +134,16 @@ test("Bash(npm run:*) does not match plain npm install", () => {
 test("matching is case-sensitive", () => {
   assert.equal(matchRule("Bash(Git:*)", { tool: "Bash", detail: "git status" }), false);
 });
+
+test("Bash(git push --force*) matches git push --force-with-lease", () => {
+  assert.equal(matchRule("Bash(git push --force*)", { tool: "Bash", detail: "git push --force-with-lease" }), true);
+});
+
+test("Bash(git push --force*) matches bare git push --force", () => {
+  assert.equal(matchRule("Bash(git push --force*)", { tool: "Bash", detail: "git push --force" }), true);
+});
+
+test("Read(**/.env) matches nested path but not bare .env", () => {
+  assert.equal(matchRule("Read(**/.env)", { tool: "Read", detail: "foo/bar/.env" }), true);
+  assert.equal(matchRule("Read(**/.env)", { tool: "Read", detail: ".env" }), false);
+});
