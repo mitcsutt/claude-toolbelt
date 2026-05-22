@@ -18,6 +18,8 @@ const cases = [
   ["unable to talk to your watchman on /tmp/watchman-state/sock", "_cosmetic_watchman"],
   ["EPERM: operation not permitted, open '/Users/m/proj/.git/config'", "fs-eperm-git-dir"],
   ["EPERM: operation not permitted, open '/Users/m/.claude/settings.json'", "fs-eperm-claude-settings"],
+  ["touch: /Users/m/blocked: Permission denied", "coreutil-permission-denied"],
+  ["mkdir: /opt/blocked: Permission denied", "coreutil-permission-denied"],
   ["normal compiler output mentioning permission denied for some fixture", null],
 ];
 
