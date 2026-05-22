@@ -25,7 +25,7 @@ test("returns null when stderr matches only a cosmetic suppressor", () => {
 test("tags macos-posix when command is in excludedCommands list", () => {
   const r = classifyDenial({
     command: "git push origin main",
-    stderr: "Host key verification failed.\nCould not read from remote repository.",
+    stderr: "Host key verification failed.",
     excludedCommands: ["git", "gh", "pnpm", "npx"],
   });
   assert.equal(r.signature, "ssh-host-key");
@@ -49,4 +49,18 @@ test("returns null when stderr does not match any signature", () => {
     excludedCommands: [],
   });
   assert.equal(r, null);
+});
+
+test("returns null when called with no args", () => {
+  assert.equal(classifyDenial(), null);
+});
+
+test("strips lowercase env-var prefix when computing command_head", () => {
+  const r = classifyDenial({
+    command: "tag=v1.0 mode=dev gh release create",
+    stderr: "Host key verification failed.",
+    excludedCommands: ["gh"],
+  });
+  assert.equal(r.command_head, "gh");
+  assert.equal(r.category, "macos-posix");
 });
