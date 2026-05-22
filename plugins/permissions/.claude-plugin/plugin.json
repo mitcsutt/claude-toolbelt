@@ -1,6 +1,6 @@
 {
   "name": "permissions",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Logs tool calls + sandbox denials + user prompts; provides /permissions-seed, /permissions-audit, /permissions-promote, /sandbox-fix, /permissions-lint, and /permissions-bootstrap-project for tuning settings.json against real usage and recovering from sandbox restrictions",
   "author": {
     "name": "Mitchell Sutton"
