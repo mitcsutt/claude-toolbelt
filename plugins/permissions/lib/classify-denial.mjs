@@ -3,11 +3,11 @@ import { matchSignature } from "./signatures.mjs";
 const PATH_RE = /'([^']+)'/;
 
 function commandHead(cmd) {
-  const stripped = (cmd ?? "").replace(/^([A-Z_]+=[^\s]+\s+)+/, "");
+  const stripped = (cmd ?? "").replace(/^([A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)+/, "");
   return stripped.split(/\s+/)[0] ?? "";
 }
 
-export function classifyDenial({ command, stderr, excludedCommands = [] }) {
+export function classifyDenial({ command, stderr, excludedCommands = [] } = {}) {
   const sig = matchSignature(stderr);
   if (!sig || sig.suppress) return null;
 
