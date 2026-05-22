@@ -83,7 +83,30 @@ Top classifier hits (by frequency):
 Run /permissions-promote to turn the top entries into allow rules.
 ```
 
-### 5. Optional deeper analyses
+### 5. Deny-rule effectiveness check
+
+Surface deny rules that the log shows tool calls slipping past — either because the rule post-dates the matches or because an ask-rule has been silently auto-collapsed.
+
+Iterate through every `permissions.deny` rule (and every `permissions.ask` rule when the user has `skipAutoPermissionPrompt: true` in settings — those rules functionally behave like allow in that case and should be included in this scan). For each, scan the permission log for entries the rule would match. Use the matcher semantics described in `${CLAUDE_PLUGIN_ROOT}/references/rule-syntax.md` (implemented by `${CLAUDE_PLUGIN_ROOT}/lib/rule-matcher.mjs`) — do not restate them here.
+
+Group log matches by deny-rule. For each rule with matches, report the count, the timestamp range, a sample `detail`, and a reason hypothesis. Example shape:
+
+```
+Deny rules with bypass events:
+  Bash(eval:*)            2 matches (2026-05-12 → 2026-05-20)
+    Sample: eval "$(apdev env)" && docker compose exec -T mysql8.0 …
+    Reason check: rule added after 2026-05-20? confirm with user.
+  Bash(rm -rf *) [ask]   37 matches
+    Sample: rm -rf .lostpixel/current .lostpixel/difference
+    Reason: ask rule + skipAutoPermissionPrompt:true → silent allow.
+```
+
+Flag two failure modes:
+
+1. **Matcher syntax suspicion** — if a deny rule has documented matches in the log AND the matcher is supposed to catch them per `references/rule-syntax.md`, the rule may have been added after the matching calls were logged. Surface the timestamp range of the matches and ask the user whether the rule was recently introduced. Genuine matcher bugs should be reported to the Claude Code team rather than worked around in this skill.
+2. **Ask-rule auto-collapse** — when `skipAutoPermissionPrompt: true` is in settings and the matching rule is in `permissions.ask`, the prompt is suppressed and the call runs. Quote the exact counts (e.g. 37 `rm -rf` calls under the audit) so the user can see the silent-allow exposure.
+
+### 6. Optional deeper analyses
 
 Offer these when the user asks for more detail or "deep audit":
 
