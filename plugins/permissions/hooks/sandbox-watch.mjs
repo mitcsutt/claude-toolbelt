@@ -26,11 +26,11 @@ try {
 
   const command = input.tool_input?.command ?? "";
   const result = input.tool_response ?? input.tool_result ?? {};
-  const stderr = String(result.stderr ?? "") + "\n" + String(result.stdout ?? "");
+  const output = String(result.stderr ?? "") + "\n" + String(result.stdout ?? "");
 
   const denial = classifyDenial({
     command,
-    stderr,
+    stderr: output,
     excludedCommands: loadExcludedCommands(),
   });
   if (!denial) process.exit(0);
