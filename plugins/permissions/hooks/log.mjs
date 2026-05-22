@@ -1,5 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname } from "node:path";
+import { sanitizeDetail } from "../lib/detail-sanitize.mjs";
 
 const LOG_PATH = `${process.env.HOME}/.claude/permission-log.jsonl`;
 
@@ -12,17 +14,23 @@ try {
   const toolName = input.tool_name ?? "unknown";
   const toolInput = input.tool_input ?? {};
 
-  let detail = "";
+  let rawDetail = "";
   let sandboxDisabled;
 
   if (toolName === "Bash") {
-    detail = typeof toolInput.command === "string" ? toolInput.command : "";
+    rawDetail = typeof toolInput.command === "string" ? toolInput.command : "";
     sandboxDisabled = toolInput.dangerouslyDisableSandbox === true;
   } else if (toolName === "Read" || toolName === "Write" || toolName === "Edit") {
-    detail = typeof toolInput.file_path === "string" ? toolInput.file_path : "";
+    rawDetail = typeof toolInput.file_path === "string" ? toolInput.file_path : "";
   } else {
-    detail = Object.keys(toolInput).slice(0, 3).join(", ");
+    rawDetail = Object.keys(toolInput).slice(0, 3).join(", ");
   }
+
+  const detail = sanitizeDetail(rawDetail);
+  const detailSha =
+    rawDetail && rawDetail !== detail
+      ? createHash("sha1").update(rawDetail).digest("hex").slice(0, 12)
+      : undefined;
 
   const entry = {
     timestamp: new Date().toISOString(),
@@ -31,6 +39,7 @@ try {
     detail,
     cwd: input.cwd ?? "",
   };
+  if (detailSha) entry.detail_sha = detailSha;
   if (sandboxDisabled !== undefined) entry.sandbox_disabled = sandboxDisabled;
 
   const dir = dirname(LOG_PATH);
