@@ -69,9 +69,12 @@ Turns the top classifier hitters into narrow allow rules in `settings.json` afte
 - `timestamp` — ISO 8601 UTC
 - `session_id` — Claude Code session id, for grouping
 - `tool` — tool name as reported by Claude Code (`Bash`, `Read`, `mcp__...`, etc.)
-- `detail` — for `Bash`, the command string; for `Read`/`Write`/`Edit`, the file path; for other tools, the first few input keys
+- `detail` — for `Bash`, the command string; for `Read`/`Write`/`Edit`, the file path; for other tools, the first few input keys. Sanitized before write: heredoc bodies replaced with `<<'TAG' …`, multi-line scripts collapsed to the first line plus `…(+N lines)`, and the result capped at 200 chars with a trailing `…`.
+- `detail_sha` — optional 12-char SHA-1 hex prefix of the raw, unsanitized detail. Present only when sanitization changed the value. Lets you correlate elided log entries that share the same raw command — for example, recognising that two truncated `gh pr create …` lines refer to the same body without storing the body.
 - `cwd` — working directory at the time of the call
 - `sandbox_disabled` — only present for `Bash`; `true` when the call used `dangerouslyDisableSandbox`
+
+To see the full unsanitized command, open the session's transcript under `~/.claude/projects/<cwd-flattened>/<session_id>.jsonl`.
 
 ## References
 
