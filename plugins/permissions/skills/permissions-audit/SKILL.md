@@ -23,6 +23,7 @@ The goal of `/permissions-audit` is to spot step-3 patterns that could be moved 
 | `~/.claude/settings.json` | Global user settings, including `permissions.allow`, `permissions.deny`, `permissions.ask`. |
 | `<cwd>/.claude/settings.json` | Project settings, if present. Merged on top of global. |
 | `<cwd>/.claude/settings.local.json` | Gitignored local overrides, if present. |
+| `~/.claude/prompt-log.jsonl` | Optional: UserPromptSubmit excerpts for the per-prompt analysis (see step 5). Missing is fine. |
 
 If the log file does not exist, report: "No tool call log found yet — the plugin's PreToolUse hook may not have fired. Confirm the plugin is enabled in settings.json and run a few commands."
 
@@ -91,6 +92,7 @@ Offer these when the user asks for more detail or "deep audit":
 - **Dead allow rules**: allow rules that never matched any log entry (candidates for removal to keep the config tidy).
 - **Per-cwd breakdown**: for users who want to know which project is driving classifier calls, group `classifier_hit` by `cwd`.
 - **Trend**: daily counts of `classifier_hit` over the log's date range. A downward trend after `/permissions-promote` runs validates the workflow.
+- **Per-prompt classifier load**: when `~/.claude/prompt-log.jsonl` exists (written by this plugin's UserPromptSubmit hook), for every session with more than 10 classifier-hit entries, join the session's `classifier_hit` bucket with its `prompt_excerpt` from the prompt log (match on `session_id`, take the most recent prompt prior to the tool call timestamp). Surface the top 5 prompts whose downstream tool bursts drive the largest classifier load — answers "which user requests are paying for the classifier?". If the prompt log is missing, skip this section silently.
 
 ## Reference material
 
