@@ -15,6 +15,9 @@ const cases = [
   ["EPERM: operation not permitted, bind 0.0.0.0:24678", "_cosmetic_vite_bind"],
   ["failed to delete '.claude/worktrees/x': Operation not permitted", "git-worktree-delete"],
   ["unable to unlink old 'a': Operation not permitted", "git-unlink"],
+  ["unable to talk to your watchman on /tmp/watchman-state/sock", "_cosmetic_watchman"],
+  ["EPERM: operation not permitted, open '/Users/m/proj/.git/config'", "fs-eperm-git-dir"],
+  ["EPERM: operation not permitted, open '/Users/m/.claude/settings.json'", "fs-eperm-claude-settings"],
   ["normal compiler output mentioning permission denied for some fixture", null],
 ];
 
