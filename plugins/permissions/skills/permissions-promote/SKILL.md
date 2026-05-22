@@ -15,6 +15,28 @@ The target file for writes is a settings file — not the old `rules/default.yam
 
 ## Workflow
 
+### 0. Pre-flight: dedup existing allow list
+
+Before deriving new promotions, scan the target settings file's existing `permissions.allow` for duplicates and subsumed rules. Use `${CLAUDE_PLUGIN_ROOT}/lib/rule-matcher.mjs` matcher semantics:
+
+- **Duplicate**: same rule string appears twice (string-equality after trim).
+- **Subsumed**: rule X is fully covered by another rule Y in the same bucket — that is, every entry in `~/.claude/permission-log.jsonl` that matches X also matches Y, AND Y matches at least one additional log entry that X does not. Treat MCP rule wildcards (`mcp__server__*`) as superset-of more specific MCP tool-name rules.
+
+If duplicates or subsumptions are found, present them with the proposed removal and offer:
+
+```
+Pre-flight: 3 redundant rules in ~/.claude/settings.json
+  1. Bash(git status:*)      → covered by Bash(git:*)           (drop)
+  2. mcp__plugin_buildkite_buildkite__list_builds → covered by mcp__plugin_buildkite_buildkite-* (drop)
+  3. Bash(npm:*)              ← duplicate (drop second occurrence)
+
+Clean these before promoting new rules? (yes / skip / open /permissions-lint)
+```
+
+If the user says `open /permissions-lint`, exit and tell them to invoke `/permissions-lint` directly — do not perform the deeper lint (subsumption against all buckets, conflicts, zero-match) in this pre-flight; this pre-flight only covers the duplicate + same-bucket subsumption cases relevant to "don't promote a duplicate".
+
+If the user says `yes`, apply the drops using the same settings.json safety contract as step 7 of this skill (parse-or-stop, mutate only `permissions.allow`, preserve key order, diff preview, re-read before write). If `skip`, continue to step 1 unchanged.
+
 ### 1. Read the log
 
 Load `~/.claude/permission-log.jsonl`. If missing or empty, report: "No log data yet. The PreToolUse hook hasn't captured any calls — confirm the plugin is enabled and run a few commands first."
