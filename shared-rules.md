@@ -79,6 +79,7 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 - Creating PR without review time → Draft PR. Draft PRs default unless told otherwise
 - Working on PR user referenced: local branch may not match PR's remote head ref (e.g. `gh pr checkout 3074` creates `pr-3074` even when PR branch is `ENG-X-foo`). Before commit, compare `git branch --show-current` to `gh pr view <num> --json headRefName`. Differ → ask which to commit on
 - "Rebase onto master" / "merge into branch X" ≠ consent to push. "I'll test it first" = explicit anti-consent. Push only when user says push
+- **Before `gh pr create`, find and use the repo's PR template.** Check `.github/PULL_REQUEST_TEMPLATE.md`, `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/*.md`, `docs/PULL_REQUEST_TEMPLATE.md`, repo-root `PULL_REQUEST_TEMPLATE.md`. Found → fill every section, check boxes only when clearly satisfied, leave unverified ones unchecked. Not found → fall back to `## Summary` / `## Test plan` default. The default system-prompt PR format is the fallback, not the default — always look for a template first.
 
 ## Before fixing a "broken" / "flaky" / "failing" thing
 
