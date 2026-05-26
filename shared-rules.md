@@ -81,6 +81,10 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 - "Rebase onto master" / "merge into branch X" ≠ consent to push. "I'll test it first" = explicit anti-consent. Push only when user says push
 - **Before `gh pr create`, find and use the repo's PR template.** Check `.github/PULL_REQUEST_TEMPLATE.md`, `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/*.md`, `docs/PULL_REQUEST_TEMPLATE.md`, repo-root `PULL_REQUEST_TEMPLATE.md`. Found → fill every section, check boxes only when clearly satisfied, leave unverified ones unchecked. Not found → fall back to `## Summary` / `## Test plan` default. The default system-prompt PR format is the fallback, not the default — always look for a template first.
 
+## Worktree paths in messages
+
+- **Surface absolute worktree paths, not main-repo or relative paths.** When cwd is a worktree (e.g. `~/Documents/projects/<repo>/.claude/worktrees/<name>/`), reference files as `/Users/<me>/Documents/projects/<repo>/.claude/worktrees/<name>/path/to/foo.md` — not the main-repo path and not a relative path. Relative paths and main-repo paths break ctrl-click navigation in the terminal when cwd is the worktree
+
 ## Before fixing a "broken" / "flaky" / "failing" thing
 
 User reports broken → **verify world's current state before forming theory.** Your branch may be stale; someone may already be on it.
