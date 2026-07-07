@@ -187,21 +187,29 @@ Limits: tick_timeout=1200
 
 
 class TestParseQuota(unittest.TestCase):
-    def test_utilization(self):
+    def test_pending_reset(self):
+        # A future resetsAt is surfaced (drives the live countdown); the label
+        # comes from rateLimitType. utilization/pct is not part of the dashboard
+        # quota contract — the terminal header shows %, the web card shows the
+        # reset countdown / "within limits".
         q = serve.parse_quota(
-            {"utilization": 0.9, "resetsAt": 2000, "rateLimitType": "five_hour"},
-            now=1000)
+            {"resetsAt": 2000, "rateLimitType": "five_hour"}, now=1000)
         self.assertEqual(q["label"], "5h")
-        self.assertEqual(q["pct"], 90)
+        self.assertEqual(q["type"], "five_hour")
         self.assertEqual(q["resets_at"], 2000)
 
     def test_weekly_label(self):
         q = serve.parse_quota({"utilization": 0.1, "rateLimitType": "weekly"}, now=0)
         self.assertEqual(q["label"], "wk")
 
-    def test_none_without_utilization(self):
-        self.assertIsNone(serve.parse_quota({}, now=0))
+    def test_none_only_when_no_file(self):
+        # No ratelimit.json -> _read_json returns None -> parse_quota returns None
+        # (renders "—"). A present-but-clear object is a "within limits" dict,
+        # not None: resets_at is None and the label falls back to "quota".
         self.assertIsNone(serve.parse_quota(None, now=0))
+        q = serve.parse_quota({}, now=0)
+        self.assertIsNone(q["resets_at"])
+        self.assertEqual(q["label"], "quota")
 
 
 class TestParseConfig(unittest.TestCase):
@@ -312,17 +320,19 @@ class TestDeriveCurrent(unittest.TestCase):
     def test_pipeline_states(self):
         evs, _ = serve.tail_events_from_text(EVENTS_SAMPLE)
         pipe = serve.derive_pipeline(evs)
-        order = [p["role"] for p in pipe]
-        states = {p["role"]: p["state"] for p in pipe}
-        # Roles are discovered from the stream, in handoff order — the
-        # orchestrator spine first, then each dispatched subagent.
-        self.assertEqual(order, ["orchestrator", "Scout", "Worker"])
-        self.assertEqual(states["orchestrator"], "done")  # handed off to a subagent
-        self.assertEqual(states["Scout"], "done")         # role_end seen
-        self.assertEqual(states["Worker"], "active")      # role_start, no role_end
+        # The pipeline is a now-playing tree: the orchestrator spine is the
+        # parent, dispatched subagents are children in handoff order, and the
+        # single currently-working actor is `active`.
+        self.assertEqual(pipe["role"], "orchestrator")
+        self.assertEqual(pipe["state"], "done")             # handed off to a subagent
+        self.assertEqual(pipe["active"]["role"], "Worker")  # most recent role_start
+        child_states = {c["role"]: c["state"] for c in pipe["children"]}
+        self.assertEqual([c["role"] for c in pipe["children"]], ["Scout", "Worker"])
+        self.assertEqual(child_states["Scout"], "done")     # role_end seen
+        self.assertEqual(child_states["Worker"], "active")  # role_start, no role_end
         # Never-dispatched roles are NOT invented — no fixed taxonomy.
-        self.assertNotIn("Planner", states)
-        self.assertNotIn("Evaluator", states)
+        self.assertNotIn("Planner", child_states)
+        self.assertNotIn("Evaluator", child_states)
 
     def test_pipeline_orchestrator_only_phase(self):
         # Early in a tick the spine works alone before dispatching any subagent;
@@ -333,8 +343,11 @@ class TestDeriveCurrent(unittest.TestCase):
             '{"t":3,"type":"tool","role":"orchestrator","name":"Bash","count":2}',
         ]) + "\n")
         pipe = serve.derive_pipeline(evs)
-        self.assertEqual([p["role"] for p in pipe], ["orchestrator"])
-        self.assertEqual(pipe[0]["state"], "active")
+        # Spine works alone: parent is the active node, no children yet.
+        self.assertEqual(pipe["role"], "orchestrator")
+        self.assertEqual(pipe["state"], "active")
+        self.assertEqual(pipe["active"]["role"], "orchestrator")
+        self.assertEqual(pipe["children"], [])
 
     def test_pipeline_roles_are_opaque_strings(self):
         # The role identifiers are whatever the provider's stream emits (here
@@ -350,11 +363,12 @@ class TestDeriveCurrent(unittest.TestCase):
             '{"t":8,"type":"tool","role":"opus","name":"Bash","count":3}',
         ]) + "\n")
         pipe = serve.derive_pipeline(evs)
-        order = [p["role"] for p in pipe]
-        states = {p["role"]: p["state"] for p in pipe}
-        self.assertEqual(order, ["orchestrator", "sonnet", "opus"])
-        self.assertEqual(states["sonnet"], "done")
-        self.assertEqual(states["opus"], "active")
+        child_states = {c["role"]: c["state"] for c in pipe["children"]}
+        self.assertEqual(pipe["role"], "orchestrator")
+        self.assertEqual([c["role"] for c in pipe["children"]], ["sonnet", "opus"])
+        self.assertEqual(child_states["sonnet"], "done")
+        self.assertEqual(child_states["opus"], "active")
+        self.assertEqual(pipe["active"]["role"], "opus")
 
 
 class TestDetectLoopStatus(unittest.TestCase):
@@ -432,7 +446,7 @@ class TestBuildSnapshot(unittest.TestCase):
         self.assertEqual(snap["loop"]["status"], "running")
         self.assertEqual(snap["loop"]["tick"], 7)               # continuous tick from events
         self.assertEqual(snap["current"]["role"], "Worker")     # from events, not run.log
-        self.assertEqual(snap["pipeline"][2]["role"], "Worker")
+        self.assertEqual(snap["pipeline"]["active"]["role"], "Worker")
         self.assertIn("per_task", snap["usage"])
         # PLAN_SAMPLE: Segment A (2/4 done -> holds in-progress task -> current),
         # Segment B (0/2 done, after current is marked -> future). Mirrors TestRoadmap.
