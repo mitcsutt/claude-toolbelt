@@ -9,7 +9,7 @@ Auto mode already does AI-based permission evaluation, prompt-injection defence,
 - Keep a persistent, machine-readable record of every tool call on your machine.
 - Tell you which patterns are hitting the classifier every time (costing tokens) instead of being short-circuited by an allow rule.
 
-This plugin fills that gap. It is intentionally small — three hooks, six skills, some reference docs.
+This plugin fills that gap. It is intentionally small — three hooks, seven skills, some reference docs.
 
 ## What it does
 
@@ -27,6 +27,7 @@ This plugin fills that gap. It is intentionally small — three hooks, six skill
 7. **`/sandbox-fix`** — reads `sandbox-denials.jsonl`, groups by signature + `matched_path`, and recommends targeted fixes: add the path to `permissions.sandbox.filesystem.allowWrite`, add the command head to `excludedCommands`, or pre-set `dangerouslyDisableSandbox` for the call site.
 8. **`/permissions-lint`** — scans `settings.json` for matcher-syntax pitfalls: too-narrow `Bash(cmd)` rules that never match because tool calls carry arguments, allow rules subsumed by broader rules, allow/deny conflicts, and rules with zero matches in the log.
 9. **`/permissions-bootstrap-project`** — filters the log to entries from the current project root and proposes project-local rules (committed in `.claude/settings.json` or gitignored in `.claude/settings.local.json`).
+10. **`/permissions-advisor`** — the prospective counterpart to the log-based skills: given a task (or an explicit command list) it infers the commands that task will need and checks them against your `settings.json` allow-list, emitting an advisory report of gaps. Read-only — never writes settings, and needs no log. Handy as a pre-flight gate before dispatching a subagent or running multi-step bash work.
 
 That is the whole plugin.
 

@@ -13,8 +13,9 @@ Contrast with v1: v1 ran one long-lived in-session agent that self-scheduled wit
   `superpowers:test-driven-development`. Install it before running a loop.
 - **postmortem** (required for loop close-out) — `/agent-loop-postmortem` wraps
   `/postmortem`. Bundled in claude-toolbelt; install it from the same marketplace.
-- **permission-advisor** (recommended) — an advisory pre-dispatch permission check
-  used during setup. Bundled in claude-toolbelt; setup degrades gracefully without it.
+- **permissions** plugin (recommended) — provides `/permissions-advisor`, an advisory
+  pre-dispatch permission check used during setup. Available in claude-toolbelt; setup
+  degrades gracefully without it.
 - **python3** (for the dashboard) and **coreutils** (`gtimeout` for the per-tick
   timeout on macOS) — see Safety posture.
 

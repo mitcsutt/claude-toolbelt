@@ -8,12 +8,11 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 
 | Plugin             | What it does                                                                                                                                  |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `permissions`      | Logs every tool call and adds `/permissions-seed`, `/permissions-audit`, `/permissions-promote` skills to turn patterns into allow rules that bypass Auto-mode classifier. |
+| `permissions`      | Logs every tool call and adds `/permissions-seed`, `/permissions-audit`, `/permissions-promote`, `/permissions-advisor` skills to turn patterns into allow rules that bypass Auto-mode classifier (plus a prospective pre-flight command check). |
 | `find-docs`        | Pulls fresh library docs, code examples, and does people/company research via Context7 and Exa MCPs.                                          |
 | `session-timeline` | Generates a self-contained HTML visualization of a Claude Code session — stats, tool usage, subagent cards, chronological timeline.            |
-| `agent-loop`         | Autonomous coding loop for long-running multi-task work — a bash harness runs a fresh headless tick per task (OS-level context reset), with sprint contracts, blocker taxonomy, and a live browser dashboard. Requires `superpowers`; bundles `postmortem` + `permission-advisor`. |
+| `agent-loop`         | Autonomous coding loop for long-running multi-task work — a bash harness runs a fresh headless tick per task (OS-level context reset), with sprint contracts, blocker taxonomy, and a live browser dashboard. Requires `superpowers`; bundles `postmortem` and uses the `permissions` plugin's `/permissions-advisor`. |
 | `postmortem`         | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
-| `permission-advisor` | Advisory permission report — compares the commands a task needs against your `settings.json` allow-lists and surfaces gaps; never edits settings. |
 
 ### Scripts
 
@@ -32,7 +31,6 @@ Add this marketplace, then install whichever plugins you want:
 /plugin install session-timeline@claude-toolbelt
 /plugin install agent-loop@claude-toolbelt
 /plugin install postmortem@claude-toolbelt
-/plugin install permission-advisor@claude-toolbelt
 ```
 
 ## Shared rules (`shared-rules.md`)
@@ -86,6 +84,7 @@ The included skills help you *generate* those rules from real session activity:
 - `/permissions-seed` — propose new rules from recent tool calls
 - `/permissions-audit` — show which rules fired, which were bypassed
 - `/permissions-promote` — promote a cached decision to a permanent rule
+- `/permissions-advisor` — prospective pre-flight: infer the commands a task will need and check them against your allow-list (read-only, never writes)
 
 ### `find-docs`
 
