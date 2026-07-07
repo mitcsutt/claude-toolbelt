@@ -1,0 +1,17 @@
+{
+  "description": "Optional PreToolUse hook on Task — surfaces a reminder to invoke /permission-advisor before dispatching subagents. Non-blocking (always exits 0).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse-task.sh",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
