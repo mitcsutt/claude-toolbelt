@@ -1,6 +1,6 @@
 ---
-name: permission-advisor
-description: Use before dispatching a subagent or running multi-step bash work to audit which commands the task needs against ~/.claude/settings.json. Triggers on phrases like "check permissions", "audit settings.json", "do I have allow rules for X", "pre-flight permission check", "what permissions does X need", or as a pre-dispatch gate invoked by another skill or command. Emits an advisory report only — NEVER modifies settings files.
+name: permissions-advisor
+description: Use before dispatching a subagent or running multi-step bash work to audit which commands the task needs against ~/.claude/settings.json. Triggers on phrases like "check permissions", "audit settings.json", "do I have allow rules for X", "pre-flight permission check", "what permissions does X need", says "/permissions-advisor", or as a pre-dispatch gate invoked by another skill or command. Emits an advisory report only — NEVER modifies settings files.
 ---
 
 # Permission Advisor
@@ -14,7 +14,7 @@ Invoke this skill BEFORE the action, not after a blocked command:
 - About to call `Agent` / `Task` to dispatch a subagent
 - About to run a multi-step task with bash commands
 - User asks "what permissions does X need" / "check permissions for Y"
-- User asks "run a permission check" or "permission-advisor"
+- User asks "run a permission check" or "/permissions-advisor"
 - a caller invokes it as a pre-dispatch gate
 
 If the request says "quickly dispatch" or "skip the check" — this skill still applies. Speed never justifies skipping the gate.

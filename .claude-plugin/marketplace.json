@@ -6,8 +6,8 @@
   "plugins": [
     {
       "name": "permissions",
-      "description": "Logs tool calls + sandbox denials + user prompts; provides /permissions-seed, /permissions-audit, /permissions-promote, /sandbox-fix, /permissions-lint, and /permissions-bootstrap-project for tuning settings.json against real usage and recovering from sandbox restrictions",
-      "version": "2.2.0",
+      "description": "Logs tool calls + sandbox denials + user prompts; provides /permissions-seed, /permissions-audit, /permissions-promote, /sandbox-fix, /permissions-lint, /permissions-bootstrap-project, and /permissions-advisor for tuning settings.json against real and anticipated usage and recovering from sandbox restrictions",
+      "version": "2.3.0",
       "author": {
         "name": "Mitchell Sutton"
       },
@@ -36,8 +36,8 @@
     },
     {
       "name": "agent-loop",
-      "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A bash harness re-invokes a fresh headless tick per task for OS-level context reset, handles blockers with a taxonomy, and builds dynamic sprint contracts per task. Requires the superpowers plugin; bundles postmortem and permission-advisor.",
-      "version": "1.0.0",
+      "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A bash harness re-invokes a fresh headless tick per task for OS-level context reset, handles blockers with a taxonomy, and builds dynamic sprint contracts per task. Requires the superpowers plugin; bundles postmortem and recommends the permissions plugin for its /permissions-advisor pre-flight check.",
+      "version": "1.0.1",
       "author": {
         "name": "Mitchell Sutton"
       },
@@ -52,16 +52,6 @@
         "name": "Mitchell Sutton"
       },
       "source": "./plugins/postmortem",
-      "category": "productivity"
-    },
-    {
-      "name": "permission-advisor",
-      "description": "Advisory permission report comparing required commands against settings.json allow-lists. Surfaces blocked commands as suggestions; never modifies settings. Ships an optional PreToolUse hook on Task that reminds the model to run the advisor before subagent dispatches.",
-      "version": "1.0.0",
-      "author": {
-        "name": "Mitchell Sutton"
-      },
-      "source": "./plugins/permission-advisor",
       "category": "productivity"
     }
   ]
