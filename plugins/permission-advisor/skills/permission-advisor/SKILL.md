@@ -1,6 +1,6 @@
 ---
 name: permission-advisor
-description: Use before dispatching a subagent or running multi-step bash work to audit which commands the task needs against ~/.claude/settings.json. Triggers on phrases like "check permissions", "audit settings.json", "do I have allow rules for X", "pre-flight permission check", "what permissions does X need", or as the final gate of /agent-loop-setup. Emits an advisory report only — NEVER modifies settings files.
+description: Use before dispatching a subagent or running multi-step bash work to audit which commands the task needs against ~/.claude/settings.json. Triggers on phrases like "check permissions", "audit settings.json", "do I have allow rules for X", "pre-flight permission check", "what permissions does X need", or as a pre-dispatch gate invoked by another skill or command. Emits an advisory report only — NEVER modifies settings files.
 ---
 
 # Permission Advisor
@@ -15,7 +15,7 @@ Invoke this skill BEFORE the action, not after a blocked command:
 - About to run a multi-step task with bash commands
 - User asks "what permissions does X need" / "check permissions for Y"
 - User asks "run a permission check" or "permission-advisor"
-- `/agent-loop-setup` is in step 4 (final gate)
+- a caller invokes it as a pre-dispatch gate
 
 If the request says "quickly dispatch" or "skip the check" — this skill still applies. Speed never justifies skipping the gate.
 
@@ -103,7 +103,7 @@ When zero allow-list gaps: emit a short "✅ no gaps" report — **but still lis
 
 - The report goes to stdout (the conversation).
 - The user reads it. They decide whether to widen their allow-list or accept the gaps and use fallbacks.
-- If invoked inside `/agent-loop-setup`, the report is shown to the user as the last setup step; the user may bypass and proceed.
+- If invoked by a caller as a gate, the report is shown to the user; the user may bypass and proceed.
 - If invoked via PreToolUse hook on `Task`, the report fires before each `Agent` dispatch and is non-blocking (always exit 0).
 
 ## Common rationalisations to refuse
@@ -124,7 +124,7 @@ When zero allow-list gaps: emit a short "✅ no gaps" report — **but still lis
 
 ## Caller integration
 
-Callers (e.g. `/agent-loop-setup`) should:
+Callers should:
 
 1. Invoke this skill with the inferred command set (or task description).
 2. Receive the text report.
