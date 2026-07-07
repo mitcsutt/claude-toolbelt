@@ -79,7 +79,7 @@ Format: `docs/postmortems/YYYY-MM-DD-<topic>.md`
 
 ## What "advisory only" does NOT apply to
 
-Unlike `/permission-advisor`, this skill DOES write files. The whole point is to build institutional memory on disk. "Don't save" framing in the user request does not override the file-write contract — it just means the user underestimates the value.
+Unlike `/permissions-advisor`, this skill DOES write files. The whole point is to build institutional memory on disk. "Don't save" framing in the user request does not override the file-write contract — it just means the user underestimates the value.
 
 If the user genuinely doesn't want a file, they can delete it after. The skill always writes first.
 
