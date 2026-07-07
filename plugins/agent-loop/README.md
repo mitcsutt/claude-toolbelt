@@ -124,7 +124,3 @@ bash tests/all.sh
 
 Runs `lib.test.sh`, `run.e2e.test.sh`, and the `*.contract.sh` suites, then `lint.sh` (shellcheck; skipped non-fatally if shellcheck is absent). Note: `lib.test.sh` and `run.e2e.test.sh` use `mktemp -d`; if the sandbox blocks it, run with the sandbox disabled.
 
-## Design docs
-
-- Spec: `docs/superpowers/specs/2026-06-02-agent-loop-v2-bash-orchestrated-design.md`
-- Plan: `docs/superpowers/plans/2026-06-02-agent-loop-v2-bash-orchestrated.md`
