@@ -80,6 +80,12 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 - Working on PR user referenced: local branch may not match PR's remote head ref (e.g. `gh pr checkout 3074` creates `pr-3074` even when PR branch is `ENG-X-foo`). Before commit, compare `git branch --show-current` to `gh pr view <num> --json headRefName`. Differ → ask which to commit on
 - "Rebase onto master" / "merge into branch X" ≠ consent to push. "I'll test it first" = explicit anti-consent. Push only when user says push
 - **Before `gh pr create`, find and use the repo's PR template.** Check `.github/PULL_REQUEST_TEMPLATE.md`, `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/*.md`, `docs/PULL_REQUEST_TEMPLATE.md`, repo-root `PULL_REQUEST_TEMPLATE.md`. Found → fill every section, check boxes only when clearly satisfied, leave unverified ones unchecked. Not found → fall back to `## Summary` / `## Test plan` default. The default system-prompt PR format is the fallback, not the default — always look for a template first.
+- **Before creating a PR, rebase the branch onto the up-to-date origin version of its base branch.** Confirm the actual base first (default is often `master`/`main`, but stacked or non-default-base work differs — don't assume). Workflow: `git fetch origin <base>` then `git rebase origin/<base>`. Rebase onto the fetched `origin/<base>`, never a stale local copy. Rebasing ≠ consent to push; the post-rebase push needs `--force-with-lease` and only when told to push. Conflicts → stop and surface, don't resolve blindly. This gets the branch current before opening the PR; it does not authorise rewriting already-reviewed history mid-review without asking.
+
+## Sandbox: git and gh remote commands
+
+- Go straight to `dangerouslyDisableSandbox: true` for any git/gh command hitting a remote (`git push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`). The sandbox can't read `~/.ssh`, so SSH host-key verification breaks — don't try in-sandbox first.
+- Also use `dangerouslyDisableSandbox: true` for `git worktree remove` and `git branch -D`: the sandbox denies writes to the repo `.git` (`Operation not permitted` on worktree removal; `could not write config file .git/config` on branch delete — which still deletes the ref but leaves an orphan `[branch]` config section).
 
 ## Worktree paths in messages
 
