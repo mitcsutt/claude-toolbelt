@@ -1,0 +1,9 @@
+{"type":"system","subtype":"init"}
+{"type":"system","subtype":"thinking_tokens"}
+{"type":"assistant","message":{"content":[{"type":"thinking"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Agent","input":{"subagent_type":"Worker"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"pnpm internal#lint"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"src/billing.ts"}}]}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1780405800,"rateLimitType":"five_hour"}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Done.\nSecond line ignored."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"done <<LOOP_CONTINUE>>","usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.02}

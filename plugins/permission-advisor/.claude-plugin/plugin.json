@@ -1,0 +1,8 @@
+{
+  "name": "permission-advisor",
+  "version": "0.1.0",
+  "description": "Advisory permission report comparing required commands against settings.json allow-lists. Never modifies settings.",
+  "author": {
+    "name": "Mitchell Sutton"
+  }
+}

@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-loop · mission control</title>
+<style>
+  :root {
+    --bg:#0c0d12; --bg2:#11131b; --panel:#13151f; --panel2:#171a26;
+    --line:#252938; --line2:#323750; --mut:#697089; --txt:#d6dae8;
+    --ok:#4ade80; --cur:#fbbf24; --acc:#7c8cff; --hot:#ff6b6b;
+    --info:#5ec8e6; --idle:#454b63;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    margin:0; color:var(--txt);
+    font:13px/1.45 ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
+    background:
+      radial-gradient(900px 500px at 78% -12%, rgba(124,140,255,.08), transparent 60%),
+      radial-gradient(700px 400px at -8% 0%, rgba(94,200,230,.05), transparent 55%),
+      var(--bg);
+    display:flex; flex-direction:column; min-height:100%;
+  }
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+
+  .mut { color:var(--mut); }
+  .t { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  h5, h6 { margin:0; }
+  h5 { font-size:10px; letter-spacing:.13em; text-transform:uppercase; color:var(--mut);
+       margin:0 0 9px; display:flex; align-items:center; gap:7px; }
+  h5::after { content:""; flex:1; height:1px; background:linear-gradient(90deg,var(--line),transparent); }
+  h6 { font-size:11px; letter-spacing:.06em; color:var(--cur); margin:11px 0 6px;
+       text-transform:uppercase; }
+
+  button {
+    font:inherit; font-size:12px; color:var(--txt); background:#1b1f2e;
+    border:1px solid var(--line2); border-radius:6px; padding:6px 12px; cursor:pointer;
+    transition:background .12s, border-color .12s, transform .06s;
+  }
+  button:hover:not(:disabled) { background:#232838; border-color:#454c70; }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:disabled { opacity:.3; cursor:default; }
+
+  /* ───── HERO ───────────────────────────────────────────── */
+  .hero {
+    position:relative; flex:none; padding:18px 20px 16px;
+    background:
+      linear-gradient(180deg, rgba(124,140,255,.04), transparent),
+      var(--bg2);
+    border-bottom:1px solid var(--line);
+    overflow:hidden;
+  }
+  .hero::before {
+    content:""; position:absolute; inset:0;
+    background-image:linear-gradient(var(--line) 1px, transparent 1px),
+                     linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:34px 34px; opacity:.20; pointer-events:none;
+    -webkit-mask-image:linear-gradient(180deg, #000, transparent 75%);
+            mask-image:linear-gradient(180deg, #000, transparent 75%);
+  }
+  .hero > * { position:relative; }
+
+  .verdict {
+    font-size:clamp(30px, 8vw, 52px); font-weight:800; letter-spacing:.02em;
+    line-height:1; margin:0 0 4px; color:var(--mut);
+    text-shadow:0 0 26px currentColor; transition:color .3s;
+  }
+  .verdict.v-running      { color:var(--ok); }
+  .verdict.v-done         { color:var(--ok); }
+  .verdict.v-paused       { color:var(--cur); }
+  .verdict.v-pausing      { color:var(--cur); animation:flash 1.4s ease-in-out infinite; }
+  .verdict.v-stalled      { color:var(--hot); animation:flash 1.4s ease-in-out infinite; }
+  .verdict.v-halted,
+  .verdict.v-stopped      { color:var(--hot); }
+  .verdict.v-rate-limited { color:var(--info); animation:flash 1.8s ease-in-out infinite; }
+  .verdict.v-idle         { color:var(--idle); }
+  @keyframes flash { 0%,100%{opacity:1} 50%{opacity:.45} }
+
+  .loopid { font-size:13px; margin:0 0 12px; }
+  .loopid #worktree { display:inline-block; max-width:62vw; vertical-align:bottom;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; direction:rtl; text-align:left; }
+
+  .ctrls { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin:0 0 12px; }
+  .ctrls button { min-width:40px; text-align:center; font-size:14px; padding:6px 13px; }
+  #btnStart:not(:disabled)  { border-color:#2f6a45; color:var(--ok); }
+  #btnStop:not(:disabled)   { border-color:#6a2f37; color:var(--hot); }
+  #btnPause:not(:disabled)  { border-color:#6a5a2f; color:var(--cur); }
+  #copyResume, #btnBell { font-size:11px; min-width:0; }
+  #btnBell.on { border-color:var(--acc); color:var(--acc); }
+  .ctrls .spacer { flex:1; }
+
+  .metaline { font-size:12px; color:var(--txt); letter-spacing:.02em; margin:0 0 8px; }
+  .metaline b, .metaline span#tickNo, .metaline span#segPos { color:var(--acc); }
+  .now {
+    font-size:15px; padding:9px 13px; border-radius:7px; margin:0 0 8px;
+    background:linear-gradient(90deg, rgba(124,140,255,.10), rgba(124,140,255,.02));
+    border:1px solid var(--line2); border-left:3px solid var(--acc);
+    color:#c3ccff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .tonight { font-size:12px; color:var(--mut); letter-spacing:.03em; }
+
+  /* ───── PIPELINE (agent roster + activity feed) ────────── */
+  .pipeline {
+    flex:none; padding:14px 20px; background:var(--bg2); border-bottom:1px solid var(--line);
+    display:grid; gap:18px; align-items:start;
+    grid-template-columns: minmax(210px, .82fr) minmax(0, 1.5fr);
+  }
+  .ptitle { font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--mut); margin:0 0 8px; }
+  /* model-tier colour semantics, shared across roster chips + feed dividers */
+  .tier-haiku  { color:var(--info);  border-color:rgba(56,189,248,.40); }
+  .tier-sonnet { color:#c3ccff;      border-color:rgba(124,140,255,.45); }
+  .tier-opus   { color:var(--cur);   border-color:rgba(251,191,36,.45); }
+
+  /* ── roster: orchestrator spine + indented subagents ── */
+  .roster { display:flex; flex-direction:column; }
+  .rrow {
+    display:flex; align-items:center; gap:9px; padding:6px 9px; border-radius:7px;
+    border:1px solid transparent;
+  }
+  .rrow.r-orch { border-left:3px solid var(--line2); border-radius:0 7px 7px 0; }
+  .rsubs { position:relative; padding-left:15px; }
+  .rsubs::before { /* tree rail down from the spine */
+    content:""; position:absolute; left:6px; top:-2px; bottom:13px; width:1px; background:var(--line2);
+  }
+  .rrow.r-active {
+    background:linear-gradient(180deg, rgba(124,140,255,.10), transparent);
+    border-color:rgba(124,140,255,.32);
+  }
+  .rdot { width:8px; height:8px; border-radius:50%; background:var(--idle); flex:none; }
+  .rrow.r-done .rdot { background:var(--ok); }
+  .rrow.r-active .rdot { background:var(--acc); animation:pulse 1.5s ease-in-out infinite; }
+  .rname { font-size:12.5px; font-weight:700; letter-spacing:.02em; color:var(--txt); }
+  .rrow.r-done .rname { color:var(--mut); }
+  .rrow.r-idle .rname { color:var(--mut); }
+  .rmeta { margin-left:auto; display:flex; align-items:center; gap:8px; font-size:11px; color:var(--mut); }
+  .rchip {
+    font-size:10px; padding:1px 7px; border-radius:5px; border:1px solid var(--line2);
+    background:#10131d; color:var(--info); white-space:nowrap;
+  }
+  .rchip.dash { opacity:.4; }
+  .rtools { font-variant-numeric:tabular-nums; }
+  .rela { color:var(--cur); font-weight:700; font-variant-numeric:tabular-nums; }
+  .rtask {
+    font-size:11px; color:var(--mut); margin:-1px 0 5px 33px; overflow-wrap:anywhere;
+    border-left:1px solid var(--line2); padding-left:8px;
+  }
+  .rempty { font-size:11px; color:var(--mut); padding:4px 0 2px 15px; }
+
+  /* ── activity feed: chronological, internally-scrolling tail ── */
+  .feed {
+    max-height:210px; overflow:auto;
+    border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:4px 0;
+  }
+  .fdiv {
+    display:flex; align-items:center; gap:8px; padding:6px 12px 3px; font-size:10px;
+    font-weight:700; letter-spacing:.12em; text-transform:uppercase;
+  }
+  .fdiv:first-child { padding-top:3px; }
+  .fdiv::after { content:""; flex:1; height:1px; background:var(--line2); opacity:.6; }
+  .fline {
+    display:flex; align-items:baseline; gap:8px; padding:2px 12px 2px 22px;
+    font-size:11.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    white-space:nowrap; overflow:hidden;
+  }
+  .ficon { flex:none; color:var(--mut); width:1.2em; text-align:center; }
+  .fname { flex:none; color:var(--txt); font-weight:600; }
+  .fdesc { flex:1 1 auto; min-width:0; color:var(--mut); overflow:hidden; text-overflow:ellipsis; }
+  .fempty { font-size:11px; color:var(--mut); padding:8px 12px; }
+  @keyframes pulse {
+    0%,100% { box-shadow:0 0 0 1px rgba(124,140,255,.45), 0 0 7px rgba(124,140,255,.3); }
+    50%     { box-shadow:0 0 0 3px rgba(124,140,255,.10), 0 0 15px rgba(124,140,255,.55); }
+  }
+
+  /* ───── GRID ───────────────────────────────────────────── */
+  .grid {
+    flex:1 1 auto; display:grid; gap:12px; padding:14px 20px 20px;
+    grid-template-columns: minmax(0,1.35fr) minmax(0,1fr);
+  }
+  .panel {
+    background:linear-gradient(180deg, var(--panel2), var(--panel));
+    border:1px solid var(--line); border-radius:10px; padding:13px 15px; min-width:0;
+  }
+  #roadmap { grid-column:1; }
+  #usagePanel { grid-column:2; grid-row:1 / span 2; }
+  #logPanel { grid-column:1; }
+
+  /* ───── ROADMAP ────────────────────────────────────────── */
+  .rm-ctrls { display:flex; gap:6px; margin-bottom:8px; }
+  .rm-ctrls button { font-size:11px; padding:3px 9px; }
+  details.seg-d { margin:0 0 5px; }
+  details.seg-d > summary {
+    list-style:none; cursor:pointer; padding:2px 0; display:flex; align-items:center; gap:7px;
+  }
+  details.seg-d > summary::-webkit-details-marker { display:none; }
+  details.seg-d > summary::before {
+    content:"▸"; color:var(--mut); font-size:10px; transition:transform .12s; display:inline-block;
+  }
+  details.seg-d[open] > summary::before { transform:rotate(90deg); }
+  .seg-body { padding:4px 0 8px 17px; }
+  .seg {
+    padding:5px 11px; border-radius:6px; font-size:11px; font-weight:600; letter-spacing:.03em;
+    border:1px solid var(--line2); background:var(--panel); white-space:nowrap;
+  }
+  .seg-done .seg { border-color:#2f6a45; color:var(--ok); background:rgba(74,222,128,.07); }
+  .seg-current .seg {
+    border-color:var(--cur); color:#1a1408; background:var(--cur); font-weight:800;
+    box-shadow:0 0 16px rgba(251,191,36,.3);
+  }
+  .seg-future .seg { border-style:dashed; border-color:var(--idle); color:var(--mut); opacity:.7; }
+  .tbd { margin-top:10px; font-size:11px; }
+
+  .task { display:flex; gap:8px; align-items:baseline; padding:4px 0; border-bottom:1px solid #1c1f2c; }
+  .task:last-child { border-bottom:none; }
+  .task .g  { flex:none; width:1.2em; text-align:center; color:var(--mut); }
+  .task .d  { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
+  .task .id { color:var(--acc); margin-right:5px; opacity:.8; }
+  .task.done   { color:var(--mut); } .task.done .g   { color:var(--ok); }
+  .task.doing  { color:var(--cur); } .task.doing .g  { color:var(--cur); }
+  .task.blocked .g { color:var(--hot); }
+  .task.skipped { opacity:.5; }
+
+  /* ───── USAGE ──────────────────────────────────────────── */
+  #usage .headline {
+    font-size:14px; font-weight:700; color:var(--txt); padding:8px 10px; margin-bottom:12px;
+    border-radius:7px; background:rgba(74,222,128,.06); border:1px solid #234433;
+    overflow-wrap:anywhere;
+  }
+  #usage .t { margin-top:7px; }
+  .mini { height:6px; background:#1a1d2a; border-radius:3px; margin:4px 0 4px; overflow:hidden; }
+  .mini > i { display:block; height:100%;
+    background:linear-gradient(90deg, var(--acc), var(--info)); border-radius:3px; transition:width .4s; }
+  #narrative .t { padding:2px 0; font-size:12px; }
+  #narrative details.nrow > summary { list-style:none; cursor:pointer; }
+  #narrative details.nrow > summary::-webkit-details-marker { display:none; }
+  #narrative details.nrow > summary::before {
+    content:"▸"; color:var(--mut); font-size:9px; margin-right:5px; display:inline-block; transition:transform .12s;
+  }
+  #narrative details.nrow[open] > summary::before { transform:rotate(90deg); }
+  #narrative .nsplit { font-size:11px; padding:1px 0 4px 14px; }
+  #quota { font-size:12px; }
+  #quota .qok { color:var(--ok); }
+  #quota .qlim { color:var(--info); font-weight:600; }
+
+  /* ───── LOG ────────────────────────────────────────────── */
+  #logPanel { font-size:11px; }
+  #log { max-height:200px; overflow:auto; }
+  #log div { color:var(--mut); white-space:pre-wrap; word-break:break-all; padding:1px 0;
+             border-left:2px solid var(--line); padding-left:8px; }
+  #log div:last-child { color:var(--txt); border-left-color:var(--acc); }
+
+  @media (max-width: 820px) {
+    .grid { grid-template-columns:1fr; padding:12px 14px 18px; }
+    #roadmap, #usagePanel, #logPanel { grid-column:1; grid-row:auto; }
+    .hero { padding:14px 14px 13px; }
+    /* stack panels: roster (first in DOM) stays above the ever-scrolling feed */
+    .pipeline { padding:12px 14px; grid-template-columns:1fr; }
+    .loopid #worktree { max-width:80vw; }
+  }
+</style>
+</head>
+<body>
+  <header class="hero">
+    <div class="verdict" id="verdict">—</div>
+    <div class="loopid"><span id="loopName">—</span> · <span id="worktree" class="mut">—</span></div>
+    <div class="ctrls">
+      <button id="btnStart" title="start" aria-label="start">▶</button><button id="btnPause" title="pause" aria-label="pause">⏸</button>
+      <button id="btnResume" title="resume" aria-label="resume">⟳</button><button id="btnStop" title="stop" aria-label="stop">■</button>
+      <span class="spacer"></span>
+      <button id="btnBell" title="enable stall notifications">🔔</button>
+      <button id="copyResume" style="display:none">⧉ copy resume</button>
+    </div>
+    <div class="metaline">tick #<span id="tickNo">–</span> · Seg <span id="segPos">–</span>
+      · <span id="progTxt">0/0</span> <span id="segTBD" class="mut"></span></div>
+    <div class="now" id="nowLine">idle</div>
+    <div class="tonight" id="tonight"></div>
+    <span id="ctrlNote" class="mut" style="display:block;font-size:11px;margin-top:6px"></span>
+  </header>
+
+  <section class="pipeline">
+    <div class="rosterwrap"><h5 class="ptitle">Agents</h5><div id="roster"></div></div>
+    <div class="feedwrap"><h5 class="ptitle">Activity</h5><div class="feed" id="feed"></div></div>
+  </section>
+
+  <main class="grid">
+    <section class="panel" id="roadmap"></section>
+    <section class="panel" id="usagePanel">
+      <h5>Effort</h5>
+      <div id="usage"></div>
+      <h5 style="margin-top:14px">Quota</h5>
+      <div id="quota" class="mut">—</div>
+      <h5 style="margin-top:14px">Narrative</h5>
+      <div id="narrative"></div>
+    </section>
+    <section class="panel" id="logPanel">
+      <h5>run.log</h5>
+      <div id="log"></div>
+    </section>
+  </main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtDur = s => { s = Math.max(0, Math.floor(s||0)); return s<60 ? s+"s" : s<3600 ? Math.floor(s/60)+"m" : Math.floor(s/3600)+"h"+Math.floor((s%3600)/60)+"m"; };
+const fmtTok = n => n>=1e6 ? (n/1e6).toFixed(1)+"M" : n>=1e3 ? Math.round(n/1e3)+"k" : (n||0);
+
+/* ─── Rendering architecture ────────────────────────────────────────────────
+   Data flows DOWN from the snapshot. VIEW-STATE (which <details> are open, the
+   text selection, focus, scroll) is owned by the CLIENT and is NEVER derived
+   from the snapshot. Updates are applied by morphInner(), which reconciles the
+   live DOM to freshly-rendered HTML *in place*: matched nodes keep their identity
+   (and thus their browser UI state) instead of being recreated. That is what lets
+   the ~1/s refresh run without nuking a selection or collapsing an open panel.
+   Consequence: every <details> and every dynamic list item carries a stable
+   `data-key` (or `id`), and a <details>'s open state comes from `ui.open`. */
+
+// Client-owned view-state: the set of open <details> keys, persisted per tab.
+const UIK = "agentloop.ui.open";
+const ui = { open: new Set(JSON.parse(sessionStorage.getItem(UIK) || "[]")),
+             seeded: sessionStorage.getItem(UIK) !== null };
+function persistUI(){ try { sessionStorage.setItem(UIK, JSON.stringify([...ui.open])); } catch (_) {} }
+const isOpen = k => ui.open.has(k);
+// One delegated listener (capture phase — `toggle` does not bubble) keeps ui.open
+// in sync with the user's clicks. render() reads ui.open; it never reads open from
+// the snapshot, so a tick can't reopen what you closed or close what you opened.
+document.addEventListener("toggle", e => {
+  const d = e.target;
+  if (!d || d.tagName !== "DETAILS" || !d.dataset.key) return;
+  if (d.open) ui.open.add(d.dataset.key); else ui.open.delete(d.dataset.key);
+  persistUI();
+}, true);
+// Write text only when it actually changed, so an unchanged value doesn't churn
+// the text node (which would drop a selection sitting inside it).
+function setText(el, v){ v = String(v == null ? "" : v); if (el && el.textContent !== v) el.textContent = v; }
+
+// ─── morphInner: reconcile a container's children to match fresh HTML, in place ─
+function morphInner(live, html){
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  morphChildren(live, tpl.content);
+}
+const keyOf = n => n.nodeType === 1 ? (n.id || n.getAttribute("data-key") || null) : null;
+function syncAttrs(live, next){
+  for (const a of Array.from(next.attributes))
+    if (live.getAttribute(a.name) !== a.value) live.setAttribute(a.name, a.value);
+  for (const a of Array.from(live.attributes))
+    if (!next.hasAttribute(a.name)) live.removeAttribute(a.name);
+}
+function morphNode(live, next){
+  if (next.nodeType === 3 || next.nodeType === 8) {            // text / comment
+    if (live.nodeValue !== next.nodeValue) live.nodeValue = next.nodeValue;
+    return live;
+  }
+  if (live.nodeType !== 1 || live.tagName !== next.tagName) {  // incompatible → replace
+    const imp = document.importNode(next, true); live.replaceWith(imp); return imp;
+  }
+  syncAttrs(live, next);
+  morphChildren(live, next);
+  return live;
+}
+function morphChildren(liveParent, nextParent){
+  const liveKeyed = new Map();
+  for (const c of Array.from(liveParent.childNodes)) { const k = keyOf(c); if (k) liveKeyed.set(k, c); }
+  let unkeyed = liveParent.firstChild;
+  const nextUnkeyed = () => { while (unkeyed && keyOf(unkeyed)) unkeyed = unkeyed.nextSibling; };
+  const result = [];
+  for (const next of Array.from(nextParent.childNodes)) {
+    const k = keyOf(next);
+    let node;
+    if (k && liveKeyed.has(k)) {                               // keyed match → reuse
+      const m = liveKeyed.get(k); liveKeyed.delete(k);
+      node = (m.nodeType === 1 && m.tagName === next.tagName) ? morphNode(m, next)
+                                                              : document.importNode(next, true);
+    } else if (!k) {                                           // unkeyed → positional match
+      nextUnkeyed();
+      if (unkeyed && unkeyed.nodeType === next.nodeType &&
+          (next.nodeType !== 1 || unkeyed.tagName === next.tagName)) {
+        const m = unkeyed; unkeyed = unkeyed.nextSibling; node = morphNode(m, next);
+      } else node = document.importNode(next, true);
+    } else node = document.importNode(next, true);            // keyed but new
+    result.push(node);
+  }
+  const keep = new Set(result);
+  for (const c of Array.from(liveParent.childNodes)) if (!keep.has(c)) liveParent.removeChild(c);
+  let ref = liveParent.firstChild;                             // place result nodes in order
+  for (const node of result) {
+    if (node === ref) ref = ref.nextSibling;
+    else liveParent.insertBefore(node, ref);
+  }
+}
+
+function post(path) { fetch(path, {method:"POST"}).catch(()=>{}); }
+$("btnStart").onclick  = () => post("/api/start");
+$("btnPause").onclick  = () => post("/api/pause");
+$("btnResume").onclick = () => post("/api/resume");
+$("btnStop").onclick   = () => post("/api/stop");
+
+$("btnBell").onclick = () => {
+  if (window.Notification) Notification.requestPermission().then(p => {
+    $("btnBell").classList.toggle("on", p === "granted");
+  });
+};
+if (window.Notification && Notification.permission === "granted") $("btnBell").classList.add("on");
+
+const GLYPH = {pending:"☐", doing:"◐", done:"✓", blocked:"!", skipped:"–"};
+const VERDICT = {running:"● RUNNING", stalled:"▲ STALLED", "rate-limited":"⏳ RATE-LIMITED",
+                 pausing:"⏸ PAUSING…", paused:"⏸ PAUSED", done:"✓ DONE", halted:"✕ HALTED",
+                 stopped:"■ STOPPED", idle:"· IDLE"};
+
+function renderHero(d){
+  const st = d.loop.status;
+  const v = $("verdict"); setText(v, VERDICT[st]||st); v.className = "verdict v-"+st;
+  setText($("loopName"), d.loop.name || "loop");
+  setText($("worktree"), d.loop.worktree || "—");
+  setText($("tickNo"), d.loop.tick ?? "–");
+  setText($("segPos"), d.progress.segments_total
+     ? `${((d.roadmap||[]).findIndex(s=>s.state==="current")+1)||"–"}/${d.progress.segments_total}` : "–");
+  setText($("progTxt"), `${d.progress.done}/${d.progress.total} known`);
+  setText($("segTBD"), d.progress.segments_unplanned ? `· ~${d.progress.segments_unplanned} segs TBD` : "");
+  const c = d.current;
+  setText($("nowLine"), (st==="pausing")
+     ? "⏸ PAUSING… (finishing current tick)"
+     : (st==="running" && c.role) ? `${c.role}·${c.model||"?"} · ${c.tools} tools`
+     : (VERDICT[st]||st));
+  const u = d.usage;
+  setText($("tonight"),
+     `${fmtDur(d.elapsed_s)} · $${(u.total_cost_usd||0).toFixed(2)} · ${fmtTok(u.total_tokens)} tok · ${d.progress.done} tasks`);
+
+  $("btnStart").disabled  = (st === "running" || st === "paused" || st === "pausing");
+  $("btnPause").disabled  = (st !== "running");
+  $("btnResume").disabled = (st !== "paused" && st !== "stopped" && st !== "pausing");
+  $("btnStop").disabled   = (st !== "running" && st !== "paused" && st !== "pausing");
+  setText($("ctrlNote"),
+    (st === "pausing") ? "pause requested — the loop stops after this tick finishes"
+    : (st === "running") ? "pause/stop take effect after the current tick" : "");
+}
+
+// roleLabel: present a role token nicely (capitalised); leave opaque values as-is.
+function roleLabel(r){ return r ? r.charAt(0).toUpperCase()+r.slice(1) : "—"; }
+// stripRole: drop a leading role token from a dispatch description for the card subtitle,
+// so "Worker: implement T9 — provider interface" reads as "implement T9 — provider interface".
+function stripRole(s){
+  return (s||"").replace(/^\s*(planner|scout|worker|evaluator|plan|evaluate|re-?evaluate)\b[\s:—–-]*/i,"").trim();
+}
+// currentTaskHint: the in-progress task description, a fallback subtitle when no desc is carried.
+function currentTaskHint(d){
+  const t = (d.plan||[]).find(x => x.status === "doing");
+  return t ? `${t.id?(t.id+" — "):""}${t.desc||""}`.trim() : "";
+}
+// modelTier: map a model id to a tier class so colour is shared across the roster
+// model chips and the feed's agent dividers (Haiku=cyan, Sonnet=indigo, Opus=amber).
+function modelTier(m){
+  m=(m||"").toLowerCase();
+  if (m.includes("haiku"))  return "haiku";
+  if (m.includes("opus"))   return "opus";
+  if (m.includes("sonnet")) return "sonnet";
+  return "";
+}
+// toolIcon: one glyph per tool *family* (≤5), so the feed's leading column stays scannable.
+function toolIcon(n){
+  n=(n||"").toLowerCase();
+  if (n==="bash")                              return "⚙";
+  if (n.includes("edit")||n==="write"||n==="notebookedit") return "✎";
+  if (n==="read"||n==="notebookread")          return "▤";
+  if (n==="grep"||n==="glob"||n.includes("search")) return "⌕";
+  if (n==="agent"||n==="task")                 return "➤";
+  return "·";
+}
+
+// ① Agent roster (R1): the cast for this tick. Orchestrator is the spine; dispatched
+// subagents are indented under a tree rail. The active row pulses and carries the
+// current task on a second line (per UX review — no separate header). Bounded by the
+// number of roles in a tick, so it never overflows.
+function renderRoster(d){
+  const running = d.loop.status === "running";
+  const p = d.pipeline || {};
+  const children = p.children || [];
+  const act = p.active;
+  // Only when the loop is actually running is an agent "active". Pause/stop/done lands on a
+  // tick boundary, so every agent in that tick has FINISHED — none is live, and the one the
+  // data still marks "active" renders as done (green). Resume starts the next tick fresh.
+  const activeRole = running && act ? act.role : null;
+
+  const row = (role, model, state, tools, isOrch) => {
+    const live  = running && role === activeRole;
+    const eff   = (!running && state === "active") ? "done" : state;
+    const cls   = live ? "r-active" : (eff === "done" ? "r-done" : "r-idle");
+    const chip  = model
+      ? `<span class="rchip tier-${modelTier(model)}">${esc(model)}</span>`
+      : `<span class="rchip dash">—</span>`;
+    const elapsed = (live && act.since)
+      ? `<span class="rela">${fmtDur(Math.max(0,Math.floor(Date.now()/1000)-act.since))}</span>` : "";
+    const taskTxt = live ? (stripRole(act && act.desc) || currentTaskHint(d)) : "";
+    const task = taskTxt
+      ? `<div class="rtask" data-key="rtask">${esc(taskTxt)}</div>` : "";
+    return `<div class="rrow ${isOrch?'r-orch':''} ${cls}" data-key="roster-${esc(role)}">
+        <span class="rdot"></span><span class="rname">${esc(roleLabel(role))}</span>
+        <span class="rmeta">${chip}${tools?`<span class="rtools">⚙${tools}</span>`:""}${elapsed}</span>
+      </div>${task}`;
+  };
+
+  const orchModel = (d.config && d.config.orchestrator_model) || null;
+  const orchTools = (act && act.role==="orchestrator") ? act.tools : null;
+  let html = `<div class="roster">`
+    + row("orchestrator", orchModel, p.state, orchTools, true);
+  html += children.length
+    ? `<div class="rsubs">${children.map(c=>row(c.role,c.model,c.state,c.tools,false)).join("")}</div>`
+    : `<div class="rempty">no subagents dispatched yet</div>`;
+  html += `</div>`;
+  morphInner($("roster"), html);
+}
+
+// ② Activity feed (R2): a chronological, internally-scrolling tail of tool actions,
+// grouped under a per-agent divider at each handoff. Auto-scrolls to newest only when
+// the user is already pinned to the bottom — if they've scrolled up to read, leave them.
+function renderActivity(d){
+  const acts = d.activity || [];
+  const roleModel = {};
+  ((d.pipeline||{}).children||[]).forEach(c => { if (c.model) roleModel[c.role]=c.model; });
+  const orchModel = (d.config && d.config.orchestrator_model) || "";
+
+  let html = "", last = null;
+  acts.forEach((a, i) => {
+    const role = a.role || "orchestrator";
+    if (role !== last) {
+      const m = role==="orchestrator" ? orchModel : (roleModel[role]||"");
+      html += `<div class="fdiv tier-${modelTier(m)}" data-key="fdiv-${i}">${esc(roleLabel(role))}</div>`;
+      last = role;
+    }
+    html += `<div class="fline" data-key="fl-${a.t}-${i}">`
+      + `<span class="ficon">${toolIcon(a.name)}</span>`
+      + `<span class="fname">${esc(a.name||"")}</span>`
+      + `<span class="fdesc">${esc(a.desc||"")}</span></div>`;
+  });
+  if (!acts.length) html = `<div class="fempty">no activity yet — actions appear here as agents work</div>`;
+
+  const feed = $("feed");
+  const pinned = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 24;
+  morphInner(feed, html);
+  if (pinned) feed.scrollTop = feed.scrollHeight;   // follow the tail only if already at it
+}
+
+function renderRoadmap(d){
+  const segs = d.roadmap||[];
+  // One-time default: open the current segment on first load only. After that the
+  // user's open/close choices (in ui.open) are authoritative and never re-imposed.
+  if (!ui.seeded) {
+    const ci = segs.findIndex(s=>s.state==="current");
+    if (ci >= 0) ui.open.add(`seg-${ci}`);
+    ui.seeded = true; persistUI();
+  }
+  const taskList = (name, si) => (d.plan||[]).filter(t=>t.segment===name).map((t,j)=>
+    `<div class="task ${t.status}" data-key="task-${esc(t.id||(si+"-"+j))}"><span class="g">${GLYPH[t.status]||"·"}</span>`+
+    `<span class="d"><span class="id">${esc(t.id||"")}</span>${esc(t.desc)}`+
+    (t.mechanical?' <span class="mut">⚙</span>':'')+`</span></div>`).join("");
+  const body = segs.map((s,i)=>{
+    const key = `seg-${i}`;
+    const label = esc(String(s.name||"").split(":")[0]);
+    const cnt = s.planned ? ` ${s.done}/${s.total}` : "";
+    const open = isOpen(key) ? " open" : "";            // open state is client-owned
+    const list = s.planned ? taskList(s.name, i)
+      : `<div class="mut tbd">not yet expanded — a PLAN tick fills this segment in</div>`;
+    return `<details class="seg-d seg-${s.state}" data-key="${key}"${open}>`+
+      `<summary><span class="seg seg-${s.state}" title="${esc(s.goal||s.name)}">${label}${cnt}</span></summary>`+
+      `<div class="seg-body">${list||'<div class="mut tbd">no tasks</div>'}</div></details>`;
+  }).join("");
+  morphInner($("roadmap"), `<h5>Roadmap</h5>`+
+    `<div class="rm-ctrls"><button id="rmExpand">expand all</button><button id="rmCollapse">collapse all</button></div>`+
+    (body||'<span class="mut">no segments yet</span>')+
+    (d.progress.segments_unplanned?`<div class="mut tbd">~${d.progress.segments_unplanned} future segment(s) — a PLAN tick expands the next one</div>`:""));
+  // Set open via the property so the native `toggle` event fires → the delegated
+  // listener records it in ui.open (so expand/collapse-all persist like clicks do).
+  const all = () => $("roadmap").querySelectorAll("details.seg-d");
+  $("rmExpand").onclick   = () => all().forEach(x=>{ if(!x.open) x.open = true; });
+  $("rmCollapse").onclick = () => all().forEach(x=>{ if(x.open)  x.open = false; });
+}
+
+function renderUsage(d){
+  const u = d.usage, bm = u.by_model||{};
+  const totTok = Math.max(1, u.total_tokens||0);
+  const bars = Object.entries(bm).map(([m,v])=>
+    `<div class="t">${esc(m)} · ${fmtTok(v.tokens)} tok · $${(v.cost_usd||0).toFixed(2)}</div>`+
+    `<div class="mini"><i style="width:${Math.round((v.tokens||0)/totTok*100)}%"></i></div>`).join("");
+  const pt = u.per_task||{}, burn = u.burn||{};
+  morphInner($("usage"),
+    `<div class="headline">$${(u.total_cost_usd||0).toFixed(2)} / ${fmtTok(u.total_tokens)} tok (${u.cache_read_pct||0}% cache) / ${fmtDur(d.elapsed_s)} / ${d.progress.done} tasks</div>`+
+    bars+
+    `<div class="t mut">$${(pt.cost_usd||0).toFixed(2)}/task · ${fmtTok(pt.tokens)} tok/task</div>`+
+    `<div class="t mut">burn $${(burn.usd_per_hr||0).toFixed(1)}/hr · ${fmtTok(Math.round(burn.tok_per_min||0))} tok/min</div>`);
+}
+
+function renderNarrative(d){
+  morphInner($("narrative"), (d.narrative||[]).slice().reverse().map(n=>{
+    const key = `narr-${n.tick}`;
+    const split = (n.by_model||[]).map(m=>`${esc(m.model)} $${(m.cost_usd||0).toFixed(2)}`).join(" · ");
+    const head = `#${n.tick} <span class="mut">${esc(n.mode||"")}</span> · ${fmtDur(n.dur)} · $${(n.cost_usd||0).toFixed(2)}`;
+    const open = isOpen(key) ? " open" : "";
+    return split
+      ? `<details class="nrow" data-key="${key}"${open}><summary class="t">${head}</summary><div class="nsplit mut">${split}</div></details>`
+      : `<div class="t" data-key="${key}">${head}</div>`;
+  }).join("")
+    || '<div class="mut">no ticks yet</div>');
+}
+
+function renderQuota(d){
+  const q = d.quota;
+  if (!q) { morphInner($("quota"), '<span class="mut">—</span>'); return; }
+  if (q.resets_at) {
+    const left = fmtDur(q.resets_at - Math.floor(Date.now()/1000));
+    morphInner($("quota"), `<span class="qlim">${esc(q.label||"limit")} rate-limited</span>`+
+      ` <span class="mut">↺ resets in ${left}</span>`);
+  } else {
+    morphInner($("quota"), `<span class="qok">within limits</span>`+
+      (q.label ? ` <span class="mut">· ${esc(q.label)} window</span>` : ""));
+  }
+}
+
+function renderLog(d){
+  morphInner($("log"), (d.log||[]).map(l => `<div>${esc(l)}</div>`).join(""));
+}
+
+function renderResume(d){
+  const show=["paused","done","stopped","halted"].includes(d.loop.status);
+  const btn=$("copyResume"); btn.style.display=show?"":"none";
+  btn.onclick=()=>navigator.clipboard?.writeText(
+    `cd ${d.loop.worktree||"."} && LOOP_DIR=.claude/loop/${d.loop.name} bash run.sh`);
+}
+
+let lastVerdict=null;
+function notifyStall(d){
+  const st=d.loop.status;
+  if((st==="stalled"||st==="halted") && st!==lastVerdict && window.Notification?.permission==="granted")
+    new Notification("agent-loop "+st, {body:(d.loop.name||"loop")});
+  lastVerdict=st;
+}
+
+function render(d) {
+  // morphInner patches the DOM in place, so a 1/s refresh preserves selection,
+  // focus, scroll and open <details> — no need to pause rendering during a
+  // selection (that old hack froze updates and is gone).
+  try {
+    renderHero(d); renderRoster(d); renderActivity(d); renderRoadmap(d);
+    renderUsage(d); renderNarrative(d); renderQuota(d); renderLog(d);
+    renderResume(d); notifyStall(d);
+  } catch (e) { console.error("render error", e); }
+}
+
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = e => { try { render(JSON.parse(e.data)); } catch (_) {} };
+  es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+}
+// initial paint via /api/state, then live updates via SSE
+fetch("/api/state").then(r => r.json()).then(render).catch(()=>{});
+connect();
+</script>
+</body>
+</html>

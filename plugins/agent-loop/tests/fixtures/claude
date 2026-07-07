@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Mock `claude` for stream-json. Ignores flags/stdin. Emits the Nth block of
+# $MOCK_CLAUDE_SCRIPT (blocks separated by a line equal to '==='). If a block's
+# first line is 'RC=<n>', exit with that code (and don't print that line).
+state="${MOCK_CLAUDE_STATE:?MOCK_CLAUDE_STATE unset}"
+script="${MOCK_CLAUDE_SCRIPT:?MOCK_CLAUDE_SCRIPT unset}"
+cat >/dev/null 2>&1 || true   # drain stdin
+n=0; [[ -f "$state" ]] && n="$(cat "$state")"
+n=$((n + 1)); echo "$n" > "$state"
+block="$(awk -v want="$n" 'BEGIN{b=1} /^===$/{b++; next} { if (b==want) print }' "$script")"
+exit_code=0
+first="$(printf '%s\n' "$block" | head -1)"
+if [[ "$first" == RC=* ]]; then
+  exit_code="${first#RC=}"
+  block="$(printf '%s\n' "$block" | tail -n +2)"
+fi
+printf '%s\n' "$block"
+exit "$exit_code"
