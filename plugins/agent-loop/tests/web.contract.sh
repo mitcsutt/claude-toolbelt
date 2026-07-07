@@ -58,7 +58,7 @@ curl -s "$url/" -o "$tmp/page.html"
 grep -q 'id="verdict"'  "$tmp/page.html"; assert_true $? "hero verdict element present"
 grep -q 'id="nowLine"'  "$tmp/page.html"; assert_true $? "NOW line element present"
 grep -q 'id="tickNo"'   "$tmp/page.html"; assert_true $? "continuous tick element present"
-grep -q 'id="pipeline"' "$tmp/page.html"; assert_true $? "pipeline strip present"
+grep -q 'id="roster"'   "$tmp/page.html"; assert_true $? "roster (pipeline) strip present"
 grep -q 'id="roadmap"'  "$tmp/page.html"; assert_true $? "roadmap track present"
 
 # 5) Task 8 — snapshot exposes the new contract shape
