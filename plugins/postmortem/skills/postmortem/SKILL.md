@@ -11,7 +11,7 @@ Generates a structured retrospective document. The file write is the contract �
 
 - User says "postmortem", "retrospective", "what did we learn"
 - After completing a long task, refactor, incident, or loop run
-- Called by `/agent-loop-postmortem` with structured log data pre-injected
+- Called by another skill or command with structured data pre-injected
 
 ## Hard contract
 
@@ -38,7 +38,7 @@ If thin: ask 2-4 focused questions (not all 6, not 10 — focused). Wait for ans
 
 If sufficient: write immediately.
 
-Pre-injected input from `/agent-loop-postmortem` is always sufficient — skip the questions.
+When a caller pre-injects dense structured context, treat it as sufficient — skip the thin-context questions.
 
 ## Required sections (in this order)
 
@@ -112,13 +112,10 @@ This is especially expected when hard-contract item 5 was `no (only structural)`
 | "Tests pass, so behavioural verification is implied — skip the status line" | State it explicitly (item 5). `tests pass` ≠ `it ran`. Say `no (only structural)` if nothing was booted. |
 | "A claim turned out wrong — I'll just edit the original line to match reality" | Don't rewrite. Append a dated Addendum and mark the claim superseded. The wrong original IS the signal. |
 
-## Caller integration (`/agent-loop-postmortem`)
+## Caller integration
 
-When called by `/agent-loop-postmortem`, the input includes structured fields:
-- `LOOP_LOG.jsonl` content
-- `LOOP_CLEANUP.md` content (if any)
-- Halt reasons for any `[!]` tasks
-- Total ticks, success/failure counts
-- Time elapsed
-
-In that case skip the "thin context" check — the data is dense. Proceed directly to writing.
+Another skill or command may invoke this skill with dense structured context
+already assembled (logs, task counts, timings, blockers, decisions). When a
+caller pre-injects that context, skip the "thin context" sufficiency check and
+proceed directly to writing — the calling skill owns the domain-specific field
+knowledge and is responsible for shaping it into the input.
