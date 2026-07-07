@@ -33,6 +33,36 @@
       },
       "source": "./plugins/session-timeline",
       "category": "developer-tools"
+    },
+    {
+      "name": "agent-loop",
+      "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A bash harness re-invokes a fresh headless tick per task for OS-level context reset, handles blockers with a taxonomy, and builds dynamic sprint contracts per task. Requires the superpowers plugin; bundles postmortem and permission-advisor.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Mitchell Sutton"
+      },
+      "source": "./plugins/agent-loop",
+      "category": "developer-tools"
+    },
+    {
+      "name": "postmortem",
+      "description": "Generic structured retrospective generator. Writes searchable postmortem documents to docs/postmortems/ with an 8-section template. Callable after any significant task.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Mitchell Sutton"
+      },
+      "source": "./plugins/postmortem",
+      "category": "productivity"
+    },
+    {
+      "name": "permission-advisor",
+      "description": "Advisory permission report comparing required commands against settings.json allow-lists. Surfaces blocked commands as suggestions; never modifies settings. Ships an optional PreToolUse hook on Task that reminds the model to run the advisor before subagent dispatches.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Mitchell Sutton"
+      },
+      "source": "./plugins/permission-advisor",
+      "category": "productivity"
     }
   ]
 }
