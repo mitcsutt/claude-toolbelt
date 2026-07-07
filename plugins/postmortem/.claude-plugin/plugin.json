@@ -1,6 +1,6 @@
 {
   "name": "postmortem",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Generic structured retrospective generator. Writes to docs/postmortems/. Callable after any task — not loop-specific.",
   "author": {
     "name": "Mitchell Sutton"

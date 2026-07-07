@@ -1,7 +1,7 @@
 {
   "name": "agent-loop",
-  "version": "0.14.0",
-  "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A bash harness re-invokes a fresh headless tick per task for OS-level context reset, handles blockers with a taxonomy, and builds dynamic sprint contracts per task. Requires the permission-advisor and postmortem plugins.",
+  "version": "1.0.0",
+  "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A bash harness re-invokes a fresh headless tick per task for OS-level context reset, handles blockers with a taxonomy, and builds dynamic sprint contracts per task. Requires the superpowers plugin; bundles the postmortem and permission-advisor plugins.",
   "author": {
     "name": "Mitchell Sutton"
   }
