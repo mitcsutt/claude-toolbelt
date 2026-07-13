@@ -16,9 +16,9 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 
 ### Scripts
 
-| Script           | What it does                                                                                                                                   |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `statusline.sh`  | Two-line statusline: model, folder, branch, sandbox state, context bar, plan usage, session time, cache hit rate. Caches `ctx%` for hooks.     |
+| Script             | What it does                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ccsl-sandbox.sh`  | [ccstatusline](https://github.com/sirmalloc/ccstatusline) custom-command widget: prints sandbox state (`sandbox` / `sandbox:auto`). The statusline layout itself is the tracked config at `config/ccstatusline/settings.json`. |
 
 ## Install (plugins)
 
@@ -52,21 +52,32 @@ Per-project override: drop the same `@…` line into a repo's `./CLAUDE.md` to p
 
 ## Install (statusline)
 
-The statusline lives as a script, not a plugin — Claude Code's `statusLine` config is global, not plugin-level.
+The statusline uses [ccstatusline](https://github.com/sirmalloc/ccstatusline); the layout is a tracked config at `config/ccstatusline/settings.json`. Claude Code's `statusLine` config is global, not plugin-level.
 
-1. Clone or download `scripts/statusline.sh` somewhere stable.
-2. Make it executable: `chmod +x /path/to/statusline.sh`.
-3. Wire it into `~/.claude/settings.json`:
+1. Install ccstatusline globally: `npm install -g ccstatusline` (or `bun add -g ccstatusline`).
+2. Symlink the tracked config so ccstatusline and its TUI read/write it in place:
+
+   ```bash
+   mkdir -p ~/.config/ccstatusline
+   ln -sfn /path/to/claude-toolbelt/config/ccstatusline/settings.json ~/.config/ccstatusline/settings.json
+   ```
+
+3. Point Claude Code at the pinned binary in `~/.claude/settings.json`. Use an **absolute** `node <script>` command so it survives nvm node-version switches (find the paths with `command -v ccstatusline` and `readlink -f`):
 
    ```json
    {
      "statusLine": {
-       "command": "/path/to/statusline.sh"
+       "type": "command",
+       "command": "/abs/path/to/node /abs/path/to/ccstatusline.js",
+       "padding": 0,
+       "refreshInterval": 10
      }
    }
    ```
 
-Requires `jq` and `git` on PATH.
+   (`refreshInterval` requires Claude Code ≥ 2.1.97.)
+
+Edit the layout with the ccstatusline TUI (`ccstatusline`) — changes write through the symlink into the tracked config. The sandbox label comes from `scripts/ccsl-sandbox.sh`; requires `jq` and `git` on PATH.
 
 ## Plugin details
 
