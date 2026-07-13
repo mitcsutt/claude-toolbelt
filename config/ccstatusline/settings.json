@@ -2,14 +2,64 @@
   "version": 3,
   "lines": [
     [
-      { "id": "1", "type": "model", "color": "white", "rawValue": true },
-      { "id": "2", "type": "separator", "character": " │ ", "dim": true },
-      { "id": "3", "type": "git-root-dir", "color": "brightBlue", "rawValue": true },
-      { "id": "4", "type": "separator", "character": " │ ", "dim": true },
-      { "id": "5", "type": "git-branch", "color": "brightCyan", "rawValue": true },
-      { "id": "6", "type": "separator", "character": " │ ", "dim": true },
+      {
+        "id": "1",
+        "type": "model",
+        "color": "white",
+        "rawValue": true
+      },
+      {
+        "id": "2",
+        "type": "separator",
+        "character": " │ ",
+        "dim": true
+      },
+      {
+        "id": "8136f6f3-7f92-4a63-b92e-d7c5348184aa",
+        "type": "git-status"
+      },
+      {
+        "id": "bf71cae4-6622-4c92-bd62-36745619c6ff",
+        "type": "separator",
+        "character": " │ ",
+        "dim": true
+      },
+      {
+        "id": "3",
+        "type": "git-root-dir",
+        "color": "brightBlue",
+        "rawValue": true
+      },
+      {
+        "id": "4",
+        "type": "separator",
+        "character": " │ ",
+        "dim": true
+      },
+      {
+        "id": "5",
+        "type": "git-branch",
+        "color": "brightCyan",
+        "rawValue": true
+      },
+      {
+        "id": "6",
+        "type": "separator",
+        "character": " │ ",
+        "dim": true
+      },
+      {
+        "id": "79f7f80e-70d2-48a9-828e-7e304f156e5f",
+        "type": "worktree-name"
+      },
       {
         "id": "7",
+        "type": "separator",
+        "character": " │ ",
+        "dim": true
+      },
+      {
+        "id": "sandbox-1",
         "type": "custom-command",
         "color": "yellow",
         "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/scripts/ccsl-sandbox.sh",
@@ -17,19 +67,54 @@
       }
     ],
     [
-      { "id": "8", "type": "context-bar", "color": "green", "rawValue": true, "metadata": { "display": "slider-only" } },
-      { "id": "9", "type": "separator", "character": " " },
-      { "id": "10", "type": "context-percentage", "color": "white", "rawValue": true },
-      { "id": "11", "type": "separator", "character": " │ ", "dim": true },
-      { "id": "12", "type": "session-usage", "color": "green", "rawValue": true },
-      { "id": "13", "type": "separator", "character": " " },
-      { "id": "14", "type": "reset-timer", "color": "yellow", "rawValue": true },
-      { "id": "15", "type": "separator", "character": " │ ", "dim": true },
-      { "id": "16", "type": "session-clock", "color": "cyan", "rawValue": true },
-      { "id": "17", "type": "separator", "character": " " },
-      { "id": "18", "type": "cache-hit-rate", "color": "brightBlack", "rawValue": true }
-    ],
-    []
+      {
+        "id": "8",
+        "type": "context-bar",
+        "color": "green",
+        "rawValue": true,
+        "metadata": {
+          "display": "slider"
+        }
+      },
+      {
+        "id": "5ea81375-afa3-4879-908d-c5fd6acfe91a",
+        "type": "separator",
+        "character": " │ ",
+        "dim": true
+      },
+      {
+        "id": "12",
+        "type": "session-usage",
+        "color": "blue",
+        "rawValue": true,
+        "metadata": {
+          "invert": "false"
+        }
+      },
+      {
+        "id": "9a0b0228-3102-4ffc-8f27-f334e8667ea9",
+        "type": "separator",
+        "character": " │ ",
+        "dim": true
+      },
+      {
+        "id": "16",
+        "type": "session-clock",
+        "color": "cyan",
+        "rawValue": true
+      },
+      {
+        "id": "17",
+        "type": "separator",
+        "character": " "
+      },
+      {
+        "id": "18",
+        "type": "cache-hit-rate",
+        "color": "brightBlack",
+        "rawValue": true
+      }
+    ]
   ],
   "flexMode": "full-minus-40",
   "compactThreshold": 60,
@@ -40,8 +125,12 @@
   "minimalistMode": false,
   "powerline": {
     "enabled": false,
-    "separators": [""],
-    "separatorInvertBackground": [false],
+    "separators": [
+      ""
+    ],
+    "separatorInvertBackground": [
+      false
+    ],
     "startCaps": [],
     "endCaps": [],
     "autoAlign": false,
