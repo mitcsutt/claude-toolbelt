@@ -11,7 +11,7 @@
       {
         "id": "2",
         "type": "separator",
-        "character": " │ ",
+        "character": " \u2502 ",
         "dim": true
       },
       {
@@ -21,7 +21,7 @@
       {
         "id": "bf71cae4-6622-4c92-bd62-36745619c6ff",
         "type": "separator",
-        "character": " │ ",
+        "character": " \u2502 ",
         "dim": true
       },
       {
@@ -33,7 +33,7 @@
       {
         "id": "4",
         "type": "separator",
-        "character": " │ ",
+        "character": " \u2502 ",
         "dim": true
       },
       {
@@ -45,7 +45,7 @@
       {
         "id": "6",
         "type": "separator",
-        "character": " │ ",
+        "character": " \u2502 ",
         "dim": true
       },
       {
@@ -55,7 +55,7 @@
       {
         "id": "7",
         "type": "separator",
-        "character": " │ ",
+        "character": " \u2502 ",
         "dim": true
       },
       {
@@ -70,7 +70,7 @@
       {
         "id": "8",
         "type": "context-bar",
-        "color": "green",
+        "color": "brightGreen",
         "rawValue": true,
         "metadata": {
           "display": "slider"
@@ -79,13 +79,13 @@
       {
         "id": "5ea81375-afa3-4879-908d-c5fd6acfe91a",
         "type": "separator",
-        "character": " │ ",
+        "character": " \u2502 ",
         "dim": true
       },
       {
         "id": "12",
         "type": "session-usage",
-        "color": "blue",
+        "color": "brightBlue",
         "rawValue": true,
         "metadata": {
           "invert": "false"
@@ -94,13 +94,13 @@
       {
         "id": "9a0b0228-3102-4ffc-8f27-f334e8667ea9",
         "type": "separator",
-        "character": " │ ",
+        "character": " \u2502 ",
         "dim": true
       },
       {
         "id": "16",
         "type": "session-clock",
-        "color": "cyan",
+        "color": "brightCyan",
         "rawValue": true
       },
       {
