@@ -3,72 +3,64 @@
   "lines": [
     [
       {
-        "id": "1",
-        "type": "model",
-        "color": "white",
-        "rawValue": true
+        "id": "5961923a-e8f1-4fe7-a216-c4d3e718f0c2",
+        "type": "custom-command",
+        "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/config/ccstatusline/ccsl-model.sh",
+        "timeout": 2500,
+        "preserveColors": true
       },
       {
-        "id": "2",
+        "id": "a84ad0fc-7a81-4154-8526-094f8c5d5c60",
         "type": "separator",
-        "character": " \u2502 ",
+        "character": " │ ",
         "dim": true
       },
       {
-        "id": "8136f6f3-7f92-4a63-b92e-d7c5348184aa",
+        "id": "3a7f9c4a-6960-4179-8f58-bf91f66ff8ee",
         "type": "git-status"
       },
       {
-        "id": "bf71cae4-6622-4c92-bd62-36745619c6ff",
+        "id": "e45645e2-32dc-429f-8d95-c50f6de2292b",
         "type": "separator",
-        "character": " \u2502 ",
+        "character": " │ ",
         "dim": true
       },
       {
-        "id": "3",
-        "type": "git-root-dir",
-        "color": "brightBlue",
-        "rawValue": true
+        "id": "6d34ac49-6933-4769-b9ce-8c43f61a95d8",
+        "type": "custom-command",
+        "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/config/ccstatusline/ccsl-dir.sh",
+        "timeout": 2500,
+        "preserveColors": true
       },
       {
-        "id": "4",
+        "id": "80534a99-c3ce-4edb-ace0-185698a6f99c",
         "type": "separator",
-        "character": " \u2502 ",
+        "character": " │ ",
         "dim": true
       },
       {
-        "id": "5",
+        "id": "a6c52b4c-6797-421d-891d-680abae804b6",
         "type": "git-branch",
         "color": "brightCyan",
         "rawValue": true
       },
       {
-        "id": "6",
+        "id": "423e3677-8b02-4a35-98d5-798315f3d214",
         "type": "separator",
-        "character": " \u2502 ",
+        "character": " │ ",
         "dim": true
       },
       {
-        "id": "79f7f80e-70d2-48a9-828e-7e304f156e5f",
-        "type": "worktree-name"
-      },
-      {
-        "id": "7",
-        "type": "separator",
-        "character": " \u2502 ",
-        "dim": true
-      },
-      {
-        "id": "sandbox-1",
+        "id": "92c3a143-4be9-4424-a545-06d3a1935ce0",
         "type": "custom-command",
         "color": "yellow",
-        "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/scripts/ccsl-sandbox.sh",
-        "timeout": 1000
+        "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/config/ccstatusline/ccsl-sandbox.sh",
+        "timeout": 2500
       }
     ],
     [
       {
-        "id": "8",
+        "id": "1416218b-899c-4951-9532-ffd7411a3684",
         "type": "context-bar",
         "color": "brightGreen",
         "rawValue": true,
@@ -77,39 +69,36 @@
         }
       },
       {
-        "id": "5ea81375-afa3-4879-908d-c5fd6acfe91a",
+        "id": "8a844954-363d-43be-aebd-32b3bd45c0c9",
         "type": "separator",
-        "character": " \u2502 ",
+        "character": " │ ",
         "dim": true
       },
       {
-        "id": "12",
+        "id": "6ad783b4-7f66-41b9-8e5c-20cf2d11449d",
         "type": "session-usage",
         "color": "brightBlue",
-        "rawValue": true,
-        "metadata": {
-          "invert": "false"
-        }
+        "rawValue": true
       },
       {
-        "id": "9a0b0228-3102-4ffc-8f27-f334e8667ea9",
+        "id": "831a5279-c26b-4ff1-b58b-912e9488b782",
         "type": "separator",
-        "character": " \u2502 ",
+        "character": " │ ",
         "dim": true
       },
       {
-        "id": "16",
+        "id": "388bb86b-ab8b-4235-b484-c2bf430e175d",
         "type": "session-clock",
         "color": "brightCyan",
         "rawValue": true
       },
       {
-        "id": "17",
+        "id": "a1b4b9e6-c796-4686-afc9-b0d87f52121c",
         "type": "separator",
         "character": " "
       },
       {
-        "id": "18",
+        "id": "1a5a6739-d57a-4c23-b03a-63467a019a15",
         "type": "cache-hit-rate",
         "color": "brightBlack",
         "rawValue": true

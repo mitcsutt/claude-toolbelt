@@ -16,9 +16,13 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 
 ### Scripts
 
-| Script             | What it does                                                                                                                                   |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ccsl-sandbox.sh`  | [ccstatusline](https://github.com/sirmalloc/ccstatusline) custom-command widget: prints sandbox state (`sandbox` / `sandbox:auto`). The statusline layout itself is the tracked config at `config/ccstatusline/settings.json`. |
+The statusline's [ccstatusline](https://github.com/sirmalloc/ccstatusline) custom-command widgets live alongside the tracked layout in `config/ccstatusline/` (config is `settings.json`). All require `jq` and `git` on PATH.
+
+| Script            | What it does                                                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ccsl-model.sh`   | Model name. Prepends an AWS glyph (orange) when `CLAUDE_CODE_USE_BEDROCK=1`, flagging a Bedrock-routed session.                                |
+| `ccsl-dir.sh`     | Combined repo-root / worktree identity — repo dir name, or `⎇ <worktree>` in a worktree. The name is a click-to-open hyperlink; scheme set by `$CCSL_EDITOR`. |
+| `ccsl-sandbox.sh` | Sandbox state (`sandbox` / `sandbox:auto`), or nothing when not sandboxed.                                                                     |
 
 ## Install (plugins)
 
@@ -77,7 +81,24 @@ The statusline uses [ccstatusline](https://github.com/sirmalloc/ccstatusline); t
 
    (`refreshInterval` requires Claude Code ≥ 2.1.97.)
 
-Edit the layout with the ccstatusline TUI (`ccstatusline`) — changes write through the symlink into the tracked config. The sandbox label comes from `scripts/ccsl-sandbox.sh`; requires `jq` and `git` on PATH.
+Edit the layout with the ccstatusline TUI (`ccstatusline`) — changes write through the symlink into the tracked config. The custom widgets are the three `config/ccstatusline/ccsl-*.sh` scripts (see [Scripts](#scripts)); they need `jq` and `git` on PATH.
+
+### Statusline env overrides
+
+These are read at render time from the environment Claude Code passes to the statusline. Set them in your **personal** env (e.g. an `"env"` block in `~/.claude/settings.json`, or your shell rc) — not in this shared repo — so the tracked config stays neutral for everyone.
+
+| Variable                 | Effect                                                                                                          | Default              |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `CCSL_EDITOR`            | Scheme for the `ccsl-dir.sh` folder link: `file` (OS default), `vscode`, or `cursor`. Unknown values fall back to `file`. | `file` (`file://…`)  |
+| `CLAUDE_CODE_USE_BEDROCK`| When `1`, `ccsl-model.sh` prefixes the model with an AWS glyph. (Claude Code's own Bedrock switch — reused here.) | unset                |
+
+Example — VS Code links for yourself only, in `~/.claude/settings.json`:
+
+```json
+{ "env": { "CCSL_EDITOR": "vscode" } }
+```
+
+Notes: the folder link is an OSC 8 hyperlink, so the terminal must honour the chosen scheme on click (iTerm2 and the VS Code integrated terminal do; some terminals only linkify `http(s)`/`file`). The AWS glyph needs a Nerd Font, and its orange uses truecolor (24-bit).
 
 ## Plugin details
 
