@@ -3,11 +3,11 @@
   "lines": [
     [
       { "id": "1", "type": "model", "color": "white", "rawValue": true },
-      { "id": "2", "type": "separator", "dim": true, "customText": "│" },
+      { "id": "2", "type": "separator", "character": " │ ", "dim": true },
       { "id": "3", "type": "git-root-dir", "color": "brightBlue", "rawValue": true },
-      { "id": "4", "type": "separator", "dim": true, "customText": "│" },
+      { "id": "4", "type": "separator", "character": " │ ", "dim": true },
       { "id": "5", "type": "git-branch", "color": "brightCyan", "rawValue": true },
-      { "id": "6", "type": "separator", "dim": true, "customText": "│" },
+      { "id": "6", "type": "separator", "character": " │ ", "dim": true },
       {
         "id": "7",
         "type": "custom-command",
@@ -17,21 +17,23 @@
       }
     ],
     [
-      { "id": "8", "type": "context-bar", "color": "green", "metadata": { "display": "progress-short" } },
-      { "id": "9", "type": "context-percentage", "color": "white", "rawValue": true },
-      { "id": "10", "type": "separator", "dim": true, "customText": "│" },
-      { "id": "11", "type": "session-usage", "color": "green", "rawValue": true },
-      { "id": "12", "type": "block-timer", "color": "yellow", "rawValue": true },
-      { "id": "13", "type": "separator", "dim": true, "customText": "│" },
-      { "id": "14", "type": "session-clock", "color": "cyan", "rawValue": true },
-      { "id": "15", "type": "cache-hit-rate", "color": "brightBlack", "rawValue": true }
+      { "id": "8", "type": "context-bar", "color": "green", "rawValue": true, "metadata": { "display": "slider-only" } },
+      { "id": "9", "type": "separator", "character": " " },
+      { "id": "10", "type": "context-percentage", "color": "white", "rawValue": true },
+      { "id": "11", "type": "separator", "character": " │ ", "dim": true },
+      { "id": "12", "type": "session-usage", "color": "green", "rawValue": true },
+      { "id": "13", "type": "separator", "character": " " },
+      { "id": "14", "type": "reset-timer", "color": "yellow", "rawValue": true },
+      { "id": "15", "type": "separator", "character": " │ ", "dim": true },
+      { "id": "16", "type": "session-clock", "color": "cyan", "rawValue": true },
+      { "id": "17", "type": "separator", "character": " " },
+      { "id": "18", "type": "cache-hit-rate", "color": "brightBlack", "rawValue": true }
     ],
     []
   ],
   "flexMode": "full-minus-40",
   "compactThreshold": 60,
   "colorLevel": 2,
-  "defaultSeparator": "│",
   "inheritSeparatorColors": false,
   "globalBold": false,
   "gitCacheTtlSeconds": 5,
