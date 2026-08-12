@@ -10,8 +10,7 @@ that and nothing else.
 
 `caveman` — and `crisp`, despite its README — compress **grammar**: they drop
 articles and copulas and emit fragments. The result reads as a degraded
-thinker, costs the reader more to parse, and saves very little (measured
-session savings from prose compression are roughly 4–8%).
+thinker, costs the reader more to parse, and saves very little.
 
 `cutthroat` compresses **structure**: preamble, narration, recap, hedging,
 filler, and option menus. Grammar stays normal. Technical substance is
@@ -27,8 +26,10 @@ Add to `~/.claude/settings.json` by hand:
 { "outputStyle": "cutthroat:cutthroat" }
 ```
 
-Takes effect after `/clear` or a new session. Set it to `"Default"` to switch
-off.
+Takes effect after `/clear` or a new session. Set it to `"Default"` to stop
+the terminal style — but the `SubagentStart` hook below keeps running, since
+it is registered by the plugin and gated only by `CUTTHROAT_SUBAGENT`, not by
+the output style. Disabling the plugin entirely is what stops both.
 
 Do **not** use `/config` — it writes to project-local
 `.claude/settings.local.json`, scoping the style to one repo.
@@ -50,7 +51,8 @@ instead. This matters more than it looks: a subagent's final message lands in
 the parent conversation as a tool result and is re-sent with every later API
 call, so subagent padding is a recurring cost.
 
-Disable with `CUTTHROAT_SUBAGENT=off`.
+Disable by setting `CUTTHROAT_SUBAGENT=off` in the `env` block of
+`~/.claude/settings.json`.
 
 ## What it does not do
 

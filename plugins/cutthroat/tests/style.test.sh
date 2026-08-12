@@ -37,4 +37,10 @@ assert_true $? "body contains the clarifying-question guard"
 grep -qi 'my-voice' "$STYLE"
 assert_true $? "body delimits my-voice ownership"
 
+grep -qi 'dropped articles' "$STYLE"
+assert_true $? "body contains the anti-caveman grammar clause"
+
+grep -qi 'file:line' "$STYLE"
+assert_true $? "body contains the protected file:line reference"
+
 assert_summary
