@@ -6,20 +6,17 @@ A bash harness (`run.sh`) drives a `while` loop that re-invokes a **fresh headle
 
 Contrast with v1: v1 ran one long-lived in-session agent that self-scheduled with `ScheduleWakeup` and accumulated context; v2 replaces that with a stateless-per-task bash orchestrator.
 
-## Requirements
+## What it ships
 
-- **superpowers** (required) — the loop delegates planning and TDD to
-  `superpowers:brainstorming`, `superpowers:writing-plans`, and
-  `superpowers:test-driven-development`. Install it before running a loop.
-- **postmortem** (required for loop close-out) — `/agent-loop-postmortem` wraps
-  `/postmortem`. Bundled in claude-toolbelt; install it from the same marketplace.
-- **permissions** plugin (recommended) — provides `/permissions-advisor`, an advisory
-  pre-dispatch permission check used during setup. Available in claude-toolbelt; setup
-  degrades gracefully without it.
-- **python3** (for the dashboard) and **coreutils** (`gtimeout` for the per-tick
-  timeout on macOS) — see Safety posture.
+| Component | Kind | What |
+| --- | --- | --- |
+| `/agent-loop-setup` | skill | Interactive, one-time bootstrap — config wizard, brainstorm, plan, permission gate, scaffold. |
+| `/agent-loop` | skill | Background-launches the browser dashboard (zero ongoing tokens). |
+| `/agent-loop-postmortem` | skill | Wraps `/postmortem` to close out a loop, aggregating artefacts into a retrospective. |
+| `run.sh` | bash harness | Drives the per-tick `while` loop: worktree guard, tick-timeout cap, dispatches one tick per task. |
+| `web/serve.py` | dashboard server | Stdlib-only Python server; tails `events.jsonl` and streams snapshots over SSE. |
 
-## Lifecycle
+### Lifecycle
 
 ```
 /agent-loop-setup        interactive, run once — config wizard + brainstorm + plan + permission gate + scaffold
@@ -34,7 +31,7 @@ fresh tick per task      PLAN: Planner (most-capable, writing-plans) │ EXECUTE
 
 A tick is either a **PLAN tick** (a most-capable-tier **Planner** subagent expands a mapped-but-unplanned segment into tasks via `superpowers:writing-plans`, writing them to disk) or an **EXECUTE tick** (Scout → Worker → Evaluator on the next dependency-eligible task). The orchestrator process itself is a coordination + verification spine — its model is set by `Orchestrator model:` in `LOOP_CONFIG.md` (blank inherits your default; a standard tier suffices since the thinking-heavy roles are delegated to subagents).
 
-## Artefacts
+### Artefacts
 
 All loop artefacts live under a single per-run base dir, `.claude/loop/<run-id>/` (where `<run-id>` is `<date>-<topic>`, the same slug the postmortem uses). `.claude/` **is** tracked in the target repos where loops run, so the **durable artefacts under `$LOOP_DIR/` are committed/tracked** — nested per run, with full file + trailer history preserved. Only the transient `$LOOP_DIR/runtime/` subdir is ignored (via a nested `$LOOP_DIR/.gitignore` containing `runtime/`). Tracking the durable artefacts keeps real content in the per-tick commits, so the `Loop-Status:`/`Loop-Verification:`/`Loop-Files:` trailers those commits carry survive `git log --grep` for the postmortem's audit trail (no `--allow-empty` hack needed). The committed retrospective is the postmortem under `docs/postmortems/`. The harness exports the base dir as `$LOOP_DIR` and the launch command passes it.
 
@@ -60,7 +57,27 @@ Persistent cross-run knowledge — `.claude/loop/KNOWLEDGE.md` (the **sibling** 
 
 - `.claude/loop/KNOWLEDGE.md` — **persistent cross-run loop knowledge.** Repo-scoped (lives in the repo), committed (under `.claude/loop/`, outside any per-run dir, so it is not caught by the nested `$LOOP_DIR/.gitignore`'s `runtime/`). Holds only durable, generalized patterns accumulated across all loop runs. It is **never bulk-seeded into a run**: the Scout reads only task-relevant entries from it per task (the same relevance gate that keeps contracts lean), and `/agent-loop-postmortem` **auto-promotes** durable learnings from the run's `LOOP_LEARNINGS.md` into it at loop close — no human gate — classifying each `## Patterns` entry durable-vs-slice-specific (durable → generalize + dedup + merge; slice-specific → drop). **Known limitation:** KNOWLEDGE.md is committed on the loop branch; if a loop branch never merges to master, the next loop (branched from master) won't see its knowledge. Persistence is realised once the loop branch merges.
 
-## Launch
+## Install
+
+```text
+/plugin marketplace add mitcsutt/claude-toolbelt
+/plugin install agent-loop@claude-toolbelt
+```
+
+### Requirements
+
+- **superpowers** (required) — the loop delegates planning and TDD to
+  `superpowers:brainstorming`, `superpowers:writing-plans`, and
+  `superpowers:test-driven-development`. Install it before running a loop.
+- **postmortem** (required for loop close-out) — `/agent-loop-postmortem` wraps
+  `/postmortem`. Bundled in claude-toolbelt; install it from the same marketplace.
+- **permissions** plugin (recommended) — provides `/permissions-advisor`, an advisory
+  pre-dispatch permission check used during setup. Available in claude-toolbelt; setup
+  degrades gracefully without it.
+- **python3** (for the dashboard) and **coreutils** (`gtimeout` for the per-tick
+  timeout on macOS) — see Configuration.
+
+## Usage
 
 `/agent-loop-setup` prints the resolved command. It is, with `${CLAUDE_PLUGIN_ROOT}` expanded and `<run-id>` the `<date>-<topic>` slug:
 
@@ -83,15 +100,7 @@ The dashboard is **event-driven**: the harness appends one JSON line per event t
 
 Launching it never auto-starts the loop — it opens at the loop's current state with ▶ Start / ⟳ Resume / ⏸ Pause / ■ Stop controls. Add `--no-spawn` for a pure read-only observer.
 
-## Config
-
-Set in `LOOP_CONFIG.md` (under `.claude/loop/<run-id>/`):
-
-- **Limits** (one line): `tick_timeout` (per-tick seconds — rabbit-hole kill for a single stuck tick). There is **no cost/iteration/wall-clock budget.** The subscription usage window is the only ceiling.
-- **Blocker policy**: `continue-independent` (default — on a blocker, mark dependents `[blocked-upstream]` and keep working unblocked tasks) or `halt` (stop the loop).
-- **Granularity**: `single` (whole plan up front) or `segmented` (segments mapped in config, each expanded by its own PLAN tick).
-
-## Progress & usage
+### Progress & usage
 
 - Ticks run with `--output-format stream-json`. The terminal shows a **glanceable** view, not the raw trace:
   - While a tick runs, a single self-updating heartbeat line (spinner · current activity · tool count · elapsed) proves liveness.
@@ -101,13 +110,23 @@ Set in `LOOP_CONFIG.md` (under `.claude/loop/<run-id>/`):
 - The harness reads the `rate_limit_event` from each tick. When the usage window is exhausted it **auto-waits until the reset** (`resetsAt`) and resumes; if the reset is further out than `MAX_WAIT` (default 6h, e.g. a weekly window) it logs the reset time and **exits cleanly** so you can re-run `run.sh` later. Resume is safe at any point: work is committed per task, with stale-lock recovery and the Worker's checkpoint file.
 - The loop also self-terminates on `LOOP_DONE`, a tick `LOOP_HALT`, 3 consecutive failed/garbage ticks, or 3 consecutive `CONTINUE` ticks with no drop in remaining tasks (no-progress guard).
 
-## Safety posture
+## Configuration
+
+### Config
+
+Set in `LOOP_CONFIG.md` (under `.claude/loop/<run-id>/`):
+
+- **Limits** (one line): `tick_timeout` (per-tick seconds — rabbit-hole kill for a single stuck tick). There is **no cost/iteration/wall-clock budget.** The subscription usage window is the only ceiling.
+- **Blocker policy**: `continue-independent` (default — on a blocker, mark dependents `[blocked-upstream]` and keep working unblocked tasks) or `halt` (stop the loop).
+- **Granularity**: `single` (whole plan up front) or `segmented` (segments mapped in config, each expanded by its own PLAN tick).
+
+### Safety posture
 
 - Ticks run headless with `--dangerously-skip-permissions`, inside the OS sandbox, confined to a git **worktree**. `run.sh` enforces a worktree guard: it refuses to run if `pwd` does not equal the configured `Worktree:`.
 - The per-tick wall-clock cap (`tick_timeout`) requires `timeout` or `gtimeout` on PATH. If neither is present the harness still runs but logs a warning and the cap is **disabled** — a stuck tick can run unbounded. Install coreutils (`brew install coreutils` provides `gtimeout` on macOS) to restore it.
 - After the Worker returns, the tick reverts any changed path outside the Scout's `allow_list`, then runs parent-side verification. Only a clean parent-side run (plus an Evaluator PASS) commits.
 
-## Dynamic model selection
+### Dynamic model selection
 
 The governing rule is **use the least powerful model that can handle each role/task**. Tier is matched to complexity (cheap for read-only scouting and mechanical edits, most-capable for evaluation/judgement), resolved to the cheapest capable model alias at dispatch, honouring any tier overrides in `LOOP_CONFIG.md`. On a reasoning-gap failure the tick **escalates one tier** on re-dispatch rather than retrying the same model unchanged.
 
