@@ -239,11 +239,44 @@ Ordered, and each item traces to a rule above:
     track `docs/superpowers/specs/`.
 12. Author `evals/` suites for the prompt-shaped plugins.
 
+## Statusline portability (done)
+
+`config/ccstatusline/settings.json` hardcoded three
+`/Users/mitchellsutton/...` absolute `commandPath` values, so the tracked config
+only worked on one machine.
+
+Established from the upstream source (`sirmalloc/ccstatusline`), not assumed:
+
+- `src/widgets/CustomCommand.tsx:68` runs
+  `execSync(item.commandPath, { …, env: process.env, … })` with no `shell:
+  false` and no `cwd`. `execSync` goes through `/bin/sh -c`, so `commandPath` is
+  a **shell command string**: `$VAR` and `~` expand, and the executable bit is
+  genuinely required (confirming R9 for these files).
+- `src/utils/config.ts:30` — `DEFAULT_SETTINGS_PATH = ~/.config/ccstatusline/settings.json`.
+- `src/utils/config.ts:87-106` — writes resolve symlinks
+  (`resolveAtomicWriteTarget` / `resolveSymlinkTarget`), so a symlinked config
+  is written through to its real target. Temp files are created in the target's
+  directory.
+
+Fix: each `commandPath` became
+`"${CCSL_HOME:-$HOME/.config/ccstatusline}/ccsl-<name>.sh"`, and the documented
+install symlinks the **directory** rather than just `settings.json`, so the
+default resolves with no env var for any clone location. `CCSL_HOME` remains as
+an override for anyone keeping the scripts elsewhere.
+
+Verified: all four expansion cases (var set, var unset, path containing spaces,
+neither present → exit 127 rather than a silently empty widget), then
+end-to-end with `CCSL_HOME` unset against the live
+`~/.config/ccstatusline/settings.json` — all three widgets render and the
+tracked config contains no `/Users/` paths.
+
+Consequence: `.gitignore` now excludes `config/ccstatusline/*.bak` and `*.tmp`,
+since that directory is now ccstatusline's config dir.
+
 ## Known risks
 
-- **`config/ccstatusline/settings.json` hardcodes `/Users/mitchellsutton/...`
-  absolute paths.** A portability defect for a public repo. Out of scope for
-  this change; flagged for a follow-up.
+- ~~`config/ccstatusline/settings.json` hardcodes absolute paths.~~ **Fixed** —
+  see "Statusline portability" below.
 - **CI depends on the `claude` CLI being installable and auth-free on a
   runner.** Evidenced locally; unconfirmed on GitHub Actions until first run.
 - **Eval suites cost money to run** and are excluded from CI, so nothing forces
