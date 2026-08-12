@@ -1,0 +1,17 @@
+{
+  "description": "SubagentStart: inject report discipline into spawned subagents, which output styles never reach.",
+  "hooks": {
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-brief.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
