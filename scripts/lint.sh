@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck over every tracked shell file.
+# Runs shellcheck over every tracked shell file.
 #
 # --severity=warning: gate on real warnings/errors. The info/style noise
 # (SC1091 can't-follow-source from runtime-resolved paths, SC2016 intentional
