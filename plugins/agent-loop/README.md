@@ -142,5 +142,5 @@ The plugin hardcodes **no** model names — everything is expressed in tiers (`c
 bash tests/all.sh
 ```
 
-Runs `lib.test.sh`, `run.e2e.test.sh`, and the `*.contract.sh` suites, then `lint.sh` (shellcheck; skipped non-fatally if shellcheck is absent). Note: `lib.test.sh` and `run.e2e.test.sh` use `mktemp -d`; if the sandbox blocks it, run with the sandbox disabled.
+Runs `lib.test.sh`, `events.test.sh`, `run.e2e.test.sh`, the `tick-prompt.contract.sh`, `setup.contract.sh`, and `postmortem.contract.sh` suites, `serve.test.py` (skipped non-fatally if `python3` is absent), and `web.contract.sh`. Linting is repo-wide via `scripts/lint.sh`, run once by `scripts/test-all.sh`, not per-plugin. Note: `lib.test.sh` and `run.e2e.test.sh` use `mktemp -d`; if the sandbox blocks it, run with the sandbox disabled.
 

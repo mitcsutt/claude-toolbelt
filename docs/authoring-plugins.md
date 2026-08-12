@@ -137,8 +137,7 @@ absolute path. Traced to the upstream source
 `execSync(item.commandPath, …)` with no explicit interpreter, which shells
 out via `/bin/sh -c` and requires the target to be directly executable. That
 is why `config/ccstatusline/ccsl-*.sh` sit on the R9 allowlist alongside
-`run.sh` and `tests/all.sh` scripts, which a shell also invokes directly
-(e.g. `./run.sh`).
+`run.sh`, which a shell also invokes directly (e.g. `./run.sh`).
 
 ## Related
 

@@ -26,7 +26,7 @@ claude-toolbelt/
 │   └── superpowers/specs/             # tracked design specs (rationale, decisions)
 ├── plugins/<name>/                    # one directory per plugin — see docs/authoring-plugins.md
 ├── scripts/                           # repo-wide, not plugin-scoped
-│   ├── validate.sh                    # structural invariants (R1–R9)
+│   ├── validate.sh                    # structural invariants (R1, R2, R4, R5, R6, R9)
 │   ├── test-all.sh                    # validate + every plugin's tests/all.sh + node --test
 │   └── lint.sh                        # repo-wide shell lint — see docs/testing.md
 └── tests/lib/assert.sh                # shared bash assertion helper — the only copy (R6)

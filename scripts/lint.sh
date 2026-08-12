@@ -6,6 +6,7 @@
 # single-quoted prompt text, SC2181) is not actionable for this layout.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[ -n "$ROOT" ] || exit 1
 cd "$ROOT" || exit 1
 
 if ! command -v shellcheck >/dev/null 2>&1; then
