@@ -2,30 +2,20 @@
 
 A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is intentionally narrow and composable — install only the ones you want.
 
+[![CI](https://github.com/mitcsutt/claude-toolbelt/actions/workflows/ci.yml/badge.svg)](https://github.com/mitcsutt/claude-toolbelt/actions/workflows/ci.yml)
+
 ## What's inside
 
-### Plugins
-
 | Plugin             | What it does                                                                                                                                  |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `permissions`      | Logs every tool call and adds `/permissions-seed`, `/permissions-audit`, `/permissions-promote`, `/permissions-advisor` skills to turn patterns into allow rules that bypass Auto-mode classifier (plus a prospective pre-flight command check). |
-| `find-docs`        | Pulls fresh library docs, code examples, and does people/company research via Context7 and Exa MCPs.                                          |
-| `session-timeline` | Generates a self-contained HTML visualization of a Claude Code session — stats, tool usage, subagent cards, chronological timeline.            |
-| `agent-loop`         | Autonomous coding loop for long-running multi-task work — a bash harness runs a fresh headless tick per task (OS-level context reset), with sprint contracts, blocker taxonomy, and a live browser dashboard. Requires `superpowers`; bundles `postmortem` and uses the `permissions` plugin's `/permissions-advisor`. |
-| `postmortem`         | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
-| `cutthroat`          | Detail-preserving concise output style — compresses structure (preamble, narration, closing recap, filler), never grammar and never technical substance. Scoped to terminal prose, with an explicit override for documents. Extends report discipline to subagents via a `SubagentStart` hook, which output styles never reach. |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `permissions`       | Logs every tool call and gives you skills to turn the patterns into `settings.json` allow rules that bypass Auto-mode's classifier — plus a read-only, prospective pre-flight check. |
+| `find-docs`         | Pulls fresh library docs, code examples, and does people/company research via Context7 and Exa MCPs.                                          |
+| `session-timeline`  | Generates a self-contained HTML visualization of a Claude Code session — stats, tool usage, subagent cards, chronological timeline.            |
+| `agent-loop`        | Autonomous coding loop for long-running multi-task work — a bash harness runs a fresh headless tick per task (OS-level context reset), with sprint contracts, blocker taxonomy, and a live browser dashboard. Requires `superpowers`; bundles `postmortem` and uses the `permissions` plugin's `/permissions-advisor`. |
+| `postmortem`        | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
+| `cutthroat`         | Detail-preserving concise output style — compresses structure (preamble, narration, closing recap, filler), never grammar and never technical substance. Scoped to terminal prose, with an explicit override for documents. Extends report discipline to subagents via a `SubagentStart` hook, which output styles never reach. |
 
-### Scripts
-
-The statusline's [ccstatusline](https://github.com/sirmalloc/ccstatusline) custom-command widgets live alongside the tracked layout in `config/ccstatusline/` (config is `settings.json`). All require `jq` and `git` on PATH.
-
-| Script            | What it does                                                                                                                                   |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ccsl-model.sh`   | Model name. Prepends an AWS glyph (orange) when `CLAUDE_CODE_USE_BEDROCK=1`, flagging a Bedrock-routed session.                                |
-| `ccsl-dir.sh`     | Combined repo-root / worktree identity — repo dir name, or `⎇ <worktree>` in a worktree. The name is a click-to-open hyperlink; scheme set by `$CCSL_EDITOR`. |
-| `ccsl-sandbox.sh` | Sandbox state (`sandbox` / `sandbox:auto`), or nothing when not sandboxed.                                                                     |
-
-## Install (plugins)
+## Install
 
 Add this marketplace, then install whichever plugins you want:
 
@@ -39,24 +29,41 @@ Add this marketplace, then install whichever plugins you want:
 /plugin install cutthroat@claude-toolbelt
 ```
 
-## Shared rules (`shared-rules.md`)
+## Plugin details
 
-`shared-rules.md` is a portable set of agent-behavior rules (verification, minimal-diff, git, bash, etc.) that I import into my user-level `CLAUDE.md` so every project picks them up. The voice rules that used to live here moved out into the `cutthroat` plugin.
+### [`permissions`](plugins/permissions/README.md)
 
-Claude Code resolves `@<path>` lines in `CLAUDE.md` as file imports — the referenced file's contents are loaded into the agent's context just as if they lived inline.
+A thin observability layer that complements Claude Code's built-in Auto mode: three hooks log every tool call, prompt, and detected sandbox denial, and seven skills turn that history into allow rules — `/permissions-seed` (curated baseline from recipes), `/permissions-audit` (surface classifier-hitting patterns), `/permissions-promote` (turn a hitter into a rule), `/permissions-lint` (catch matcher-syntax pitfalls and conflicts), `/permissions-bootstrap-project` (project-scoped rules), `/sandbox-fix` (fixes from logged sandbox denials), and `/permissions-advisor` (read-only, prospective pre-flight check against a task's inferred commands).
 
-1. Clone this repo somewhere stable (e.g. `~/Documents/projects/claude-toolbelt`).
-2. Add one line to `~/.claude/CLAUDE.md`:
+### [`find-docs`](plugins/find-docs/README.md)
 
-   ```md
-   @~/Documents/projects/claude-toolbelt/shared-rules.md
-   ```
+Two MCPs glued together so you stop guessing at API surface area: **Context7** for curated, version-specific library docs, **Exa** for everything else (web search, code context, people/company research). The `/find-docs` skill routes each question to a backend before the first tool call, capped at 3 calls per question; `/pin-context7-libs` seeds and refreshes a project's Context7 library table so lookups skip the resolve step for known dependencies.
 
-3. Restart Claude Code (or start a new session). The rules now apply to every project.
+### [`session-timeline`](plugins/session-timeline/README.md)
 
-Per-project override: drop the same `@…` line into a repo's `./CLAUDE.md` to pull the rules in only for that repo, or paired with project-specific additions.
+Drops a single self-contained HTML file you can open offline, correlating subagent transcripts back into the main timeline. Useful for:
 
-## Install (statusline)
+- Reviewing what a long session actually did
+- Debugging where a subagent went off the rails
+- Sharing session shape without sharing raw transcripts
+
+### [`agent-loop`](plugins/agent-loop/README.md)
+
+An autonomous coding loop for long-running, multi-task work. A bash harness (`run.sh`) re-invokes a fresh headless Claude tick per task, giving an OS-level context reset between tasks instead of one long session accumulating drift. Each tick runs a Planner/Scout/Worker/Evaluator pipeline behind sprint contracts, a blocker taxonomy, and parent-side verification, with a live browser dashboard for progress and usage. Requires the `superpowers` plugin; bundles `postmortem` for close-out and uses the `permissions` plugin's `/permissions-advisor` when available.
+
+### [`postmortem`](plugins/postmortem/README.md)
+
+Structured retrospective generator. `/postmortem` interviews you about a completed task and writes a searchable 8-section document to `docs/postmortems/`, so past incidents and their causes stay greppable instead of lost in chat scrollback.
+
+### [`cutthroat`](plugins/cutthroat/README.md)
+
+An output style that compresses the structure of terminal prose — preamble, narration, closing recap, filler — never grammar and never technical substance. Full ruleset in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
+
+Activation is a hand-edited `"outputStyle": "cutthroat:cutthroat"` in `~/.claude/settings.json`. Do **not** use `/config` to select it — `/config` writes the selection to project-local `.claude/settings.local.json`, scoping the style to one repo instead of applying globally. Takes effect after `/clear` or a new session, since an output style is part of the system prompt and is read once at session start.
+
+Set it to `"Default"` to stop the style. That does **not** stop the `SubagentStart` hook the plugin registers — it's gated only by `CUTTHROAT_SUBAGENT=off` in the `env` block of `~/.claude/settings.json`. Disabling the plugin stops both.
+
+## Statusline
 
 The statusline uses [ccstatusline](https://github.com/sirmalloc/ccstatusline); the layout is a tracked config at `config/ccstatusline/settings.json`. Claude Code's `statusLine` config is global, not plugin-level.
 
@@ -87,7 +94,15 @@ The statusline uses [ccstatusline](https://github.com/sirmalloc/ccstatusline); t
 
    (`refreshInterval` requires Claude Code ≥ 2.1.97.)
 
-Edit the layout with the ccstatusline TUI (`ccstatusline`) — changes write through the symlink into the tracked config. The custom widgets are the three `config/ccstatusline/ccsl-*.sh` scripts (see [Scripts](#scripts)); they need `jq` and `git` on PATH.
+Edit the layout with the ccstatusline TUI (`ccstatusline`) — changes write through the symlink into the tracked config. The custom widgets are the three `config/ccstatusline/ccsl-*.sh` scripts below; they need `jq` and `git` on PATH.
+
+### Scripts
+
+| Script            | What it does                                                                                                                                   |
+| ----------------- | -----------------------------------------------------------------------------------------------------------------------------------------------|
+| `ccsl-model.sh`   | Model name. Prepends an AWS glyph (orange) when `CLAUDE_CODE_USE_BEDROCK=1`, flagging a Bedrock-routed session.                                |
+| `ccsl-dir.sh`     | Combined repo-root / worktree identity — repo dir name, or `⎇ <worktree>` in a worktree. The name is a click-to-open hyperlink; scheme set by `$CCSL_EDITOR`. |
+| `ccsl-sandbox.sh` | Sandbox state (`sandbox` / `sandbox:auto`), or nothing when not sandboxed.                                                                     |
 
 ### Statusline env overrides
 
@@ -95,7 +110,7 @@ These are read at render time from the environment Claude Code passes to the sta
 
 | Variable                 | Effect                                                                                                          | Default              |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `CCSL_HOME`              | Directory holding the `ccsl-*.sh` widget scripts. Only needed if you did **not** symlink the whole directory as in [Install (statusline)](#install-statusline) — e.g. you linked just `settings.json`, or keep the scripts elsewhere. | `$HOME/.config/ccstatusline` |
+| `CCSL_HOME`              | Directory holding the `ccsl-*.sh` widget scripts. Only needed if you did **not** symlink the whole directory as in [Statusline](#statusline) — e.g. you linked just `settings.json`, or keep the scripts elsewhere. | `$HOME/.config/ccstatusline` |
 | `CCSL_EDITOR`            | Scheme for the `ccsl-dir.sh` folder link: `file` (OS default), `vscode`, or `cursor`. Unknown values fall back to `file`. | `file` (`file://…`)  |
 | `CLAUDE_CODE_USE_BEDROCK`| When `1`, `ccsl-model.sh` prefixes the model with an AWS glyph. (Claude Code's own Bedrock switch — reused here.) | unset                |
 
@@ -107,48 +122,26 @@ Example — VS Code links for yourself only, in `~/.claude/settings.json`:
 
 Notes: the folder link is an OSC 8 hyperlink, so the terminal must honour the chosen scheme on click (iTerm2 and the VS Code integrated terminal do; some terminals only linkify `http(s)`/`file`). The AWS glyph needs a Nerd Font, and its orange uses truecolor (24-bit).
 
-## Plugin details
+## Shared rules
 
-### `permissions`
+[`shared-rules.md`](shared-rules.md) is a portable set of agent-behavior rules I import into my user-level `CLAUDE.md` so every project picks them up. The voice rules that used to live here moved out into the `cutthroat` plugin.
 
-Replaces Claude Code's Auto-mode classifier guesswork with a deterministic 4-tier decision engine:
+Claude Code resolves `@<path>` lines in `CLAUDE.md` as file imports — the referenced file's contents are loaded into the agent's context just as if they lived inline.
 
-1. Static allow/deny rules from `settings.json`
-2. Cached decisions for prior tool calls
-3. Pattern matching against seeded rules
-4. AI evaluation as last resort
+1. Clone this repo somewhere stable (e.g. `~/Documents/projects/claude-toolbelt`).
+2. Add one line to `~/.claude/CLAUDE.md`:
 
-The included skills help you *generate* those rules from real session activity:
+   ```md
+   @~/Documents/projects/claude-toolbelt/shared-rules.md
+   ```
 
-- `/permissions-seed` — propose new rules from recent tool calls
-- `/permissions-audit` — show which rules fired, which were bypassed
-- `/permissions-promote` — promote a cached decision to a permanent rule
-- `/permissions-advisor` — prospective pre-flight: infer the commands a task will need and check them against your allow-list (read-only, never writes)
+3. Restart Claude Code (or start a new session). The rules now apply to every project.
 
-### `find-docs`
+Per-project override: drop the same `@…` line into a repo's `./CLAUDE.md` to pull the rules in only for that repo, or paired with project-specific additions.
 
-Two MCPs glued together so you stop guessing at API surface area:
+## Contributing
 
-- **Context7** — version-specific docs for libraries (`/tanstack/query`, `/colinhacks/zod`, etc.). Better than web search for SDK / framework questions.
-- **Exa** — fast web/code/people/company search when Context7 doesn't have it.
-
-The skill teaches Claude when to reach for each.
-
-### `session-timeline`
-
-Drops a single self-contained HTML file you can open offline. Useful for:
-
-- Reviewing what a long session actually did
-- Debugging where a subagent went off the rails
-- Sharing session shape without sharing raw transcripts
-
-### `cutthroat`
-
-An output style that compresses the structure of terminal prose — preamble, narration, closing recap, filler — never grammar and never technical substance. Full ruleset in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
-
-Activation is a hand-edited `"outputStyle": "cutthroat:cutthroat"` in `~/.claude/settings.json`. Do **not** use `/config` to select it — `/config` writes the selection to project-local `.claude/settings.local.json`, scoping the style to one repo instead of applying globally. Takes effect after `/clear` or a new session, since an output style is part of the system prompt and is read once at session start.
-
-Set it to `"Default"` to stop the style. That does **not** stop the `SubagentStart` hook the plugin registers — it's gated only by `CUTTHROAT_SUBAGENT=off` in the `env` block of `~/.claude/settings.json`. Disabling the plugin stops both.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to propose a plugin, the testing bar, and the versioning policy.
 
 ## License
 
