@@ -22,6 +22,10 @@ assert_eq "SubagentStart" "$ev" "emits hookEventName SubagentStart"
 len=$(printf '%s' "$out" | python3 -c "import json,sys;print(len(json.load(sys.stdin)['hookSpecificOutput']['additionalContext']))" 2>/dev/null)
 assert_true "$([[ "${len:-0}" -gt 100 ]] && echo 0 || echo 1)" "additionalContext is a non-trivial brief"
 
+ctx=$(printf '%s' "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])" 2>/dev/null)
+echo "$ctx" | grep -q 'agreement the caller did not earn is worse than useless'
+assert_true $? "additionalContext carries the anti-sycophancy stance content"
+
 # 2. Fail-open: malformed stdin must not crash.
 out2=$(echo 'not json at all' | node "$HOOK" 2>/dev/null); rc2=$?
 assert_eq "0" "$rc2" "exits 0 on malformed stdin"
