@@ -2,20 +2,15 @@
 
 ## Agent voice
 
-- Anti-sycophantic — don't fold on pushback
-- No excessive validation — challenge reasoning
-- No flattery, no anthropomorphizing
-- Neither rude nor polite. Matter-of-fact, clear
-- Concise. No long-winded explanations
-- User sometimes wrong. Challenge assumptions
-- Not lazy. Right way, not easy way. Verify arguments
+Owned by the `cutthroat` plugin (`plugins/cutthroat/`), which ships it as an
+output style. Enable with `"outputStyle": "cutthroat:cutthroat"` in
+`~/.claude/settings.json`.
 
 ## Tooling
 
 - Use Skills from `~/.claude/skills/` when task matches (e.g. `/systematic-debugging` for bugs, `/go-testing` for tests)
 - Makefile exists → prefer targets (`make help`) over direct calls (`make test` not `go test ./...`)
 - Edit tool over `sed`. Search tool over `grep`/`rg`
-- Mermaid diagrams for complex systems / interactions
 
 ## MCPs and external blockers
 
@@ -24,7 +19,6 @@
 - Tool/MCP errors twice in same session → STOP and surface
 - Docs source inaccessible, MCP unauthenticated, reverse-engineering minified bundles → STOP and surface
 - "I'll just curl this" / "I'll just guess from training data" / "I'll just reverse-engineer" without explicit user approval = forbidden
-- Surfacing template: "Blocked by X. Options: (a) … (b) … . Which would you prefer?"
 
 ## Verification before declaring done
 
@@ -69,7 +63,6 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 
 - **Tool-first on contested or time-sensitive claims.** WebFetch / exa / context7 *before* asserting. Recall is hypothesis, not answer
 - **User pushes back with evidence (URL, screenshot, citation) → verify the evidence first.** Don't double down on recall. Don't fold to be agreeable. Fetch the source, then update
-- **Tag confidence on factual claims.** `[verified: <source>]` / `[recall: may be stale]` / `[unknown]`. Bias toward weakeners ("I think", "as of cutoff") over strengtheners ("definitely", "clearly wrong")
 - **Near-cutoff events = thin training coverage.** Last ~6 months before cutoff = unreliable recall, not solid knowledge
 - **Failure mode to avoid:** confident assertion → user contradicts → confident re-assertion. Worse than not knowing. Break the loop by fetching
 
@@ -86,10 +79,6 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 
 - Go straight to `dangerouslyDisableSandbox: true` for any git/gh command hitting a remote (`git push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`). The sandbox can't read `~/.ssh`, so SSH host-key verification breaks — don't try in-sandbox first.
 - Also use `dangerouslyDisableSandbox: true` for `git worktree remove` and `git branch -D`: the sandbox denies writes to the repo `.git` (`Operation not permitted` on worktree removal; `could not write config file .git/config` on branch delete — which still deletes the ref but leaves an orphan `[branch]` config section).
-
-## Worktree paths in messages
-
-- **Surface absolute worktree paths, not main-repo or relative paths.** When cwd is a worktree (e.g. `~/Documents/projects/<repo>/.claude/worktrees/<name>/`), reference files as `/Users/<me>/Documents/projects/<repo>/.claude/worktrees/<name>/path/to/foo.md` — not the main-repo path and not a relative path. Relative paths and main-repo paths break ctrl-click navigation in the terminal when cwd is the worktree
 
 ## Before fixing a "broken" / "flaky" / "failing" thing
 
