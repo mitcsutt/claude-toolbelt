@@ -13,6 +13,7 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 | `session-timeline` | Generates a self-contained HTML visualization of a Claude Code session — stats, tool usage, subagent cards, chronological timeline.            |
 | `agent-loop`         | Autonomous coding loop for long-running multi-task work — a bash harness runs a fresh headless tick per task (OS-level context reset), with sprint contracts, blocker taxonomy, and a live browser dashboard. Requires `superpowers`; bundles `postmortem` and uses the `permissions` plugin's `/permissions-advisor`. |
 | `postmortem`         | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
+| `cutthroat`          | Detail-preserving concise output style — compresses structure (preamble, narration, closing recap, filler), never grammar and never technical substance. Scoped to terminal prose, with an explicit override for documents. Extends report discipline to subagents via a `SubagentStart` hook, which output styles never reach. |
 
 ### Scripts
 
@@ -35,11 +36,12 @@ Add this marketplace, then install whichever plugins you want:
 /plugin install session-timeline@claude-toolbelt
 /plugin install agent-loop@claude-toolbelt
 /plugin install postmortem@claude-toolbelt
+/plugin install cutthroat@claude-toolbelt
 ```
 
 ## Shared rules (`shared-rules.md`)
 
-`shared-rules.md` is a portable set of agent-behavior rules (voice, verification, minimal-diff, git, bash, etc.) that I import into my user-level `CLAUDE.md` so every project picks them up.
+`shared-rules.md` is a portable set of agent-behavior rules (verification, minimal-diff, git, bash, etc.) that I import into my user-level `CLAUDE.md` so every project picks them up. The voice rules that used to live here moved out into the `cutthroat` plugin.
 
 Claude Code resolves `@<path>` lines in `CLAUDE.md` as file imports — the referenced file's contents are loaded into the agent's context just as if they lived inline.
 
@@ -134,6 +136,14 @@ Drops a single self-contained HTML file you can open offline. Useful for:
 - Reviewing what a long session actually did
 - Debugging where a subagent went off the rails
 - Sharing session shape without sharing raw transcripts
+
+### `cutthroat`
+
+An output style that compresses the structure of terminal prose — preamble, narration, closing recap, filler — never grammar and never technical substance. Full ruleset in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
+
+Activation is a hand-edited `"outputStyle": "cutthroat:cutthroat"` in `~/.claude/settings.json`. Do **not** use `/config` to select it — `/config` writes the selection to project-local `.claude/settings.local.json`, scoping the style to one repo instead of applying globally. Takes effect after `/clear` or a new session, since an output style is part of the system prompt and is read once at session start.
+
+Set it to `"Default"` to stop the style. That does **not** stop the `SubagentStart` hook the plugin registers — it's gated only by `CUTTHROAT_SUBAGENT=off` in the `env` block of `~/.claude/settings.json`. Disabling the plugin stops both.
 
 ## License
 
