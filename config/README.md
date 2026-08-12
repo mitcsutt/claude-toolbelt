@@ -16,12 +16,9 @@ statusline this repo uses:
   Tracked so the layout is shared and editable through ccstatusline's own
   TUI, which writes back to this file through a symlink once installed.
 - `ccsl-model.sh`, `ccsl-dir.sh`, `ccsl-sandbox.sh` — the three custom-command
-  widget scripts the layout references by path. These are the only tracked
-  files on the repo's mode-755 allowlist (R9 in
+  widget scripts the layout references by path, mode 755 (R9 in
   [`docs/authoring-plugins.md`](../docs/authoring-plugins.md)) because
-  ccstatusline invokes `commandPath` directly via `execSync`, with no
-  interpreter in front of it — the executable bit is load-bearing here, not
-  cosmetic.
+  ccstatusline invokes them directly. See that doc for why.
 
 For how to install and wire this up — the symlink step, pointing Claude
 Code's `statusLine` config at the ccstatusline binary, and the env var
