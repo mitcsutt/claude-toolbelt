@@ -1,68 +1,15 @@
 {
   "name": "claude-toolbelt",
+  "description": "A small kit of narrow, composable Claude Code plugins — permissions tuning, docs retrieval, session visualisation, autonomous loops, postmortems, and a concise output style.",
   "owner": {
     "name": "Mitchell Sutton"
   },
   "plugins": [
-    {
-      "name": "permissions",
-      "description": "Logs tool calls + sandbox denials + user prompts; provides /permissions-seed, /permissions-audit, /permissions-promote, /sandbox-fix, /permissions-lint, /permissions-bootstrap-project, and /permissions-advisor for tuning settings.json against real and anticipated usage and recovering from sandbox restrictions",
-      "version": "2.3.0",
-      "author": {
-        "name": "Mitchell Sutton"
-      },
-      "source": "./plugins/permissions",
-      "category": "developer-tools"
-    },
-    {
-      "name": "find-docs",
-      "description": "Retrieves up-to-date technical documentation, code examples, and performs people/company research using Context7 MCP and Exa AI MCP",
-      "version": "1.0.0",
-      "author": {
-        "name": "Mitchell Sutton"
-      },
-      "source": "./plugins/find-docs",
-      "category": "documentation"
-    },
-    {
-      "name": "session-timeline",
-      "description": "Generates self-contained HTML timeline visualizations from Claude Code session transcripts — dark-themed, responsive, with stats, tool usage, subagent cards, and chronological event timeline",
-      "version": "1.0.0",
-      "author": {
-        "name": "Mitchell Sutton"
-      },
-      "source": "./plugins/session-timeline",
-      "category": "developer-tools"
-    },
-    {
-      "name": "agent-loop",
-      "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A bash harness re-invokes a fresh headless tick per task for OS-level context reset, handles blockers with a taxonomy, and builds dynamic sprint contracts per task. Requires the superpowers plugin; bundles postmortem and recommends the permissions plugin for its /permissions-advisor pre-flight check.",
-      "version": "1.0.1",
-      "author": {
-        "name": "Mitchell Sutton"
-      },
-      "source": "./plugins/agent-loop",
-      "category": "developer-tools"
-    },
-    {
-      "name": "postmortem",
-      "description": "Generic structured retrospective generator. Writes searchable postmortem documents to docs/postmortems/ with an 8-section template. Callable after any significant task.",
-      "version": "1.0.0",
-      "author": {
-        "name": "Mitchell Sutton"
-      },
-      "source": "./plugins/postmortem",
-      "category": "productivity"
-    },
-    {
-      "name": "cutthroat",
-      "description": "Detail-preserving concise output style. Compresses structure — preamble, narration, recap, filler — never grammar and never technical substance. Scoped to terminal conversation with an explicit override for documents; extends report discipline to subagents via SubagentStart.",
-      "version": "1.0.0",
-      "author": {
-        "name": "Mitchell Sutton"
-      },
-      "source": "./plugins/cutthroat",
-      "category": "productivity"
-    }
+    { "name": "permissions",      "source": "./plugins/permissions",      "category": "developer-tools" },
+    { "name": "find-docs",        "source": "./plugins/find-docs",        "category": "documentation" },
+    { "name": "session-timeline", "source": "./plugins/session-timeline", "category": "developer-tools" },
+    { "name": "agent-loop",       "source": "./plugins/agent-loop",       "category": "developer-tools" },
+    { "name": "postmortem",       "source": "./plugins/postmortem",       "category": "productivity" },
+    { "name": "cutthroat",        "source": "./plugins/cutthroat",        "category": "productivity" }
   ]
 }
