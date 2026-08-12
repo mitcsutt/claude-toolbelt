@@ -26,5 +26,5 @@ statusline this repo uses:
 For how to install and wire this up — the symlink step, pointing Claude
 Code's `statusLine` config at the ccstatusline binary, and the env var
 overrides (`CCSL_HOME`, `CCSL_EDITOR`, `CLAUDE_CODE_USE_BEDROCK`) — see the
-root [`README.md`'s "Install (statusline)" section](../README.md#install-statusline)
+root [`README.md`'s "Statusline" section](../README.md#statusline)
 rather than this file; the steps aren't repeated here.
