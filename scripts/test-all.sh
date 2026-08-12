@@ -4,6 +4,7 @@
 # run manually. See docs/testing.md.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[ -n "$ROOT" ] || exit 1
 cd "$ROOT" || exit 1
 
 fail=0

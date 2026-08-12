@@ -3,6 +3,7 @@
 # Behavioural assertions belong in plugins/<name>/tests/all.sh, not here.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[ -n "$ROOT" ] || exit 1
 cd "$ROOT" || exit 1
 
 FAILED=0
@@ -50,9 +51,11 @@ fi
 
 echo "== marketplace entries =="
 # R2: entries carry only name, source, category. plugin.json is authoritative.
-while IFS= read -r extra; do
-  [ -n "$extra" ] && fail "marketplace entry has non-permitted key '$extra' (R2: plugin.json is authoritative)"
-done < <(jq -r '.plugins[] | keys[] | select(. != "name" and . != "source" and . != "category")' "$MARKET")
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  pname="${line%%$'\t'*}"; extra="${line#*$'\t'}"
+  fail "$pname: marketplace entry has non-permitted key '$extra' (R2: plugin.json is authoritative)"
+done < <(jq -r '.plugins[] | .name as $n | keys[] | select(. != "name" and . != "source" and . != "category") | "\($n)\t\(.)"' "$MARKET")
 
 # Every entry resolves to a real plugin directory.
 while IFS= read -r line; do
@@ -122,11 +125,8 @@ while IFS= read -r line; do
   mode="${line%% *}"; path="${line#* }"
   case "$mode" in
     100755)
-      case "$path" in
-        */tests/all.sh) ;;
-        *) printf '%s\n' "$EXEC_OK" | grep -qxF "$path" \
-             || fail "$path is mode 755 but is not on the executable allowlist (R9)" ;;
-      esac ;;
+      printf '%s\n' "$EXEC_OK" | grep -qxF "$path" \
+        || fail "$path is mode 755 but is not on the executable allowlist (R9)" ;;
   esac
 done < <(git ls-files -s | awk '{print $1, $4}')
 ok "file modes"

@@ -57,11 +57,7 @@ Structured retrospective generator. `/postmortem` interviews you about a complet
 
 ### [`cutthroat`](plugins/cutthroat/README.md)
 
-An output style that compresses the structure of terminal prose — preamble, narration, closing recap, filler — never grammar and never technical substance. Full ruleset in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
-
-Activation is a hand-edited `"outputStyle": "cutthroat:cutthroat"` in `~/.claude/settings.json`. Do **not** use `/config` to select it — `/config` writes the selection to project-local `.claude/settings.local.json`, scoping the style to one repo instead of applying globally. Takes effect after `/clear` or a new session, since an output style is part of the system prompt and is read once at session start.
-
-Set it to `"Default"` to stop the style. That does **not** stop the `SubagentStart` hook the plugin registers — it's gated only by `CUTTHROAT_SUBAGENT=off` in the `env` block of `~/.claude/settings.json`. Disabling the plugin stops both.
+An output style that compresses the structure of terminal prose — preamble, narration, closing recap, filler — never grammar and never technical substance. Extends the same report discipline to subagents via a `SubagentStart` hook, since output styles never reach them. Full ruleset, plus activation and disable mechanics, in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
 
 ## Statusline
 
