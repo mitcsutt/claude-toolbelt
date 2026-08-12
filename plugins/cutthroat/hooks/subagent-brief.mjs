@@ -31,6 +31,11 @@ function main() {
     /* fail-open */
   }
 
+  // EPIPE on a pipe surfaces asynchronously via an 'error' event,
+  // which a synchronous try/catch cannot see. Swallow it: a hook that
+  // crashes a subagent spawn is worse than one that writes nothing.
+  process.stdout.on("error", () => {});
+
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {
