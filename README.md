@@ -61,12 +61,16 @@ Per-project override: drop the same `@…` line into a repo's `./CLAUDE.md` to p
 The statusline uses [ccstatusline](https://github.com/sirmalloc/ccstatusline); the layout is a tracked config at `config/ccstatusline/settings.json`. Claude Code's `statusLine` config is global, not plugin-level.
 
 1. Install ccstatusline globally: `npm install -g ccstatusline` (or `bun add -g ccstatusline`).
-2. Symlink the tracked config so ccstatusline and its TUI read/write it in place:
+2. Symlink the whole tracked directory to ccstatusline's config location, so both the layout and the widget scripts resolve from it:
 
    ```bash
-   mkdir -p ~/.config/ccstatusline
-   ln -sfn /path/to/claude-toolbelt/config/ccstatusline/settings.json ~/.config/ccstatusline/settings.json
+   # If ~/.config/ccstatusline already exists, move it aside first —
+   # `ln -sfn` onto an existing directory nests the link inside it.
+   ln -sfn /path/to/claude-toolbelt/config/ccstatusline ~/.config/ccstatusline
    ```
+
+   The directory (not just `settings.json`) is linked on purpose. The widget entries in the tracked config reference their scripts as
+   `"${CCSL_HOME:-$HOME/.config/ccstatusline}/ccsl-<name>.sh"`, so with this symlink in place they resolve wherever you cloned the repo — no absolute paths, no env var. ccstatusline reads and writes through the symlink, so its TUI still edits the tracked config in place.
 
 3. Point Claude Code at the pinned binary in `~/.claude/settings.json`. Use an **absolute** `node <script>` command so it survives nvm node-version switches (find the paths with `command -v ccstatusline` and `readlink -f`):
 
@@ -91,6 +95,7 @@ These are read at render time from the environment Claude Code passes to the sta
 
 | Variable                 | Effect                                                                                                          | Default              |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------- | -------------------- |
+| `CCSL_HOME`              | Directory holding the `ccsl-*.sh` widget scripts. Only needed if you did **not** symlink the whole directory as in [Install (statusline)](#install-statusline) — e.g. you linked just `settings.json`, or keep the scripts elsewhere. | `$HOME/.config/ccstatusline` |
 | `CCSL_EDITOR`            | Scheme for the `ccsl-dir.sh` folder link: `file` (OS default), `vscode`, or `cursor`. Unknown values fall back to `file`. | `file` (`file://…`)  |
 | `CLAUDE_CODE_USE_BEDROCK`| When `1`, `ccsl-model.sh` prefixes the model with an AWS glyph. (Claude Code's own Bedrock switch — reused here.) | unset                |
 
