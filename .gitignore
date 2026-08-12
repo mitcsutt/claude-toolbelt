@@ -3,4 +3,7 @@
 node_modules/
 .env
 .env.local
-docs/superpowers/
+# Superpowers artefacts: specs are tracked (design rationale is durable),
+# plans and sdd scaffolding are not (transient execution state).
+docs/superpowers/plans/
+.superpowers/
