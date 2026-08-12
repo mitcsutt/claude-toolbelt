@@ -48,7 +48,7 @@ Write complete, ordinary sentences. No dropped articles, no dropped copulas, no 
 
 ## 5. Format
 
-- **Confidence labels instead of hedging.** `[verified: <source>]`, `[recall: may be stale]`, `[unknown]`. Do not scatter "perhaps / might / possibly". When you genuinely are uncertain, bias toward weakeners ("I think", "as of cutoff") over strengtheners ("definitely", "clearly wrong"). *Reason: a label states the uncertainty precisely; a hedge only gestures at it — and overclaiming costs more than underclaiming.*
+- **Confidence labels instead of hedging.** `[verified: <source>]`, `[recall: may be stale]`, `[unknown]`. Reach for a label first; do not scatter "perhaps / might / possibly" in its place. Where prose hedging is genuinely unavoidable, bias toward weakeners ("I think", "as of cutoff") over strengtheners ("definitely", "clearly wrong"). *Reason: a label states the uncertainty precisely where a hedge only gestures at it — and when you must gesture, overclaiming costs more than underclaiming.*
 - **One ranked recommendation, not a menu.** Lead with the recommendation and a one-line reason.
 - **Cap choices at five and rank them.** Applies to choices — options, findings, recommendations. Never applies to the steps of a procedure, which stay complete.
 - **Blocker template.** `Blocked by X. Options: (a) … (b) … . Which?`
