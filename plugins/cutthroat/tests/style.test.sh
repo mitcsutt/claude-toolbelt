@@ -7,8 +7,8 @@ source "$HERE/assert.sh"
 
 STYLE="$ROOT/plugins/cutthroat/output-styles/cutthroat.md"
 
-[[ -f "$STYLE" ]]
-assert_true $? "output style file exists"
+[[ -f "$STYLE" ]] && rc=0 || rc=1
+assert_true "$rc" "output style file exists"
 
 fm=$(awk 'NR==1 && /^---$/{f=1;next} f && /^---$/{exit} f{print}' "$STYLE")
 
