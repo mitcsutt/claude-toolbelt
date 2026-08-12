@@ -8,8 +8,8 @@ source "$HERE/assert.sh"
 HOOK="$ROOT/plugins/cutthroat/hooks/subagent-brief.mjs"
 HOOKS_JSON="$ROOT/plugins/cutthroat/hooks/hooks.json"
 
-[[ -f "$HOOK" ]]
-assert_true $? "hook file exists"
+[[ -f "$HOOK" ]] && rc=0 || rc=1
+assert_true "$rc" "hook file exists"
 
 # 1. Valid stdin produces well-formed output.
 out=$(echo '{"agentType":"general-purpose"}' | node "$HOOK" 2>/dev/null)
@@ -35,6 +35,8 @@ assert_eq "SubagentStart" "$ev2" "still emits the brief on malformed stdin"
 # 3. Fail-open: empty stdin.
 out3=$(printf '' | node "$HOOK" 2>/dev/null); rc3=$?
 assert_eq "0" "$rc3" "exits 0 on empty stdin"
+ev3=$(printf '%s' "$out3" | python3 -c "import json,sys;print(json.load(sys.stdin)['hookSpecificOutput']['hookEventName'])" 2>/dev/null)
+assert_eq "SubagentStart" "$ev3" "still emits the brief on empty stdin"
 
 # 4. Kill switch.
 out4=$(echo '{}' | CUTTHROAT_SUBAGENT=off node "$HOOK" 2>/dev/null); rc4=$?
