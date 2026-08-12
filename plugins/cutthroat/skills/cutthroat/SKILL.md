@@ -50,5 +50,12 @@ Set it to `"Default"` to turn it off. Either way it takes effect after `/clear`
 or a new session — the output style is part of the system prompt, which Claude
 Code reads once at session start.
 
+This only stops the terminal style. A `SubagentStart` hook injects the same
+report discipline into every spawned subagent, and it is registered by the
+plugin itself — it does not gate on the output style, so switching to
+`"Default"` does not touch it. Set `CUTTHROAT_SUBAGENT=off` in the `env` block
+of `~/.claude/settings.json` to stop that too, or disable the plugin entirely
+to stop both at once.
+
 Do **not** use `/config` to pick it. `/config` writes the selection to
 project-local `.claude/settings.local.json`, which scopes the style to one repo.
