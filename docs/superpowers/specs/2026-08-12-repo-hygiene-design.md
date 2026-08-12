@@ -92,6 +92,62 @@ file is invoked directly".
 `CLAUDE_CODE_OAUTH_TOKEN` unset — strong evidence it needs no authentication.
 To be confirmed on the first real CI run.
 
+### Observed conventions in public marketplace repos
+
+Four public repos examined by fetching their trees and files directly
+(`gh api repos/<r>/git/trees/HEAD?recursive=1`), selected by star count from
+`gh search repos "claude-code plugin marketplace"`:
+
+| Repo | ★ | plugins/ layout | per-plugin README | CLAUDE.md | docs/ | CI validation | tests |
+|---|---|---|---|---|---|---|---|
+| `trailofbits/skills-curated` | 482 | yes | yes (all) | yes | no | yes (3 workflows) | none |
+| `ivan-magda/claude-code-plugin-template` | 63 | yes | yes | no | yes | yes | none |
+| `obra/superpowers-marketplace` | 1206 | n/a — points at external repos | n/a | no | no | no | none |
+| `LeeJuOh/claude-code-zero` | 51 | yes | yes | no | no | — | none |
+
+Confirms R1 (`plugins/<name>/`), R4 (per-plugin README), the root `CLAUDE.md`,
+the `docs/` directory, `LICENSE`, and CI-validated manifests as settled
+convention.
+
+Two findings that cut the other way, and are the reason this spec does not
+simply copy them:
+
+1. **None of the four has any automated test suite for its plugins, and none
+   uses `evals/`.** R5 and D9 put this repo ahead of observed practice rather
+   than behind it. There is no established convention to follow, so the
+   testing design is derived from the official tooling instead.
+2. **All of them hand-roll manifest validation** — `trailofbits` in Python
+   (`python3 -m json.tool`, plus a ~30-line script checking each marketplace
+   entry has a matching directory and `plugin.json`), `ivan-magda` in jq
+   (per-field `jq -e ".name"` checks). **None invokes `claude plugin
+   validate`.** Using the official CLI replaces all of that hand-rolled
+   checking, and catches the version-precedence class of bug their scripts
+   cannot see.
+
+Worth adopting from `trailofbits/skills-curated@.github/workflows/validate.yml`
+— credible CI hygiene from a security firm:
+
+```yaml
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+steps:
+  - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+    with:
+      persist-credentials: false
+```
+
+SHA-pinned actions, least-privilege token, no credential persistence,
+cancel-in-progress concurrency.
+
+Also worth noting from `trailofbits/skills-curated@CLAUDE.md`: its content is
+resources → technical reference → structure diagram → naming conventions, and
+it calls out the gotcha that component directories must sit at the plugin root,
+**not** inside `.claude-plugin/`. That shape — agent-facing correctness rules
+and gotchas, not prose — is the model for this repo's `CLAUDE.md`.
+
 ## Decisions
 
 - **D1** — Mechanical enforcement via root scripts plus GitHub Actions CI.
