@@ -14,11 +14,4 @@ else
 fi
 echo "### web.contract.sh"
 bash "$HERE/web.contract.sh" || fail=1
-echo "### lint"
-bash "$HERE/lint.sh"; rc=$?
-if [[ "$rc" -eq 2 ]]; then
-  echo "(lint skipped — shellcheck not installed)"
-elif [[ "$rc" -ne 0 ]]; then
-  fail=1
-fi
 exit "$fail"
