@@ -1,0 +1,8 @@
+{
+  "name": "cutthroat",
+  "version": "1.0.0",
+  "description": "Detail-preserving concise output style. Compresses structure — preamble, narration, recap, filler — never grammar and never technical substance. Scoped to terminal conversation with an explicit override for documents; extends report discipline to subagents via SubagentStart.",
+  "author": {
+    "name": "Mitchell Sutton"
+  }
+}
