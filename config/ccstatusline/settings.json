@@ -5,7 +5,7 @@
       {
         "id": "5961923a-e8f1-4fe7-a216-c4d3e718f0c2",
         "type": "custom-command",
-        "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/config/ccstatusline/ccsl-model.sh",
+        "commandPath": "\"${CCSL_HOME:-$HOME/.config/ccstatusline}/ccsl-model.sh\"",
         "timeout": 2500,
         "preserveColors": true
       },
@@ -28,7 +28,7 @@
       {
         "id": "6d34ac49-6933-4769-b9ce-8c43f61a95d8",
         "type": "custom-command",
-        "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/config/ccstatusline/ccsl-dir.sh",
+        "commandPath": "\"${CCSL_HOME:-$HOME/.config/ccstatusline}/ccsl-dir.sh\"",
         "timeout": 2500,
         "preserveColors": true
       },
@@ -54,7 +54,7 @@
         "id": "92c3a143-4be9-4424-a545-06d3a1935ce0",
         "type": "custom-command",
         "color": "yellow",
-        "commandPath": "/Users/mitchellsutton/Documents/projects/claude/claude-toolbelt/config/ccstatusline/ccsl-sandbox.sh",
+        "commandPath": "\"${CCSL_HOME:-$HOME/.config/ccstatusline}/ccsl-sandbox.sh\"",
         "timeout": 2500
       }
     ],

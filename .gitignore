@@ -3,6 +3,11 @@
 node_modules/
 .env
 .env.local
+# ccstatusline writes backups and atomic-write temp files into its config dir,
+# which is this directory once ~/.config/ccstatusline is symlinked here.
+config/ccstatusline/*.bak
+config/ccstatusline/*.tmp
+
 # Superpowers artefacts: specs are tracked (design rationale is durable),
 # plans and sdd scaffolding are not (transient execution state).
 docs/superpowers/plans/
