@@ -1,0 +1,51 @@
+schema_version: "1.0"
+name: writes_file_despite_no_save_request
+description: >-
+  Hard contract #1: the postmortem file is the deliverable even when the
+  user asks to skip saving it. A model without this skill loaded will
+  happily comply with "no need to save" and never touch the filesystem —
+  that's the failure this case exists to catch.
+tags: [postmortem, hard-contract]
+
+execution:
+  prompt: >-
+    Quick postmortem on what we just did, no need to save it, just give
+    me a fast inline summary. Context: we spent today migrating the
+    billing service's database from MySQL to Postgres. Goal was
+    zero-downtime cutover. We completed the schema migration and the
+    dual-write shim, but the cutover script failed in staging because a
+    NOT NULL constraint on `invoices.currency` had no default and 40k
+    existing rows were null — root cause was an incomplete backfill
+    script that skipped soft-deleted rows. We rolled back the cutover and
+    left dual-write running. Decision: postponed the cutover to next week
+    rather than hand-patching prod data live. Follow-up: someone needs to
+    fix the backfill script to include soft-deleted rows and re-run it in
+    staging.
+  allowed_tools: [Skill, Bash, Read, Write, Glob, Grep]
+  max_turns: 15
+  timeout_seconds: 300
+
+runs: 3
+
+graders:
+  - type: regex
+    name: file_written_despite_no_save_request
+    target: files
+    pattern: '^docs/postmortems/\d{4}-\d{2}-\d{2}-.*\.md$'
+    flags: m
+    match: contains
+    weight: 3
+
+  - type: llm
+    name: points_at_file_not_full_paste
+    criteria: >-
+      The final reply surfaces the path to the written postmortem file
+      rather than pasting the full 8-section document inline. A short
+      pointer to the path, maybe with a one-line summary, is correct; a
+      multi-paragraph restatement of the whole document is not.
+    weight: 1
+
+expected_outcome: >-
+  A file matching docs/postmortems/<date>-<topic>.md exists in the
+  created-files list despite the "no need to save" phrasing, and the
+  reply points at it rather than pasting the content.
