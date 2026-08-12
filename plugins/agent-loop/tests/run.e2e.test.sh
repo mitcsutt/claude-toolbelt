@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/assert.sh"
+ROOT="$(cd "$HERE/../../.." && pwd)"
+# shellcheck source=../../../tests/lib/assert.sh
+source "$ROOT/tests/lib/assert.sh"
 RUN="$HERE/../run.sh"
 
 # Per-run base dir, relative to the worktree (run.sh runs with cwd=$WT and

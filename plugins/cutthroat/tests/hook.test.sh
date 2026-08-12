@@ -2,8 +2,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-# shellcheck source=./assert.sh
-source "$HERE/assert.sh"
+# shellcheck source=../../../tests/lib/assert.sh
+source "$ROOT/tests/lib/assert.sh"
 
 HOOK="$ROOT/plugins/cutthroat/hooks/subagent-brief.mjs"
 HOOKS_JSON="$ROOT/plugins/cutthroat/hooks/hooks.json"
