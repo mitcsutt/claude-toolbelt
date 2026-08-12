@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/assert.sh"
+ROOT="$(cd "$HERE/../../.." && pwd)"
+# shellcheck source=../../../tests/lib/assert.sh
+source "$ROOT/tests/lib/assert.sh"
 source "$HERE/../lib/loop.sh"
 
 # parse_sentinel echoes one of: DONE | CONTINUE | HALT | NONE

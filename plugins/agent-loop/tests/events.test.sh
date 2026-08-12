@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-source "$HERE/assert.sh"
+ROOT="$(cd "$HERE/../../.." && pwd)"
+# shellcheck source=../../../tests/lib/assert.sh
+source "$ROOT/tests/lib/assert.sh"
 source "$HERE/../lib/events.sh"
 
 # --- emit_event: appends one typed JSON line; numbers and JSON blobs keep their type ---

@@ -2,8 +2,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-# shellcheck source=./assert.sh
-source "$HERE/assert.sh"
+# shellcheck source=../../../tests/lib/assert.sh
+source "$ROOT/tests/lib/assert.sh"
 
 PLUGIN_JSON="$ROOT/plugins/cutthroat/.claude-plugin/plugin.json"
 MARKET_JSON="$ROOT/.claude-plugin/marketplace.json"
