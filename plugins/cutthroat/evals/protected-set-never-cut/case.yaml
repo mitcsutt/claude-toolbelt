@@ -1,0 +1,51 @@
+schema_version: "1.0"
+name: protected_set_never_cut
+description: >-
+  cutthroat protects an explicit set at full fidelity — error text
+  verbatim and file:line references — even while compressing everything
+  around them. Gives the model a stack trace and checks that the exact
+  strings survive.
+tags: [cutthroat, protected-set]
+
+execution:
+  prompt: >-
+    I got this error, what's wrong and how do I fix it?
+
+    Traceback (most recent call last):
+      File "app/models/user.py", line 42, in save
+        self.email = email.strip().lower()
+    AttributeError: 'NoneType' object has no attribute 'strip'
+  allowed_tools: []
+  max_turns: 3
+
+runs: 3
+
+graders:
+  - type: regex
+    name: file_line_reference_survives
+    target: last_message
+    pattern: 'app/models/user\.py:?\s*(line\s*)?42'
+    flags: i
+    match: contains
+    weight: 1
+
+  - type: regex
+    name: error_type_survives_verbatim
+    target: last_message
+    pattern: "AttributeError"
+    match: contains
+    weight: 1
+
+  - type: llm
+    name: fix_names_the_cause
+    criteria: >-
+      The response states that `email` is `None` when `.strip()` is
+      called on it — the actual cause — and gives a concrete fix (a None
+      check, a default, or validating the caller). Compressed prose is
+      fine; omitting the cause or the fix is not.
+    weight: 2
+
+expected_outcome: >-
+  Both regex graders pass (file:line and error class name appear
+  verbatim) and the LLM grader confirms the cause and fix survived
+  compression.

@@ -72,6 +72,39 @@ the output style, an interview flow, or a routing prompt gets graded before
 it ships. Nothing mechanically forces this today — it's a discipline this
 document states, not a gate a script enforces.
 
+### What's covered
+
+- **`cutthroat`** (3 cases) — `substance-survives-compression` is the
+  anti-caveman regression guard: a dense technical question graded on
+  whether the cause and fix survive, not on brevity. `protected-set-never-cut`
+  checks that a stack trace's `file:line` and exception name survive
+  verbatim. `structure-cut-vs-baseline` tags its graders `arm: both` so
+  running it with `--ablation with-without` reports the with/without score
+  delta — the discriminating signal the style exists to produce. Run without
+  `--ablation`, it scores only the arm under test.
+- **`postmortem`** (2 cases) — `writes-file-despite-no-save-request` checks
+  hard-contract #1 (the file is the deliverable even when told to skip
+  saving) via a `regex` grader on the created-files list, no LLM judging
+  needed for that signal. `all-eight-sections-present` checks hard-contract
+  #2 (exactly 8 named sections, in order) against the file content visible
+  in the tool-call trace.
+- **`find-docs`** (2 cases) — `routes-popular-library-to-context7` and
+  `routes-vendor-saas-to-exa-not-context7` check the routing table sends
+  each question shape to the right backend and doesn't default to
+  "Context7 first, Exa fallback." These cases call real MCP tools, which
+  `claude plugin eval` gates by default — grant them explicitly:
+  `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
+
+**Status:** authored and schema-validated (`claude plugin eval <path> --case
+<glob-that-matches-nothing>` loads and validates every `case.yaml` in the
+suite at zero cost — a malformed file errors before the "no cases match"
+message). One case (`cutthroat`'s `substance-survives-compression`, single
+run, no ablation) was executed for real to confirm the harness runs a
+committed case end to end; the live agent turn hit an auth error inside the
+eval's isolated sandbox environment rather than producing a real answer, so
+no baseline score is recorded here yet. Run the suites in a normally
+authenticated terminal to get real scores before relying on them.
+
 ## Related
 
 - [`docs/authoring-plugins.md`](authoring-plugins.md) — the README skeleton

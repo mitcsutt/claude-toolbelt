@@ -12,3 +12,6 @@ config/ccstatusline/*.tmp
 # plans and sdd scaffolding are not (transient execution state).
 docs/superpowers/plans/
 .superpowers/
+
+# claude plugin eval's default --output-dir: run artefacts, not suite content.
+plugins/*/evals/results/

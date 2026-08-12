@@ -1,0 +1,56 @@
+schema_version: "1.0"
+name: substance-survives-compression
+description: >-
+  Anti-caveman regression guard. cutthroat compresses structure, never
+  technical substance or grammar — this asks a question whose correct
+  answer is dense and technical, and grades whether the substance
+  survived, not merely whether the reply is short.
+tags: [cutthroat, anti-caveman]
+
+execution:
+  prompt: >-
+    A Postgres table `orders` has a single-column index on `customer_id`.
+    This query is slow: `SELECT * FROM orders WHERE customer_id = 123
+    ORDER BY created_at DESC LIMIT 10`. Explain why the existing index
+    doesn't prevent a slow query here, and give the specific fix.
+  allowed_tools: []
+  max_turns: 3
+
+runs: 3
+
+graders:
+  - type: llm
+    name: technical_substance_preserved
+    criteria: >-
+      The response identifies the specific technical cause: a
+      single-column index on customer_id supports the WHERE filter but
+      not the ORDER BY, so Postgres must sort the matching rows after the
+      index scan (or falls back to a sequential scan for a large match
+      set) — a compressed answer is fine, a vague one is not. The
+      response also states a specific fix: a composite index covering
+      (customer_id, created_at DESC) or equivalent, not just "add an
+      index."
+    weight: 2
+
+  - type: llm
+    name: grammar_stays_normal
+    criteria: >-
+      The response is written in complete, ordinary sentences — no
+      dropped articles or copulas, no telegraphic fragments, no dialect.
+      Compressing structure is fine; degrading grammar into caveman-style
+      fragments is a failure regardless of how technically correct the
+      content is.
+    weight: 1
+
+  - type: regex
+    name: no_pleasantry_opener
+    target: last_message
+    pattern: '^(Great|Sure|Certainly|I''d be happy|Of course)\b'
+    flags: i
+    match: not_contains
+    weight: 1
+
+expected_outcome: >-
+  High score on both LLM graders and the regex passes — the answer names
+  the sort-after-filter cause and the composite-index fix, in full
+  sentences, with no opener.

@@ -1,0 +1,45 @@
+schema_version: "1.0"
+name: routes_vendor_saas_to_exa_not_context7
+description: >-
+  Routing promise: first-party vendor SaaS docs go to Exa, not a
+  "Context7 first, Exa fallback" pattern the skill explicitly forbids.
+  MCP tools are gated in the eval harness; running this case for real
+  needs an explicit operator grant, e.g.
+  `--allow-tools "mcp__context7__*" "mcp__exa__*"` (see docs/testing.md).
+tags: [find-docs, routing]
+
+execution:
+  prompt: >-
+    What's the current Datadog API endpoint and payload shape for
+    creating a monitor via the REST API?
+  allowed_tools: [Skill, "mcp__context7__*", "mcp__exa__*"]
+  max_turns: 8
+  timeout_seconds: 180
+
+runs: 3
+
+graders:
+  - type: llm
+    name: used_exa_for_vendor_saas_docs
+    criteria: >-
+      The transcript shows at least one tool call to an Exa-family tool
+      (web_search_exa, web_search_advanced_exa, crawling_exa, or
+      get_code_context_exa on the "exa" server) to answer this Datadog
+      API question, since Datadog is first-party vendor SaaS
+      documentation that Context7 does not carry.
+    focus: trace
+    weight: 2
+
+  - type: llm
+    name: does_not_try_context7_first
+    criteria: >-
+      The transcript does not show a Context7 resolve-library-id or
+      query-docs call attempted before or instead of the Exa call for
+      this question — the routing table sends vendor SaaS docs straight
+      to Exa, not "Context7 first, Exa fallback."
+    focus: trace
+    weight: 1
+
+expected_outcome: >-
+  An Exa tool call answers the Datadog question directly; no Context7
+  resolve/query call appears in the trace.

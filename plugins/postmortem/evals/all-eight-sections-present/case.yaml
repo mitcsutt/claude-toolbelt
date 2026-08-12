@@ -1,0 +1,50 @@
+schema_version: "1.0"
+name: all_eight_sections_present
+description: >-
+  Hard contract #2: the output has exactly the 8 named sections, in
+  order — not 7, not 12, even when a section ends up short. Checks the
+  written file's actual content via the tool-call trace.
+tags: [postmortem, hard-contract]
+
+execution:
+  prompt: >-
+    Write a postmortem for today's task. Context: we added rate limiting
+    to the public API. Completed: added a token-bucket limiter
+    middleware and unit tests. Failed: the first attempt used a global
+    in-memory counter that didn't work across our 4 app replicas —
+    discovered when load testing showed 4x the intended limit. Root
+    cause: no shared state across replicas; needed Redis-backed counters
+    instead. Decision: used Redis with a Lua script for atomic
+    increment-and-check rather than a naive GET-then-SET, to avoid a
+    race condition. Follow-up: ops needs to provision a Redis instance
+    in the prod cluster before this ships.
+  allowed_tools: [Skill, Bash, Read, Write, Glob, Grep]
+  max_turns: 15
+  timeout_seconds: 300
+
+runs: 3
+
+graders:
+  - type: regex
+    name: postmortem_file_created
+    target: files
+    pattern: '^docs/postmortems/\d{4}-\d{2}-\d{2}-.*\.md$'
+    flags: m
+    match: contains
+    weight: 1
+
+  - type: llm
+    name: exactly_eight_named_sections_in_order
+    criteria: >-
+      The file written via the Write tool call in this trace contains
+      exactly these 8 section headings, in this order: Summary, What
+      worked well, What failed or blocked, Root causes, Decisions made
+      and why, Manual follow-up tasks, Recommendations for next time, Key
+      learnings. Extra sections, missing sections, merged sections, or
+      reordered sections all fail this check — even if a section's body
+      is short or reads "_No items._".
+    focus: trace
+    weight: 3
+
+expected_outcome: >-
+  The created file has all 8 sections, correctly named and ordered.

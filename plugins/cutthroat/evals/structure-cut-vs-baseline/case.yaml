@@ -1,0 +1,51 @@
+schema_version: "1.0"
+name: structure_cut_vs_baseline
+description: >-
+  The core promise: cutthroat cuts preamble, narration, and closing recap
+  that the default register adds. Graders are tagged arm: both so running
+  this with `--ablation with-without` reports the with/without score
+  delta directly — the discriminating signal cutthroat exists to
+  produce. Run without --ablation, this scores only the single arm under
+  test.
+tags: [cutthroat, structure]
+
+execution:
+  prompt: >-
+    Here's a Python function:
+
+    def divide(a, b):
+        return a / b
+
+    Add input validation so it raises a clear error instead of crashing
+    on b == 0, and show me the updated function.
+  allowed_tools: []
+  max_turns: 3
+
+runs: 3
+
+graders:
+  - type: llm
+    name: no_preamble_or_recap
+    criteria: >-
+      The final reply has no warm-up opener ("Great question", "Sure",
+      "I'd be happy to help") and no closing prose recap that restates in
+      words what the code block already shows. Leading straight into the
+      code, or a one-line scope note, is fine; a paragraph re-explaining
+      the change afterward is not.
+    focus: last_message
+    weight: 2
+    arm: both
+
+  - type: llm
+    name: no_closing_offer
+    criteria: >-
+      The final reply does not end with a closing offer such as "Let me
+      know if you'd like anything else" or "Hope this helps."
+    focus: last_message
+    weight: 1
+    arm: both
+
+expected_outcome: >-
+  With --ablation with-without: the with-plugin arm scores near 1 on
+  both graders, the no-plugin arm scores lower — the delta is the point.
+  Without --ablation, this scores only the arm under test.
