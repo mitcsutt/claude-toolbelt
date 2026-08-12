@@ -25,6 +25,12 @@ jobs:
         with:
           node-version: '22'
 
+      # Needed for `claude plugin validate --strict`, which scripts/validate.sh
+      # silently skips when the CLI is absent. Runs unauthenticated — no keys.
+      # Never used to run evals: those cost money and are run manually only.
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
