@@ -1,4 +1,4 @@
-# Permissions Plugin
+# permissions
 
 A thin observability layer that complements Claude Code's built-in [Auto mode](https://code.claude.com/docs/en/permission-modes#eliminate-prompts-with-auto-mode). Logs every tool call, then gives you three skills for seeding, auditing, and growing a settings.json allow list that skips Auto mode's classifier (and its per-call token cost).
 
@@ -11,7 +11,20 @@ Auto mode already does AI-based permission evaluation, prompt-injection defence,
 
 This plugin fills that gap. It is intentionally small — three hooks, seven skills, some reference docs.
 
-## What it does
+## What it ships
+
+| Component | Kind | What |
+| --- | --- | --- |
+| `hooks/log.mjs` | hook (`PreToolUse`) | Appends every tool invocation to `~/.claude/permission-log.jsonl`. |
+| `hooks/sandbox-watch.mjs` | hook (`PostToolUse`) | Detects sandbox-denial signatures on `Bash` calls and logs them to `~/.claude/sandbox-denials.jsonl`. |
+| `hooks/prompt-log.mjs` | hook (`UserPromptSubmit`) | Records a 200-char excerpt of each user prompt to `~/.claude/prompt-log.jsonl`. |
+| `/permissions-seed` | skill | One-shot merge of curated rule sets from `references/recipes.md` into `settings.json`. |
+| `/permissions-audit` | skill | Cross-references the log against current allow rules; surfaces classifier-hitting patterns. |
+| `/permissions-promote` | skill | Turns frequent classifier-hitting patterns into narrow allow rules, after approval. |
+| `/sandbox-fix` | skill | Reads `sandbox-denials.jsonl` and recommends targeted fixes per denial signature. |
+| `/permissions-lint` | skill | Scans `settings.json` for matcher-syntax pitfalls, subsumed rules, and allow/deny conflicts. |
+| `/permissions-bootstrap-project` | skill | Filters the log to the current project root and proposes project-local rules. |
+| `/permissions-advisor` | skill | Read-only, prospective pre-dispatch permission check against a task's inferred commands. |
 
 ### Hooks
 
@@ -69,7 +82,9 @@ Shows a breakdown: calls covered by allow rules, calls auto-approved by Auto mod
 
 Turns the top classifier hitters into narrow allow rules in `settings.json` after you approve each one. Run it again whenever `/permissions-audit` shows a growing classifier bucket.
 
-## Log format
+## Configuration
+
+### Log format
 
 `~/.claude/permission-log.jsonl`, one JSON object per line:
 
@@ -108,7 +123,7 @@ To see the full unsanitized command, open the session's transcript under `~/.cla
 - `prompt_excerpt` — first 200 chars of the submitted prompt
 - `prompt_len` — full character length of the original prompt
 
-## Log files
+### Log files
 
 Three JSONL files live under `~/.claude/`. Each is append-only, written by the hooks in this plugin.
 
@@ -120,7 +135,15 @@ Three JSONL files live under `~/.claude/`. Each is append-only, written by the h
 
 None of these files are rotated automatically. If they grow large, archive or delete; the hooks recreate them on next write.
 
-## References
+## Tests
+
+```bash
+bash plugins/permissions/tests/all.sh
+```
+
+## Related
+
+### References
 
 - [`references/rule-syntax.md`](references/rule-syntax.md) — allow/deny pattern matching semantics.
 - [`references/security-considerations.md`](references/security-considerations.md) — risk tiers for deciding what is safe to auto-approve.
@@ -128,7 +151,7 @@ None of these files are rotated automatically. If they grow large, archive or de
 - [`references/sandbox-signatures.md`](references/sandbox-signatures.md) — catalog of detected sandbox-denial signatures.
 - [`references/matcher-syntax-pitfalls.md`](references/matcher-syntax-pitfalls.md) — common rule shapes the lint catches.
 
-## Relationship to Auto mode
+### Relationship to Auto mode
 
 This plugin is additive, not a replacement. Auto mode decides whether to run a call; this plugin records what ran so you can tune the rules that Auto mode consults first. They compose:
 
