@@ -1,0 +1,44 @@
+schema_version: "1.0"
+name: routes_popular_library_to_context7
+description: >-
+  Routing promise: a popular OSS library question goes to Context7,
+  chosen before the first tool call — not answered from stale memory,
+  not routed to Exa. MCP tools are gated in the eval harness; running
+  this case for real needs an explicit operator grant, e.g.
+  `--allow-tools "mcp__context7__*" "mcp__exa__*"` (see docs/testing.md).
+tags: [find-docs, routing]
+
+execution:
+  prompt: >-
+    How do I invalidate a specific query key with TanStack Query v5
+    after a mutation succeeds?
+  allowed_tools: [Skill, "mcp__context7__*", "mcp__exa__*"]
+  max_turns: 8
+  timeout_seconds: 180
+
+runs: 3
+
+graders:
+  - type: llm
+    name: used_context7_not_exa
+    criteria: >-
+      The transcript shows a tool call to the Context7 MCP server (e.g.
+      resolve-library-id / query-docs, or equivalently named tools on
+      the "context7" server) to answer a TanStack Query question — a
+      popular, well-documented OSS library. It does not fall back to
+      Exa web search for this question, and it does not answer purely
+      from memory with no tool call at all.
+    focus: trace
+    weight: 2
+
+  - type: llm
+    name: stays_within_call_budget
+    criteria: >-
+      No more than 3 total tool calls were made to answer this single
+      question, per the plugin's hard limit.
+    focus: trace
+    weight: 1
+
+expected_outcome: >-
+  A Context7 tool call resolves/queries TanStack Query docs, no Exa
+  call is made, and the total tool-call count is at most 3.
