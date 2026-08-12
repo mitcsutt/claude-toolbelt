@@ -37,7 +37,15 @@ out4=$(echo '{}' | CUTTHROAT_SUBAGENT=off node "$HOOK" 2>/dev/null); rc4=$?
 assert_eq "0" "$rc4" "exits 0 when disabled"
 assert_eq "" "$out4" "emits nothing when CUTTHROAT_SUBAGENT=off"
 
-# 5. hooks.json contract.
+# 5. Fail-open: stdout closes early (EPIPE) must not crash the hook.
+# Pipeline is echo | node | true (3 stages) -- use PIPESTATUS to get
+# node's own exit status (index 1), not echo's (index 0) or the
+# pipeline's last element (true, index 2).
+echo '{}' | node "$HOOK" 2>/dev/null | true
+rc5=${PIPESTATUS[1]}
+assert_eq "0" "$rc5" "exits 0 when stdout pipe closes early (EPIPE)"
+
+# 6. hooks.json contract.
 python3 -c "import json;json.load(open('$HOOKS_JSON'))" 2>/dev/null
 assert_true $? "hooks.json is valid JSON"
 
