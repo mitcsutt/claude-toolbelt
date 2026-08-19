@@ -10,6 +10,7 @@
     { "name": "session-timeline", "source": "./plugins/session-timeline", "category": "developer-tools" },
     { "name": "agent-loop",       "source": "./plugins/agent-loop",       "category": "developer-tools" },
     { "name": "postmortem",       "source": "./plugins/postmortem",       "category": "productivity" },
-    { "name": "cutthroat",        "source": "./plugins/cutthroat",        "category": "productivity" }
+    { "name": "cutthroat",        "source": "./plugins/cutthroat",        "category": "productivity" },
+    { "name": "orchestrate",      "source": "./plugins/orchestrate",      "category": "developer-tools" }
   ]
 }

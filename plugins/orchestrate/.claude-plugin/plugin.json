@@ -1,0 +1,8 @@
+{
+  "name": "orchestrate",
+  "version": "0.1.0",
+  "description": "Token-frugal orchestration doctrine for an expensive top-level model: reserve the expensive tier for judgment, route token-heavy bounded work to the cheapest capable subagent tier, demand compact returns with traceable source references, and vet before acting. Model- and harness-agnostic.",
+  "author": {
+    "name": "Mitchell Sutton"
+  }
+}
