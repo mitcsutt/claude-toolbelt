@@ -1,0 +1,8 @@
+{
+  "name": "git",
+  "version": "1.0.0",
+  "description": "Generic git and GitHub helper skills. Currently ships gh-pending-review (add inline comments to an existing pending PR review without overwriting or duplicating it, via GraphQL); a home for future git/GitHub skills.",
+  "author": {
+    "name": "Mitchell Sutton"
+  }
+}

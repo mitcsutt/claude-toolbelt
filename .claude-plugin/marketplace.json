@@ -11,6 +11,7 @@
     { "name": "agent-loop",       "source": "./plugins/agent-loop",       "category": "developer-tools" },
     { "name": "postmortem",       "source": "./plugins/postmortem",       "category": "productivity" },
     { "name": "cutthroat",        "source": "./plugins/cutthroat",        "category": "productivity" },
-    { "name": "orchestrate",      "source": "./plugins/orchestrate",      "category": "developer-tools" }
+    { "name": "orchestrate",      "source": "./plugins/orchestrate",      "category": "developer-tools" },
+    { "name": "git",              "source": "./plugins/git",              "category": "developer-tools" }
   ]
 }
