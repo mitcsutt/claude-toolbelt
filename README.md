@@ -14,6 +14,7 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 | `agent-loop`        | Autonomous coding loop for long-running multi-task work — a bash harness runs a fresh headless tick per task (OS-level context reset), with sprint contracts, blocker taxonomy, and a live browser dashboard. Requires `superpowers`; bundles `postmortem` and uses the `permissions` plugin's `/permissions-advisor`. |
 | `postmortem`        | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
 | `cutthroat`         | Detail-preserving concise output style — compresses structure (preamble, narration, closing recap, filler), never grammar and never technical substance. Scoped to terminal prose, with an explicit override for documents. Extends report discipline to subagents via a `SubagentStart` hook, which output styles never reach. |
+| `orchestrate`       | Token-frugal orchestration doctrine for an expensive top-level model — reserve the expensive tier for judgment, route token-heavy bounded work to the cheapest capable subagent tier, demand compact traceable returns, and vet before acting. Model- and harness-agnostic; skill only. |
 
 ## Install
 
@@ -27,6 +28,7 @@ Add this marketplace, then install whichever plugins you want:
 /plugin install agent-loop@claude-toolbelt
 /plugin install postmortem@claude-toolbelt
 /plugin install cutthroat@claude-toolbelt
+/plugin install orchestrate@claude-toolbelt
 ```
 
 ## Plugin details
@@ -58,6 +60,10 @@ Structured retrospective generator. `/postmortem` interviews you about a complet
 ### [`cutthroat`](plugins/cutthroat/README.md)
 
 An output style that compresses the structure of terminal prose — preamble, narration, closing recap, filler — never grammar and never technical substance. Extends the same report discipline to subagents via a `SubagentStart` hook, since output styles never reach them. Full ruleset, plus activation and disable mechanics, in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
+
+### [`orchestrate`](plugins/orchestrate/README.md)
+
+Doctrine for an expensive top-level model that should spend its tokens on judgment, not on token-heavy bounded work. `/orchestrate` walks Step 0 (decide whether to orchestrate at all — most fixes stay single-threaded), routing each slice to the cheapest capable tier by judgment demand, a five-part handoff packet, compact returns that stay traceable to a source, parallel-width limits, and a verification gate before claiming done. Model- and harness-agnostic — it names no specific models or tools.
 
 ## Statusline
 
