@@ -61,10 +61,10 @@ output style. Enable with `"outputStyle": "cutthroat:cutthroat"` in
 
 Training cutoff = stale recall risk. Default to **verify, not assert** for: company status, acquisitions, product versions, employee roles, prices, news, library current state, API surface area.
 
-- **Tool-first on contested or time-sensitive claims.** WebFetch / exa / context7 *before* asserting. Recall is hypothesis, not answer
+- **Tool-first on contested or time-sensitive claims.** WebFetch or raw `curl` (live sources) / context7 for library docs *before* asserting — **not exa**, which serves cached snapshots and will confirm a stale fact with false confidence. Recall is hypothesis, not answer
 - **User pushes back with evidence (URL, screenshot, citation) → verify the evidence first.** Don't double down on recall. Don't fold to be agreeable. Fetch the source, then update
 - **Near-cutoff events = thin training coverage.** Last ~6 months before cutoff = unreliable recall, not solid knowledge
-- **Failure mode to avoid:** confident assertion → user contradicts → confident re-assertion. Worse than not knowing. Break the loop by fetching
+- **Failure mode to avoid:** confident assertion → user contradicts → confident re-assertion. Worse than not knowing. Break the loop by fetching a **live** source (`curl`/WebFetch), never a cached tool like exa — a cached tool echoes the same stale answer and deepens the mistake
 
 ## Git
 
@@ -73,12 +73,18 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 - Working on PR user referenced: local branch may not match PR's remote head ref (e.g. `gh pr checkout 3074` creates `pr-3074` even when PR branch is `ENG-X-foo`). Before commit, compare `git branch --show-current` to `gh pr view <num> --json headRefName`. Differ → ask which to commit on
 - "Rebase onto master" / "merge into branch X" ≠ consent to push. "I'll test it first" = explicit anti-consent. Push only when user says push
 - **Before `gh pr create`, find and use the repo's PR template.** Check `.github/PULL_REQUEST_TEMPLATE.md`, `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/*.md`, `docs/PULL_REQUEST_TEMPLATE.md`, repo-root `PULL_REQUEST_TEMPLATE.md`. Found → fill every section, check boxes only when clearly satisfied, leave unverified ones unchecked. Not found → fall back to `## Summary` / `## Test plan` default. The default system-prompt PR format is the fallback, not the default — always look for a template first.
+- **PR descriptions are the shortest useful summary, never an essay.** The description says what changed and why in a few sentences or tight bullets; the reviewer gets the specifics from the diff, not the body. Fill the template's sections but keep the prose in each tight — never a per-file changelog, a metrics/bundle-number dump, or a paragraph-by-paragraph walkthrough. Detailed proof (verification logs, bundle metrics, reproduction traces) goes in a PR comment or the linked ticket, not the description. This is a length rule, not a grammar one — write normal prose, just little of it. When unsure how short, err shorter and let me ask for more. Rationale: reviewers won't read a wall of text, and it buries the one thing they needed; the diff already carries the detail.
 - **Before creating a PR, rebase the branch onto the up-to-date origin version of its base branch.** Confirm the actual base first (default is often `master`/`main`, but stacked or non-default-base work differs — don't assume). Workflow: `git fetch origin <base>` then `git rebase origin/<base>`. Rebase onto the fetched `origin/<base>`, never a stale local copy. Rebasing ≠ consent to push; the post-rebase push needs `--force-with-lease` and only when told to push. Conflicts → stop and surface, don't resolve blindly. This gets the branch current before opening the PR; it does not authorise rewriting already-reviewed history mid-review without asking.
 
 ## Sandbox: git and gh remote commands
 
-- Go straight to `dangerouslyDisableSandbox: true` for any git/gh command hitting a remote (`git push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`). The sandbox can't read `~/.ssh`, so SSH host-key verification breaks — don't try in-sandbox first.
-- Also use `dangerouslyDisableSandbox: true` for `git worktree remove` and `git branch -D`: the sandbox denies writes to the repo `.git` (`Operation not permitted` on worktree removal; `could not write config file .git/config` on branch delete — which still deletes the ref but leaves an orphan `[branch]` config section).
+`git` and `gh` are in `permissions.sandbox.excludedCommands`, so a command **whose first token is `git` or `gh` runs outside the sandbox automatically** — full network and filesystem access, no `dangerouslyDisableSandbox` needed. Remote ops (`push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`) and local `.git` writes (`worktree remove`, `branch -D`, `checkout`) just work when invoked bare. The real blocker was never `~/.ssh` read access (the sandbox reads `~/.ssh` by default per current docs); it is **network egress**, which the exclusion sidesteps.
+
+- **Never wrap git/gh behind another command.** `excludedCommands` matches the *first token* only. `cd /path && git push` has head `cd`, so the whole line runs sandboxed and the remote op fails. Use `git -C <path> push` / `gh -R <repo> …` instead — the head stays `git`/`gh` and the exclusion applies. This also keeps `file:line`-style paths ctrl-clickable.
+- **Do not prefix git/gh with `source …`, `echo … &&`, `export … &&`, or `bash script.sh`** for the same reason — the head is no longer `git`/`gh`.
+- **`dangerouslyDisableSandbox: true` is a last resort, not the default.** It disables *all* network and filesystem isolation (broader than the git-only exclusion) and is redundant for a bare git/gh command. Reach for it only when a genuine sandbox failure remains after the command is already un-wrapped (head = `git`/`gh`), or for a non-excluded remote tool (e.g. raw `curl` against a host).
+- `git worktree remove` and `git branch -D` run fine bare; the earlier `.git/config` write and worktree-removal EPERM failures were the same wrapping problem, not an inherent sandbox limit.
+- `fsmonitor` is disabled globally (`git config --global core.fsmonitor false`) to stop the sandbox EPERM churn on `.git/…/fsmonitor--daemon.ipc`.
 
 ## Before fixing a "broken" / "flaky" / "failing" thing
 
