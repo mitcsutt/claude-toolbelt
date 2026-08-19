@@ -15,6 +15,7 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 | `postmortem`        | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
 | `cutthroat`         | Detail-preserving concise output style — compresses structure (preamble, narration, closing recap, filler), never grammar and never technical substance. Scoped to terminal prose, with an explicit override for documents. Extends report discipline to subagents via a `SubagentStart` hook, which output styles never reach. |
 | `orchestrate`       | Token-frugal orchestration doctrine for an expensive top-level model — reserve the expensive tier for judgment, route token-heavy bounded work to the cheapest capable subagent tier, demand compact traceable returns, and vet before acting. Model- and harness-agnostic; skill only. |
+| `git`               | A home for narrow git/GitHub helper skills. Currently ships `gh-pending-review` — add inline comments to a PR that already has a pending review, via GraphQL, without orphaning comments drafted elsewhere. |
 
 ## Install
 
@@ -29,6 +30,7 @@ Add this marketplace, then install whichever plugins you want:
 /plugin install postmortem@claude-toolbelt
 /plugin install cutthroat@claude-toolbelt
 /plugin install orchestrate@claude-toolbelt
+/plugin install git@claude-toolbelt
 ```
 
 ## Plugin details
@@ -64,6 +66,10 @@ An output style that compresses the structure of terminal prose — preamble, na
 ### [`orchestrate`](plugins/orchestrate/README.md)
 
 Doctrine for an expensive top-level model that should spend its tokens on judgment, not on token-heavy bounded work. `/orchestrate` walks Step 0 (decide whether to orchestrate at all — most fixes stay single-threaded), routing each slice to the cheapest capable tier by judgment demand, a five-part handoff packet, compact returns that stay traceable to a source, parallel-width limits, and a verification gate before claiming done. Model- and harness-agnostic — it names no specific models or tools.
+
+### [`git`](plugins/git/README.md)
+
+A home for narrow git/GitHub helper skills, installed as one plugin. Currently ships `gh-pending-review`, which appends inline comments to a GitHub PR's existing pending review via the GraphQL `addPullRequestReviewThread` mutation — the REST API rejects a second pending review and can orphan comments drafted in another tool. Future git/GitHub skills are added as siblings under `skills/`.
 
 ## Statusline
 
