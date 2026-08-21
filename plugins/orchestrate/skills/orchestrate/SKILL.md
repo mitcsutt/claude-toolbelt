@@ -27,6 +27,12 @@ You already know your own ecosystem — which models, subagents, and skills you 
 
 Match the tier to the task's **judgment demand, not its size** — a large mechanical job is still cheap-tier; a small delicate call stays with you. If your ecosystem lets you pick the tier per dispatch, do so; if workers are pre-defined at fixed tiers, pick the worker whose tier fits. The dispatch and parallelism mechanics are whatever your harness provides — use them.
 
+**State the tier explicitly on every dispatch.** An omitted model/tier parameter typically inherits *your* expensive tier silently — the most common leak. Never rely on the default; name the tier even when it would be inherited correctly.
+
+**Follow-through is a dispatch too.** The leak to watch is not the first fan-out — it's what comes after: applying a worker's pre-specified fix list, triaging a failed command's log, click-through browser/visual verification, flaky-test forensics. Each is bounded, low-judgment work that belongs on a cheap worker, yet it habitually drags back into the expensive loop because it *feels* like finishing up. If a report fully specifies the edits, dispatch the application; don't apply thirty edits yourself.
+
+**Check tool delegability before slicing.** Some tools resolve only in your own session, not in workers — interactively-authenticated MCP servers (design tools, org SaaS connectors) are the usual case. A slice that needs such a tool cannot be delegated: find out before you cut the slices, then either reshape the split or keep that slice local and deliberately lean.
+
 **Stay the hub.** Unless your ecosystem explicitly supports nested orchestration (a worker fanning out its own team), you remain the single orchestrator — don't delegate the orchestration itself.
 
 ## Handoff packet (every delegated prompt)
@@ -38,6 +44,7 @@ Write each worker prompt as if the worker has **no useful chat context** — it 
 3. **Evidence format** — exactly what to return (see below).
 4. **Verification** — the command(s) that prove the work, and success criteria.
 5. **Stop conditions** — when to halt and report rather than push on.
+6. **Delivery instruction** — send the final report explicitly (via the send-message primitive, where one exists) *before* going idle. Going quiet is not delivery; workers routinely finish the work and idle without reporting unless told this outright.
 
 ## Compact returns — with traceable references
 
@@ -93,6 +100,9 @@ Before claiming done, report checkable scope + evidence — never assert complet
 | --- | --- |
 | Orchestrating small/coupled work | Step 0 — most fixes stay single-threaded. |
 | Token-heavy scan/reduction on your own expensive tier | Route it to the cheapest capable tier. |
+| Dispatching without naming a tier | Silent inherit of your expensive tier; state the model explicitly on every dispatch. |
+| Doing the follow-through yourself (applying a fix list, log triage, browser verification) | Follow-through is a dispatch too — bounded and low-judgment. |
+| Slicing work onto a tool workers can't reach | Check tool delegability before cutting slices; keep that slice local and lean. |
 | Vague handoff → duplicated/wrong work | Full packet: objective, scope, evidence, verification, stop conditions. |
 | Worker returns raw logs | Mandate compact returns; reduction is the worker's job. |
 | Finding with no source pointer | Send it back — you can't verify a lead you can't trace. |
