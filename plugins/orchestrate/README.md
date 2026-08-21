@@ -21,7 +21,7 @@ An expensive top-level model burns budget when it does token-heavy bounded work 
 
 ## Usage
 
-Invoke when a token-heavy task has independent, parallelisable slices. The skill walks Step 0 (decide whether to orchestrate at all), tier routing by judgment demand, the five-part handoff packet, compact-return rules with provenance, parallel-width limits, and a verification gate before claiming done.
+Invoke when a token-heavy task has independent, parallelisable slices. The skill walks Step 0 (decide whether to orchestrate at all), tier routing by judgment demand (explicit tier on every dispatch, follow-through work delegated too, tool delegability checked before slicing), the six-part handoff packet (including an explicit deliver-before-idle instruction), compact-return rules with provenance, parallel-width limits, and a verification gate before claiming done.
 
 ## Tests
 
