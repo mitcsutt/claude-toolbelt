@@ -19,9 +19,14 @@ loop_schema_read() {
   fi
 }
 
-# _mig_mtime <path> -> epoch seconds (0 when unreadable). BSD stat first, then GNU.
+# _mig_mtime <path> -> epoch seconds (0 when unreadable).
+#   GNU form first: on GNU coreutils `stat -f` means "file-system status" and SUCCEEDS
+#   with a multi-line block, so probing BSD first breaks Linux. On macOS `stat -c` is an
+#   illegal option (empty stdout), so the BSD form runs. Only an integer is trusted.
 _mig_mtime() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+  local m
+  m="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)"
+  if [[ "$m" =~ ^[0-9]+$ ]]; then printf '%s' "$m"; else printf '0'; fi
 }
 
 # legacy_harness_live <loop_dir> [recent_s=120] -> 0 iff a pre-2.0 harness looks alive.
