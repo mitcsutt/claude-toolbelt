@@ -522,4 +522,57 @@ assert_eq "0" "$?" "fresh dir: runs to DONE"
 assert_eq "2" "$(cat "$WT/$LD/runtime/schema" 2>/dev/null)" "fresh dir: stamped 2"
 assert_eq "0" "$(grep -c '"type":"migration"' "$WT/$LD/events.jsonl")" "fresh dir: no migration event"
 
+# --- one dashboard per loop dir: a live standalone dashboard is adopted, never doubled ---
+setup_case
+export LOOP_DASHBOARD=auto
+export LOOP_DASHBOARD_CMD="$HERE/fixtures/dashboard-stub"
+export MOCK_CLAUDE_SCRIPT="$WT/script"
+cat > "$WT/script" <<'EOF'
+{"type":"result","subtype":"success","is_error":false,"result":"adopted <<LOOP_DONE>>","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0}
+EOF
+bash -c 'exec -a serve.py sleep 60' & dashfake=$!
+sleep 0.2
+printf '{"pid":%s,"port":7,"url":"http://127.0.0.1:7","sidecar":false}' "$dashfake" > "$WT/$LD/runtime/dashboard.json"
+( cd "$WT" && AGENT_LOOP_SKIP_POSTMORTEM=1 PAUSE_BETWEEN=0 NP_MAX=99 bash "$RUN" >/dev/null 2>&1 )
+assert_eq "0" "$?" "adopt: loop reaches DONE"
+grep -q "dashboard http://127.0.0.1:7 (adopted)" "$WT/$LD/run.log"; assert_true $? "adopt: the existing URL is announced as adopted"
+ls "$WT/$LD/runtime/sidecar.pid" >/dev/null 2>&1; assert_false $? "adopt: no sidecar spawned"
+assert_eq "http://127.0.0.1:7" "$(jq -r 'select(.type=="loop_start") | .dashboard_url' "$WT/$LD/events.jsonl" | tail -1)" "adopt: loop_start carries the adopted URL"
+kill -0 "$dashfake" 2>/dev/null; assert_true $? "adopt: the standalone dashboard outlives the harness"
+assert_eq "$dashfake" "$(jq -r .pid "$WT/$LD/runtime/dashboard.json")" "adopt: dashboard.json untouched"
+kill "$dashfake" 2>/dev/null; wait "$dashfake" 2>/dev/null
+
+# --- adoption ignores LOOP_DASHBOARD=off (the Supervisor sets it when IT spawns the harness) ---
+setup_case
+export LOOP_DASHBOARD=off
+export MOCK_CLAUDE_SCRIPT="$WT/script"
+cat > "$WT/script" <<'EOF'
+{"type":"result","subtype":"success","is_error":false,"result":"adopted-off <<LOOP_DONE>>","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0}
+EOF
+bash -c 'exec -a serve.py sleep 60' & dashfake=$!
+sleep 0.2
+printf '{"pid":%s,"port":8,"url":"http://127.0.0.1:8","sidecar":false}' "$dashfake" > "$WT/$LD/runtime/dashboard.json"
+( cd "$WT" && AGENT_LOOP_SKIP_POSTMORTEM=1 PAUSE_BETWEEN=0 NP_MAX=99 bash "$RUN" >/dev/null 2>&1 )
+assert_eq "0" "$?" "adopt+off: loop reaches DONE"
+assert_eq "http://127.0.0.1:8" "$(jq -r 'select(.type=="loop_start") | .dashboard_url' "$WT/$LD/events.jsonl" | tail -1)" "adopt+off: loop_start still names the parent dashboard"
+ls "$WT/$LD/runtime/sidecar.pid" >/dev/null 2>&1; assert_false $? "adopt+off: nothing spawned"
+kill "$dashfake" 2>/dev/null; wait "$dashfake" 2>/dev/null
+
+# --- an orphaned sidecar record (sidecar:true) is NOT adopted: the spawn path owns it ---
+setup_case
+export LOOP_DASHBOARD=auto
+export LOOP_DASHBOARD_CMD="$HERE/fixtures/dashboard-stub"
+export MOCK_CLAUDE_SCRIPT="$WT/script"
+cat > "$WT/script" <<'EOF'
+{"type":"result","subtype":"success","is_error":false,"result":"respawn <<LOOP_DONE>>","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0}
+EOF
+bash -c 'exec -a serve.py sleep 60' & dashfake=$!
+sleep 0.2
+printf '{"pid":%s,"port":9,"url":"http://127.0.0.1:9","sidecar":true}' "$dashfake" > "$WT/$LD/runtime/dashboard.json"
+( cd "$WT" && AGENT_LOOP_SKIP_POSTMORTEM=1 PAUSE_BETWEEN=0 NP_MAX=99 bash "$RUN" >/dev/null 2>&1 )
+assert_eq "0" "$?" "orphan sidecar: loop reaches DONE"
+grep -q "(adopted)" "$WT/$LD/run.log"; assert_false $? "orphan sidecar: not adopted"
+grep -q "dashboard http://127.0.0.1:1" "$WT/$LD/run.log"; assert_true $? "orphan sidecar: a fresh sidecar is spawned instead"
+kill "$dashfake" 2>/dev/null; wait "$dashfake" 2>/dev/null
+
 assert_summary

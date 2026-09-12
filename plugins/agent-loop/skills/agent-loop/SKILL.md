@@ -1,12 +1,12 @@
 ---
 name: agent-loop
-description: Attach an interactive session to the current repo's agent-loop. Reports harness/tick health from the runtime files, reuses the sidecar dashboard or launches one, and arms a persistent incident monitor so this session is woken to run /agent-loop-medic when the loop needs a human. Never starts the harness. User-invoked only (never auto-run).
+description: Attach an interactive session to the current repo's agent-loop. Reports harness/tick health from the runtime files, ensures exactly one detached dashboard (reused or launched with --detach; it survives this session), arms an incident monitor so this session is woken to run /agent-loop-medic when the loop needs a human, and — when no harness is alive — asks whether to start the loop through the dashboard or print a terminal command. Never runs run.sh itself. User-invoked only (never auto-run).
 disable-model-invocation: true
 ---
 
 # Attach to the agent-loop
 
-Attach this session to a loop: say how healthy it is, hand over a dashboard URL, and arm a monitor that wakes you when the loop raises an incident or ends. The harness (`run.sh`) owns the loop; this skill only observes, never starts it.
+Attach this session to a loop: say how healthy it is, make sure there is exactly one dashboard and hand over its URL, arm a monitor that wakes you when the loop raises an incident or ends, and — if nothing is running — let the user choose how to start it (from here through the dashboard, or a terminal command). The harness (`run.sh`) owns the loop and its lock; this skill launches it only through the dashboard's endpoint, never by running `run.sh`.
 
 ## Step 1: Find the loop dir
 
@@ -35,16 +35,17 @@ s=$(cat "$R/schema" 2>/dev/null); [ -n "$s" ] && echo "schema $s" || { [ -f "$R/
 
 Report in one block: harness alive/dead (pid, heartbeat age), tick in flight (tick number, elapsed vs `timeout_s`), the last `loop_end` reason and detail, any `NEEDS_HUMAN.md`. A dead harness whose last event is not a `loop_end` crashed — say so plainly. `run.log` is forensic only; never derive state from its text. Include the schema line: **schema 1** means the dir was started by a pre-2.0 plugin and `run.sh` will migrate it on the next launch (Step 5 says how to prepare). The migration is the harness's job, never yours: never write `runtime/schema` and never delete the old 1.x lock file. `migration` events in `events.jsonl` show when a past launch upgraded the dir.
 
-## Step 3: Dashboard
+## Step 3: Ensure exactly one dashboard — it is the launcher
 
-- `runtime/dashboard.json` names a pid that passes `kill -0` (and `ps -o command= -p PID` contains `serve.py`) → print its `url`. When `run.sh` runs with `Dashboard: auto` this is the sidecar it already spawned; do not start a second one.
-- Otherwise background-launch the observer (Bash tool, `run_in_background: true`), using `${CLAUDE_PLUGIN_ROOT}/web/serve.py` (confirm the file exists; if the variable is unset, locate the plugin source under the marketplace repo — never hand-type a version-keyed cache path):
+- If `runtime/dashboard.json` names a pid that passes `kill -0` and whose `ps -o command= -p PID` contains `serve.py`, print its `url`. That is the loop's dashboard whoever started it (a sidecar of a running harness, or a detached server from an earlier attach). Never start a second one.
+- Otherwise run this in the **foreground** (it returns within ~10 s), using `${CLAUDE_PLUGIN_ROOT}/web/serve.py` (confirm the file exists; if the variable is unset, locate the plugin source under the marketplace repo — never hand-type a version-keyed cache path):
 
   ```bash
-  cd <Worktree> && LOOP_DIR=<loop-dir> python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py" --no-spawn
+  cd <Worktree> && LOOP_DIR=<loop-dir> python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py" --detach
   ```
 
-  It prints `{"type":"dashboard-started","url":"http://127.0.0.1:PORT", ...}` — surface the URL. Its Start/Resume buttons refuse while `harness.json` names a live pid, so it cannot double-start a loop.
+  It prints `{"type":"dashboard-started","url":"http://127.0.0.1:PORT","pid":N,"reused":false}` — surface the URL. `--detach` launches the server in its own process session, so it **survives this Claude session closing**; a second `--detach` on the same loop dir prints the same banner with `"reused": true` and launches nothing. Never start it as a read-only observer here: this dashboard's ▶ Start / ⟳ Resume must be able to launch the harness. A harness later launched from a terminal **adopts** this dashboard (same URL) instead of spawning a sidecar.
+- `{"type":"dashboard-failed", …}` means the child never registered; show its `log_tail` and stop.
 
 ## Step 4: Arm the incident monitor
 
@@ -66,16 +67,41 @@ with `persistent: true` and description `agent-loop <run-id> incidents` (substit
 
 Never restart the harness from a wake-up. Never grep the process table to check whether it is still there — Step 2's test is the only liveness test.
 
-## Step 5: If no harness is alive
+**No Monitor tool in this build?** Arm the portable fallback instead — a background Bash task that exits on the first matching event, which re-invokes you:
 
-Print the launch command and stop; never run it, in the foreground or the background:
+```bash
+tail -n 0 -F "<loop-dir>/events.jsonl" | grep -m1 -E --line-buffered '"type":"(incident|loop_end|medic_end|memory_pressure)"'
+```
+
+Run it with `run_in_background: true`. When it fires, handle the event exactly as above, then re-arm. Tell the user which mode you armed (Monitor, or the tail fallback) so they know what wakes you.
+
+## Step 5: If no harness is alive — dealer's choice
+
+Ask **one** `AskUserQuestion` (header `Launch`), never assume. Two options, each with its one-line tradeoff:
+
+1. **Start it from here (Recommended)** — "One dashboard, nothing to juggle. The loop runs under the detached dashboard, not this session, so closing Claude changes nothing. You watch it in the dashboard; this session stays free to discuss it."
+2. **Give me a terminal command** — "You see the harness's live stream in that window and the loop does not depend on the dashboard process (also the only option without `python3`). With the dashboard alive the harness adopts it, so the URL is unchanged."
+
+Mention in the question text that **▶ Start / ⟳ Resume in the dashboard** is always available too and does the same thing as option 1.
+
+**Option 1 — do exactly this and nothing else:**
+
+```bash
+curl -s -X POST "<url>/api/resume"      # /api/start if runtime/tickseq does not exist yet
+```
+
+Both endpoints delete `runtime/PAUSE` and spawn `run.sh` as a child of the detached dashboard — not of this session — with the sidecar disabled, so there is still exactly one dashboard. Both refuse with HTTP 409 while `runtime/harness.json` names a live harness; a 409 body names the live pid — report it, do not retry. Confirm within ~5 s that `runtime/harness.json` appeared and its pid passes the Step 2 liveness test, and report the tick number from the first `tick_start`.
+
+**Option 2 — print the launch command; never run it yourself, in the foreground or the background of this session:**
 
 ```bash
 cd <Worktree> && LOOP_DIR=<loop-dir> bash "${CLAUDE_PLUGIN_ROOT}/run.sh"
 ```
 
-Tell the user to run it in its own terminal — not as a background task of this session (the tick's RAM stacks on the session's, and the loop should survive the session closing). If `runtime/NEEDS_HUMAN.md` exists, the resume command inside it takes precedence; the human clears the cause first.
+With the Step 3 dashboard alive the harness adopts it (same URL). Without one it spawns its own sidecar (`Dashboard: auto`).
 
-If the dir is schema 1, say what the next launch will do before they run it: `run.sh` removes the dead 1.x lock file, stamps `runtime/schema`, and emits a `migration` event. It **refuses (exit 2, `runtime/NEEDS_HUMAN.md`, incident `migration-blocked`) when `run.log` was written in the last two minutes without ending in a 1.x exit line**, because that usually means the old harness is still running. The fix is to pause the old harness at a tick boundary (`touch <loop-dir>/runtime/PAUSE`, wait for its terminal to exit, delete the file), kill its dashboard, then relaunch. Only when the user confirms the old harness is dead is `LOOP_MIGRATE_FORCE=1` the answer — never suggest it first. Incident `schema-newer` means an older plugin was pointed at a newer dir: update the plugin on that machine.
+If `runtime/NEEDS_HUMAN.md` exists, the human clears the cause first; the resume command inside it is the terminal form of option 2.
+
+If the dir is schema 1, say what the next launch will do before they press Start or ask you to start it: `run.sh` removes the dead 1.x lock file, stamps `runtime/schema`, and emits a `migration` event. It **refuses (exit 2, `runtime/NEEDS_HUMAN.md`, incident `migration-blocked`) when `run.log` was written in the last two minutes without ending in a 1.x exit line**, because that usually means the old harness is still running. The fix is to pause the old harness at a tick boundary (`touch <loop-dir>/runtime/PAUSE`, wait for its terminal to exit, delete the file), kill its dashboard, then relaunch. Only when the user confirms the old harness is dead is `LOOP_MIGRATE_FORCE=1` the answer — never suggest it first. Incident `schema-newer` means an older plugin was pointed at a newer dir: update the plugin on that machine.
 
 Notes: requires `python3` (stdlib only) for the dashboard and `jq` for the health block. Exit codes of `run.sh`: 0 done/paused/rate-limit-exit · 1 halt/error · 2 needs-human · 3 lock-conflict.

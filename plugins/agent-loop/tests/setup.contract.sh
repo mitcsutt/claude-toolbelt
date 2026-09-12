@@ -68,6 +68,25 @@ grep -qF 'runtime/LOCK' "$A"; assert_false $? "attach skill must not mention run
 ahas 'runtime/schema'
 ahas 'LOOP_MIGRATE_FORCE'
 ahas 'schema 1'
+# Dashboard-first (spec §13): attach ensures ONE detached dashboard and it is the launcher;
+# the read-only observer and the background-launch are gone; Monitor has a background-Bash fallback.
+ahas '--detach'
+ahas 'reused'
+ahas '/api/resume'
+ahas '/api/start'
+ahas 'survives'
+ahas 'adopt'
+ahas 'AskUserQuestion'
+ahas 'Recommended'
+ahas 'Give me a terminal command'
+grep -qF -- '--no-spawn' "$A"; assert_false $? "attach skill must not start a read-only observer"
+grep -qF 'run_in_background: true' "$A"; assert_true $? "attach skill keeps run_in_background for the monitor fallback only"
+grep -qF 'RAM stacks' "$A"; assert_false $? "attach skill drops the retracted RAM rationale"
+# setup: dashboard-first launch print
+has '/agent-loop'
+has 'Start'
+has '--detach'
+grep -qF 'RAM adds to the session' "$F"; assert_false $? "setup drops the retracted RAM rationale"
 grep -qF 'migrate' "$A"; assert_true $? "attach skill explains that run.sh migrates on the next launch"
 
 # Task 8: machine logs gitignored, ledgers dropped from seed git add

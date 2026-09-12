@@ -23,9 +23,11 @@ printf '# Loop Plan\n## Segment A: x\n- [ ] T1: a\n' > "$tmp/LOOP_PLAN.md"
 LOOP_DIR="$tmp" python3 -u "$ROOT/web/serve.py" --loop-dir "$tmp" --no-spawn >"$tmp/out" 2>"$tmp/err" &
 srv=$!
 fake=""
+det=""
 cleanup() {
   kill "$srv" 2>/dev/null
   [[ -n "$fake" ]] && kill "$fake" 2>/dev/null
+  [[ -n "${det:-}" ]] && kill "$det" 2>/dev/null
   return 0
 }
 trap cleanup EXIT
@@ -116,7 +118,7 @@ sleep 0.3
 printf '{"pid":%s,"start_epoch":1,"host":"t","loop_dir":"%s","plugin_version":"2.0.0"}\n' \
   "$fake" "$tmp" > "$tmp/runtime/harness.json"
 code="$(curl -s -o "$tmp/start.json" -w '%{http_code}' -X POST "$url/api/start")"
-[[ "$code" == "409" ]]; assert_true $? "POST /api/start over a live harness => 409 (got $code)"
+ok409=0; [[ "$code" == "409" ]] || ok409=1; assert_true "$ok409" "POST /api/start over a live harness => 409 (got $code)"
 grep -q "is alive" "$tmp/start.json"; assert_true $? "409 body names the live harness pid"
 kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null
 fake=""
@@ -133,6 +135,33 @@ print(("ok: " if ok else "FAIL: ") + "dashboard reports itself alive; stall_s=%s
 sys.exit(0 if ok else 1)
 PY
 assert_true $? "health.dashboard.alive true for the serving process"
+
+# 10a) --detach over a live dashboard reuses it: same url, same pid, nothing launched
+( cd "$tmp" && LOOP_DIR="$tmp" python3 "$ROOT/web/serve.py" --loop-dir "$tmp" --detach > "$tmp/detach-a.out" 2>&1 )
+python3 - "$tmp/detach-a.out" "$url" "$srv" <<'PY'
+import json, sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+ok = b["type"] == "dashboard-started" and b["url"] == sys.argv[2] and b["reused"] is True and int(b["pid"]) == int(sys.argv[3])
+print(("ok: " if ok else "FAIL: ") + "--detach reuses the live dashboard (%s)" % b)
+sys.exit(0 if ok else 1)
+PY
+assert_true $? "--detach over a live dashboard reuses it"
+
+# 10b) --detach on a quiet loop dir launches a real server in its own session and returns
+tmp2="$(mktemp -d)"; mkdir -p "$tmp2/runtime"
+printf '# Loop Config\nWorktree: %s\n' "$tmp2" > "$tmp2/LOOP_CONFIG.md"
+printf '# Loop Plan\n- [ ] T1: a\n' > "$tmp2/LOOP_PLAN.md"
+( cd "$tmp2" && LOOP_DIR="$tmp2" python3 "$ROOT/web/serve.py" --loop-dir "$tmp2" --no-spawn --detach > "$tmp2/detach.out" 2>&1 )
+rc=$?
+det="$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().strip().splitlines()[-1]).get("pid",""))' "$tmp2/detach.out" 2>/dev/null)"
+url2="$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().strip().splitlines()[-1]).get("url",""))' "$tmp2/detach.out" 2>/dev/null)"
+okdet=0; [[ "$rc" -eq 0 && -n "$det" && -n "$url2" ]] || okdet=1; assert_true "$okdet" "--detach returns 0 with a pid and url (rc=$rc pid=$det url=$url2)"
+kill -0 "$det" 2>/dev/null; assert_true $? "the detached server is alive after --detach returned"
+code="$(curl -s -o /dev/null -w '%{http_code}' "$url2/api/state")"
+ok200=0; [[ "$code" == "200" ]] || ok200=1; assert_true "$ok200" "the detached server serves /api/state (got $code)"
+[[ "$(ps -o pgid= -p "$det" | tr -d ' ')" != "$(ps -o pgid= -p $$ | tr -d ' ')" ]]; assert_true $? "the detached server is in its own process group"
+kill "$det" 2>/dev/null; wait "$det" 2>/dev/null
+rm -rf "$tmp2"
 
 # 9) runtime/dashboard.json records the sidecar flag (false without --sidecar)
 python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("sidecar") is False and d.get("pid") else 1)' \
