@@ -972,6 +972,104 @@ class TestSupervisorGuards(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(d, "runtime", "PAUSE")))
 
 
+class TestSpawnEnvironment(unittest.TestCase):
+    """The dashboard that spawns run.sh IS the dashboard: the child must not open
+    a sidecar, and must live in its own session so a dashboard crash cannot take
+    the loop down with it."""
+
+    def test_spawn_disables_sidecar_and_detaches_session(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        sup = serve.Supervisor(loop_dir=d, plugin_root="/plugin", worktree=d)
+        calls = []
+
+        class FakeProc:
+            def poll(self):
+                return None
+
+        def fake_popen(argv, **kw):
+            calls.append((argv, kw))
+            return FakeProc()
+        orig = serve.subprocess.Popen
+        serve.subprocess.Popen = fake_popen
+        try:
+            sup._spawn()
+        finally:
+            serve.subprocess.Popen = orig
+        self.assertEqual(len(calls), 1)
+        argv, kw = calls[0]
+        self.assertEqual(argv, ["bash", "/plugin/run.sh"])
+        self.assertEqual(kw["cwd"], d)
+        self.assertEqual(kw["env"]["LOOP_DIR"], d)
+        self.assertEqual(kw["env"]["LOOP_DASHBOARD"], "off")
+        self.assertTrue(kw.get("start_new_session"))
+
+
+class TestRunDetached(unittest.TestCase):
+    """--detach: reuse a live dashboard, else launch one in a new session and
+    hand back its banner once runtime/dashboard.json names the child."""
+
+    def _dir(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        return d, os.path.join(d, "runtime")
+
+    def _run(self, d, rt, launcher, alive, timeout=2.0):
+        import io, contextlib
+        buf = io.StringIO()
+        orig = serve.process_alive
+        serve.process_alive = lambda pid, must_contain=None: alive
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = serve.run_detached(d, rt, ["--loop-dir", d, "--detach"],
+                                        launcher=launcher, timeout=timeout)
+        finally:
+            serve.process_alive = orig
+        return rc, json.loads(buf.getvalue().strip().splitlines()[-1])
+
+    def test_reuses_a_live_dashboard_without_launching(self):
+        d, rt = self._dir()
+        with open(os.path.join(rt, "dashboard.json"), "w") as f:
+            json.dump({"pid": 4242, "port": 61000, "url": "http://127.0.0.1:61000",
+                       "sidecar": False}, f)
+
+        def never(argv, out_path):
+            raise AssertionError("must not launch over a live dashboard")
+        rc, banner = self._run(d, rt, never, alive=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(banner["type"], "dashboard-started")
+        self.assertEqual(banner["url"], "http://127.0.0.1:61000")
+        self.assertEqual(banner["pid"], 4242)
+        self.assertTrue(banner["reused"])
+
+    def test_launches_and_waits_for_the_child_to_register(self):
+        d, rt = self._dir()
+        seen = {}
+
+        def launcher(argv, out_path):
+            seen["argv"] = argv
+            seen["out"] = out_path
+            with open(os.path.join(rt, "dashboard.json"), "w") as f:
+                json.dump({"pid": 555, "port": 61001, "url": "http://127.0.0.1:61001",
+                           "sidecar": False}, f)
+            return 555
+        rc, banner = self._run(d, rt, launcher, alive=False)
+        self.assertEqual(rc, 0)
+        self.assertEqual(banner["url"], "http://127.0.0.1:61001")
+        self.assertEqual(banner["pid"], 555)
+        self.assertFalse(banner["reused"])
+        self.assertNotIn("--detach", seen["argv"])          # the child must not re-detach
+        self.assertIn("--loop-dir", seen["argv"])
+        self.assertEqual(seen["out"], os.path.join(rt, "dashboard.out"))
+
+    def test_child_that_never_registers_is_reported_not_hung_on(self):
+        d, rt = self._dir()
+        rc, banner = self._run(d, rt, lambda argv, out: 777, alive=False, timeout=0.3)
+        self.assertEqual(rc, 1)
+        self.assertEqual(banner["type"], "dashboard-failed")
+        self.assertEqual(banner["pid"], 777)
+
+
 class TestProcessAlive(unittest.TestCase):
     def test_self_is_alive(self):
         self.assertTrue(serve.process_alive(os.getpid()))

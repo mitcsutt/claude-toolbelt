@@ -21,6 +21,26 @@ harness_alive() {
   [[ "$cmd" == *run.sh* ]]
 }
 
+# dashboard_adoptable <runtime_dir> -> prints the URL, exit 0, iff runtime/dashboard.json
+#   names a LIVE serve.py that is NOT a sidecar. One dashboard per loop dir: a harness
+#   launched next to a standalone dashboard (the one /agent-loop opened, or the one whose
+#   Start button spawned us) announces that URL and spawns nothing. A sidecar record
+#   belongs to a harness (alive or dead) and is never adopted — the spawn path handles
+#   it (port reuse / respawn).
+dashboard_adoptable() {
+  local rt="$1" pid cmd url sidecar
+  pid="$(jq -r '.pid // empty' "$rt/dashboard.json" 2>/dev/null)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  sidecar="$(jq -r '.sidecar // false' "$rt/dashboard.json" 2>/dev/null)"
+  [[ "$sidecar" == "true" ]] && return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
+  [[ "$cmd" == *serve.py* ]] || return 1
+  url="$(jq -r '.url // empty' "$rt/dashboard.json" 2>/dev/null)"
+  [[ -n "$url" ]] || return 1
+  printf '%s' "$url"
+}
+
 # _harness_write_json <runtime_dir> <pid> <loop_dir> <version>
 #   The lock's payload: who owns this LOOP_DIR, since when, and on which host.
 _harness_write_json() {

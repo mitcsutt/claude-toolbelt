@@ -121,6 +121,24 @@ sleep 0.4
 kill "$hb" 2>/dev/null; wait "$hb" 2>/dev/null
 isint "$(cat "$RT/HEARTBEAT" 2>/dev/null)"; assert_true $? "heartbeat_loop writes an epoch"
 
+# --- dashboard_adoptable: a live, non-sidecar serve.py is the loop's dashboard ---
+DRT="$TMP/drt"; mkdir -p "$DRT"
+dashboard_adoptable "$DRT" >/dev/null; assert_false $? "no dashboard.json -> not adoptable"
+sleep 0.01 & dpid=$!; wait $dpid
+printf '{"pid":%s,"port":1,"url":"http://127.0.0.1:1","sidecar":false}' "$dpid" > "$DRT/dashboard.json"
+dashboard_adoptable "$DRT" >/dev/null; assert_false $? "dead pid -> not adoptable"
+bash -c 'exec -a serve.py sleep 30' & dfake=$!
+sleep 0.2
+printf '{"pid":%s,"port":1,"url":"http://127.0.0.1:1","sidecar":true}' "$dfake" > "$DRT/dashboard.json"
+dashboard_adoptable "$DRT" >/dev/null; assert_false $? "live sidecar (owned by a harness) -> not adoptable"
+printf '{"pid":%s,"port":1,"url":"http://127.0.0.1:1","sidecar":false}' "$dfake" > "$DRT/dashboard.json"
+assert_eq "http://127.0.0.1:1" "$(dashboard_adoptable "$DRT")" "live standalone -> adoptable, prints url"
+bash -c 'exec -a other sleep 30' & dother=$!
+sleep 0.2
+printf '{"pid":%s,"port":1,"url":"http://127.0.0.1:1","sidecar":false}' "$dother" > "$DRT/dashboard.json"
+dashboard_adoptable "$DRT" >/dev/null; assert_false $? "pid reused by another program -> not adoptable"
+kill "$dfake" "$dother" 2>/dev/null; wait "$dfake" "$dother" 2>/dev/null
+
 # --- notify_desktop: best-effort, never fails, suppressible ---
 LOOP_NOTIFY=0 notify_desktop "t" "b"; assert_true $? "notify_desktop is a no-op under LOOP_NOTIFY=0"
 
