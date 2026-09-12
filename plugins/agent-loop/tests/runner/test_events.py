@@ -53,6 +53,17 @@ class TestEventLog(unittest.TestCase):
     def test_empty_path_is_a_silent_no_op(self):
         EventLog("", self.seq).emit("loop_start")   # must not raise
 
+    def test_emit_does_not_raise_when_seq_file_cannot_be_written(self):
+        # seq_path's parent is a regular file, not a directory, so
+        # util.atomic_write's os.makedirs/open/replace will raise OSError.
+        blocker = os.path.join(self.d, "blocker")
+        with open(blocker, "w") as f:
+            f.write("not a directory")
+        bad_seq = os.path.join(blocker, "eventseq")
+        log = EventLog(self.ev, bad_seq)
+        log.emit("loop_start", pid=1)   # must not raise
+        self.assertEqual("loop_start", read_lines(self.ev)[0]["type"])
+
 
 class TestUsageLog(unittest.TestCase):
     def setUp(self):

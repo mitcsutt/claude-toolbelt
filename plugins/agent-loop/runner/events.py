@@ -62,10 +62,10 @@ class EventLog(object):
             try:
                 with open(self.path, "a") as f:
                     f.write(line + "\n")
+                if self.seq_path:
+                    util.atomic_write(self.seq_path, str(self.seq))
             except OSError:
                 return
-            if self.seq_path:
-                util.atomic_write(self.seq_path, str(self.seq))
 
 
 class UsageLog(object):
