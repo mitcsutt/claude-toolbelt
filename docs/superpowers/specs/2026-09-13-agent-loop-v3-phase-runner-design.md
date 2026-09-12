@@ -88,7 +88,7 @@ Python 3.9 stdlib. Modules and their single responsibilities:
 | `migrate.py` | schema 2→3 | — |
 | `sidecar.py` | dashboard adoption/spawn/supervision (port of `run.sh:186-249`) | — |
 
-`run.sh` stays as a two-line shim (`exec python3 "$PLUGIN_ROOT/runner/run.py" "$@"`) so the dashboard's `Popen(["bash", run_sh])` and the `ps … | grep run.sh` liveness checks (`w10` §4) keep working. `lib/*.sh` and `tick-prompt.md` are deleted.
+`run.sh` stays as a shim: `exec python3 -m runner.run --shim "$PLUGIN_ROOT/run.sh" "$@"`. The `--shim <path>` argument exists only so the string `run.sh` stays in the harness's argv after `exec`, because the dashboard and all four skills judge liveness by `harness.json.pid` plus `ps -o command= -p PID` containing `run.sh` (`w10` §4). The dashboard's `Popen(["bash", run_sh])` is unchanged. `lib/*.sh` and `tick-prompt.md` are deleted.
 
 ### 4.1 Tick lifecycle
 A tick is one attempt cycle for one task. `tick_start`/`tick_end` events keep their shape; `tick_end.by_model` is the sum of the tick's phase usage and is always written, including after a kill (fixes the ~$61 unattributed spend, `w7` §7.1). `role_start`/`role_end`/`tool` events are emitted per LLM phase from the stream parser so the dashboard's current-tick pipeline view is unchanged.
