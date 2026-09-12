@@ -107,7 +107,7 @@ Ownership rules:
 
 ### 4.1 Exclusivity
 - `runtime/harness.json` is the lock: `{pid, start_epoch, host, loop_dir,
-  plugin_version}`. Acquired atomically with `mkdir runtime/harness.lock.d`
+  plugin_version}`. Acquired atomically — since 2.1.0 by `ln` of a finished private payload into `runtime/harness.json` (the file IS the lock; 2.0.x's `mkdir runtime/harness.lock.d` then write-json left a window where two starters both took over one dead harness) —
   (POSIX-atomic, works on bash 3.2, no `flock` on macOS).
 - On startup, if the lock dir exists: read `harness.json`; `harness_alive PID`
   = `kill -0 PID` **and** `ps -o command= -p PID` contains `run.sh` (defeats PID
@@ -285,7 +285,7 @@ touches product code.
 - Wall clock `MEDIC_TIMEOUT` → harness treats as `escalated`.
 
 ### 6.4 Allowed remediations (the complete list)
-delete a stale `runtime/harness.lock.d` **after** verifying the PID is dead; remove
+delete a stale `runtime/harness.json` **after** verifying its PID is dead; remove
 stale `runtime/tick.json` / `sprint-*.json` / `worker-result.json`; flip an
 orphaned `[~]` back to `[ ]` (never to `[x]`); `git checkout -- <path>` /
 `git clean` **only** for paths inside the last sprint contract's `allow_list`;
