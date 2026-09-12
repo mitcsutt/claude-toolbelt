@@ -358,21 +358,30 @@ handle_incident() {
 heartbeat_loop "$RUNTIME_DIR" "$HB_INTERVAL" "$HARNESS_PID" &
 HB_PID=$!
 
-if [[ "$DASH_MODE" == "auto" ]]; then
+# One dashboard per loop dir. A live standalone dashboard (the one /agent-loop opened,
+# or the one whose Start button spawned us) is ADOPTED: announce its URL, spawn nothing,
+# supervise nothing, and leave it running when we exit — it outlives any one harness.
+# Adoption ignores Dashboard/LOOP_DASHBOARD: those only decide whether to spawn.
+DASH_ADOPTED=0
+if _adopt_url="$(dashboard_adoptable "$RUNTIME_DIR")"; then
+  DASH_URL="$_adopt_url"; DASH_ADOPTED=1
+  feed "◉ dashboard $DASH_URL (adopted)"
+elif [[ "$DASH_MODE" == "auto" ]]; then
   DASH_URL="$(start_sidecar)"
   if [[ -n "$DASH_URL" ]]; then
     feed "◉ dashboard $DASH_URL"
-    if [[ "${LOOP_DASHBOARD_OPEN:-0}" == "1" ]]; then
-      case "$(uname -s 2>/dev/null)" in
-        Darwin) open "$DASH_URL" >/dev/null 2>&1 || true ;;
-        Linux)  xdg-open "$DASH_URL" >/dev/null 2>&1 || true ;;
-      esac
-    fi
   else
     log "dashboard sidecar did not announce a URL within 5s — see $RUNTIME_DIR/dashboard.out"
   fi
   sidecar_supervise &
   SUP_PID=$!
+fi
+export DASH_ADOPTED
+if [[ -n "$DASH_URL" && "${LOOP_DASHBOARD_OPEN:-0}" == "1" ]]; then
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) open "$DASH_URL" >/dev/null 2>&1 || true ;;
+    Linux)  xdg-open "$DASH_URL" >/dev/null 2>&1 || true ;;
+  esac
 fi
 
 # resume = this LOOP_DIR has already run at least one tick (the counter persists).
