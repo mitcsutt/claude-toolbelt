@@ -18,6 +18,10 @@ assert_eq "number"     "$(sed -n 2p "$EV" | jq -r '.count|type')" "numeric field
 assert_eq "7"          "$(sed -n 3p "$EV" | jq -r '.tick')" "tick number recorded"
 assert_eq "1.5"        "$(sed -n 3p "$EV" | jq -r '.by_model.opus.cost_usd')" "json blob kept as object"
 assert_eq "number"     "$(sed -n 1p "$EV" | jq -r '.t|type')" "t timestamp is a number"
+# seq: a monotonic per-process counter so a consumer can detect a gap in the stream
+assert_eq "number" "$(sed -n 1p "$EV" | jq -r '.seq|type')" "seq is a number"
+SEQ1="$(sed -n 1p "$EV" | jq -r '.seq')"
+assert_eq "$((SEQ1 + 1))" "$(sed -n 2p "$EV" | jq -r '.seq')" "seq increments by one per event"
 # empty events-file path is a no-op (headless-safe; never errors)
 emit_event "" tick_start tick 1; assert_true $? "empty path is a silent no-op"
 

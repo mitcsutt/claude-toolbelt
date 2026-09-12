@@ -42,7 +42,7 @@ The harness refuses to run anywhere except the worktree recorded in `LOOP_CONFIG
 All loop artefacts live under a single per-run directory: `.claude/loop/<run-id>/`, where `<run-id>` is `<YYYY-MM-DD>-<topic>`. `<topic>` is the branch suffix (the part after `agent-loop-`); `<date>` is today (`date -u +%F`). The postmortem is written inside this dir as `$LOOP_DIR/POSTMORTEM.md`.
 
 - Compute `RUN_ID="$(date -u +%F)-<topic>"` and `LOOP_DIR=".claude/loop/$RUN_ID"` (relative to the worktree root).
-- `mkdir -p "$LOOP_DIR/runtime"`. Durable artefacts (config, plan, learnings, cleanup) live directly under `$LOOP_DIR/`; ephemeral runtime files (LOCK, PAUSE, sprint-*, worker-result, ratelimit, plan-usage) live under `$LOOP_DIR/runtime/`.
+- `mkdir -p "$LOOP_DIR/runtime"`. Durable artefacts (config, plan, learnings, cleanup) live directly under `$LOOP_DIR/`; ephemeral runtime files (PAUSE, `harness.json` + `harness.lock.d/` + `HEARTBEAT` — the harness's lock and liveness, `tick.json`, sprint-*, worker-result, incident-*/medic-*, `NEEDS_HUMAN.md`, ratelimit, plan-usage) live under `$LOOP_DIR/runtime/`.
 - **Track the durable artefacts; ignore `runtime/` AND the machine-generated logs.** Write `$LOOP_DIR/.gitignore` with:
 
   ```gitignore
@@ -85,6 +85,17 @@ Write `$LOOP_DIR/LOOP_CONFIG.md` from `templates/LOOP_CONFIG.md`. Use the AskUse
 7. **Branch** — `agent-loop-<topic>`. Created in Step 5.
 8. **Granularity** — set by the planning step (Step 3): `single` or `segmented`.
 9. **Started** — write the current UTC ISO-8601 timestamp (`date -u +%FT%TZ`) into the `Started:` field of `$LOOP_DIR/LOOP_CONFIG.md`. The postmortem reads this to compute elapsed time; leave it unset and the postmortem reports `Elapsed: unknown`.
+10. **Dashboard** — single-select, default `auto`:
+    - `auto` — `run.sh` spawns the browser dashboard (`web/serve.py`) as a supervised sidecar on every launch, restarts it if it dies, prints its URL at startup, and kills it on exit. Zero tokens; python3 stdlib only.
+    - `off` — no sidecar. `/agent-loop` can still launch a standalone observer later.
+
+    Write `Dashboard: auto` (or `off`). The `LOOP_DASHBOARD` env var overrides it per launch; `LOOP_DASHBOARD_OPEN=1` also opens the URL in the browser once.
+11. **Medic** — single-select, default `auto`, plus an optional model:
+    - `auto` — on an incident (a SIGKILLed or timed-out tick, a stale harness lock, three garbage ticks, no progress, a halt sentinel, git divergence) the harness sends a desktop notification and runs `/agent-loop-medic <id>` headless, at most `MEDIC_MAX_PER_RUN` (3) times per run. The medic applies only allowlisted repairs; when it returns `paused`/`escalated`, or the budget is spent, the harness writes `runtime/NEEDS_HUMAN.md` and exits 2.
+    - `notify` — desktop notification only; every error-severity incident goes straight to `NEEDS_HUMAN.md` + exit 2.
+    - `off` — no notification, no medic; error incidents still stop the loop with `NEEDS_HUMAN.md`.
+
+    Then ask **Medic model** (free text, blank inherits the Claude default; a standard tier is plenty — the medic reads a few files and makes one decision). Write `Medic: auto` and `Medic model: <alias or blank>`.
 
 **Model tiers.** The template ships `Orchestrator model: sonnet` — the orchestrator (the per-tick spine) now defaults to a **standard** model (Sonnet) rather than inheriting the user's Claude default. Rationale: the spine only coordinates, runs the verification gate, and dispatches role subagents; all heavy reasoning (plan decomposition, quality/workaround judgement) is delegated to the most-capable Planner/Evaluator subagents, so running the spine on a top-tier model every tick is pure cost (it was ~90% of observed spend). Leave the line as-is for cheap-by-default; blank it to inherit the Claude default, or name any alias to override. The per-role `Planner/Scout/Worker/Evaluator tier:` lines are unaffected — they still pick a tier per role (see `tick-prompt.md` §16). The `Evaluator tier:` line now ships **blank**: the Evaluator's tier is governed per-task by `tick-prompt.md` §10 (mechanical→skip, complex→most-capable, default→standard). Setting a tier here is a ceiling for `| complex` reviews only — it will NOT force the most-capable tier onto every task (a flat pin previously did exactly that, costing ~30 most-capable Evaluator runs in one observed loop). Leave it blank unless you have a reason to cap complex-review spend.
 
@@ -171,22 +182,13 @@ Do **not** start the loop and do **not** edit any shell rc file. Print the exact
 cd <Worktree> && LOOP_DIR=.claude/loop/<run-id> bash "${CLAUDE_PLUGIN_ROOT}/run.sh"
 ```
 
-**Recommended — live dashboard via `/agent-loop`.** In Claude Code, run `/agent-loop`. It
-discovers this loop and background-launches the dashboard (zero ongoing tokens; your session
-stays free), printing a `http://127.0.0.1:<port>` URL. Equivalent shell launches still work:
-`cd <Worktree> && LOOP_DIR=.claude/loop/<run-id> python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py"`
-(headed) or `bash "${CLAUDE_PLUGIN_ROOT}/run.sh"` (headless). Tick numbers are continuous
-across resumes; pausing writes a resume checkpoint (`runtime/CHECKPOINT.json`).
+**Run the harness in its own terminal — not as a background task of an interactive Claude session.** A tick is a full `claude` process; stacked under an interactive session its RAM adds to the session's (~400 MB) and it dies when the session closes. A dedicated terminal costs nothing and survives everything. Never start it yourself.
 
-**Optional — headed (live dashboard).** To watch the loop in a browser with Start/Pause/Resume/Stop controls, launch the dashboard server instead of `run.sh` directly. It supervises the same loop and prints a `http://127.0.0.1:<port>` URL:
+**Dashboard sidecar.** With `Dashboard: auto` the harness prints `◉ dashboard http://127.0.0.1:<port>` within a few seconds of starting — that is the live dashboard, supervised by `run.sh` (restarted if it dies, killed when the harness exits; the page keeps its last snapshot and shows the exit reason). Nothing else to launch. With `Dashboard: off`, or to look at a finished loop, `/agent-loop` starts a standalone observer on demand.
 
-```
-cd <Worktree> && LOOP_DIR=.claude/loop/<run-id> python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py"
-```
+**Attach with `/agent-loop`.** In any Claude Code session on this repo, `/agent-loop` reports harness/tick health from the runtime files, prints the dashboard URL, and arms a persistent incident monitor on `events.jsonl` — so that session is woken (and runs `/agent-loop-medic` interactively) when the loop raises a needs-human incident or ends for any reason other than done. It never starts the harness. Attaching is optional: with `Medic: auto` the harness triages its own incidents headless and leaves `runtime/NEEDS_HUMAN.md` when it gives up.
 
-Launching the dashboard **never auto-starts the loop** — it opens at the loop's current state (idle, paused, running, or done) so you can review progress and history first. Click **▶ Start** to begin a fresh run, or **⟳ Resume** to continue a paused one; **⏸ Pause**/**■ Stop** halt it after the current tick. This means you can also point it at a paused or finished loop purely to inspect it.
-
-Headless `run.sh` and headed `serve.py` are interchangeable per launch — pick either, any time. The dashboard needs `python3` (stdlib only; no pip). It can also attach to a loop already running headless and observe it live. Add `--no-spawn` for a pure read-only observer (the buttons won't spawn `run.sh`). The dashboard is **event-driven**: the harness appends each tick's events to `$LOOP_DIR/events.jsonl` and the server streams cheap snapshots over SSE (no run.log scraping), so it shows a live status verdict, the role pipeline, effort-first usage, and the full roadmap (including ghosted future segments) in real time. Requires the agent-loop plugin at version ≥ 0.11.0.
+**Stopping and resuming.** `touch $LOOP_DIR/runtime/PAUSE` stops the loop after the in-flight tick (it writes `runtime/CHECKPOINT.json`); delete the file and re-run the launch command to resume — tick numbers continue, never restart at 1. Exit codes: 0 done/paused/rate-limit-exit · 1 halt/error · 2 needs-human (read `runtime/NEEDS_HUMAN.md`, fix the cause, re-run) · 3 lock-conflict (another harness owns this `LOOP_DIR`; its pid is printed — stop that one first, never start a second). Standalone `serve.py` (`python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py"`) keeps its ▶ Start / ⟳ Resume / ⏸ Pause / ■ Stop buttons for headed use, but Start/Resume refuse while `runtime/harness.json` names a live pid.
 
 - `<Worktree>` is the absolute path recorded in `$LOOP_DIR/LOOP_CONFIG.md`.
 - `<run-id>` is the `<date>-<topic>` slug resolved in Step 1.5; pass `LOOP_DIR` so the harness writes/reads every artefact under that single per-run dir.
@@ -205,9 +207,12 @@ Run dir:      .claude/loop/<run-id>  (config/plan/learnings/cleanup committed/tr
 Granularity:  single | segmented (Segment count: N)
 Verification: <pipeline>
 Limits:       tick_timeout (per-tick rabbit-hole cap; usage window is the real ceiling — loop auto-waits on it)
+Dashboard:    auto | off   (auto: run.sh spawns + supervises web/serve.py and prints its URL)
+Medic:        auto | notify | off  (model: <alias or inherited>; auto = headless /agent-loop-medic, max 3/run, then NEEDS_HUMAN.md + exit 2)
 
 To start:   cd <Worktree> && LOOP_DIR=.claude/loop/<run-id> bash "<plugin-root>/run.sh"
-            (or, live dashboard: /agent-loop  — or headed: python3 "<plugin-root>/web/serve.py")
+            (in its own terminal — not a background task of this session)
+To attach:  /agent-loop   (health from runtime files, dashboard URL, arms the incident monitor; never starts the loop)
 To pause:   touch .claude/loop/<run-id>/runtime/PAUSE   (the in-flight tick finishes, writes runtime/CHECKPOINT.json, then the harness stops)
 To resume:  delete .claude/loop/<run-id>/runtime/PAUSE and re-run the start command (tick numbering continues — never restarts at 1)
 To close:   /agent-loop-postmortem
@@ -235,6 +240,7 @@ State the safety posture to the user explicitly so they understand what they are
 |---------|---------|
 | "User wants it fast — combine wizard questions into one prompt" | One question per AskUserQuestion call. Bundled questions get ignored. |
 | "I'll just run `run.sh` myself after setup" | No. Print the command; the user launches the loop. |
+| "I'll start `run.sh` in the background of this session so I can watch it" | No. The loop runs in its own terminal; `/agent-loop` is how a session watches it (health + dashboard + incident monitor). A background task stacks RAM on this session and dies with it. |
 | "Run in the main checkout, a worktree is overkill" | Worktree isolation is a guardrail. Resolve a `--worktree` or create one. |
 | "Fully enumerate every task for a huge feature up front" | Large features are `segmented` — defer per-segment tasks to a PLAN tick so they stay fresh. |
 | "No `timeout` binary, but it'll probably be fine" | Warn the user. Without `timeout`/`gtimeout` (install `coreutils`) the per-tick cap is off and a stuck tick runs unbounded. |

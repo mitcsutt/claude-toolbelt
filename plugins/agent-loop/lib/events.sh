@@ -2,16 +2,25 @@
 # agent-loop event substrate. Pure helpers; the only side effect is appending a JSONL line.
 # The harness "narrates" what it parses into $LOOP_DIR/events.jsonl; the dashboard tails it.
 
+# EVENT_SEQ: monotonic counter for this process. Consumers (the dashboard, an
+# attached Monitor) use it to detect a gap rather than assuming the file they are
+# tailing is complete. In-process by design: it costs no fork, and it resets per
+# run.sh, which is exactly the scope over which "no gaps" is a meaningful claim.
+# Events emitted from a subshell (format_stream runs as a background job) carry
+# that subshell's own copy, so the counter is per-writer, not globally unique.
+EVENT_SEQ="${EVENT_SEQ:-0}"
+
 # emit_event <events_file> <type> [key value]...
-#   Appends one compact JSON object: {t:<now>, type:<type>, <key>:<value>...}.
+#   Appends one compact JSON object: {t:<now>, seq:<n>, type:<type>, <key>:<value>...}.
 #   Value typing: an integer-looking value -> JSON number; a value starting with '{' or '['
 #   -> raw JSON (e.g. by_model); anything else -> JSON string. An empty <events_file> is a
 #   silent no-op so headless runs that don't want events never error.
 emit_event() {
   local f="$1" type="$2"; shift 2 || true
   [[ -z "$f" ]] && return 0
-  local jqargs=(--argjson t "$(date +%s)" --arg type "$type")
-  local filter='{t:$t,type:$type'
+  EVENT_SEQ=$(( EVENT_SEQ + 1 ))
+  local jqargs=(--argjson t "$(date +%s)" --argjson seq "$EVENT_SEQ" --arg type "$type")
+  local filter='{t:$t,seq:$seq,type:$type'
   local k v
   while [[ $# -ge 2 ]]; do
     k="$1"; v="$2"; shift 2

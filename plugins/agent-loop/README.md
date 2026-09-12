@@ -11,10 +11,11 @@ Contrast with v1: v1 ran one long-lived in-session agent that self-scheduled wit
 | Component | Kind | What |
 | --- | --- | --- |
 | `/agent-loop-setup` | skill | Interactive, one-time bootstrap — config wizard, brainstorm, plan, permission gate, scaffold. |
-| `/agent-loop` | skill | Background-launches the browser dashboard (zero ongoing tokens). |
+| `/agent-loop` | skill | Attach: health from the runtime files, dashboard URL (reuses the sidecar), arms a persistent incident monitor that wakes the session to run the medic. Never starts the harness. |
+| `/agent-loop-medic` | skill | Bounded triage-and-repair on an incident — headless under `run.sh` or interactive from `/agent-loop`. Allowlisted fixes only, hard budget, then hands over to a human. |
 | `/agent-loop-postmortem` | skill | Wraps `/postmortem` to close out a loop, aggregating artefacts into a retrospective. |
-| `run.sh` | bash harness | Drives the per-tick `while` loop: worktree guard, tick-timeout cap, dispatches one tick per task. |
-| `web/serve.py` | dashboard server | Stdlib-only Python server; tails `events.jsonl` and streams snapshots over SSE. |
+| `run.sh` | bash harness | Owns exclusivity (`harness.json` lock) and liveness (heartbeat), drives the per-tick `while` loop, classifies tick failures, guards memory, supervises the dashboard sidecar, and spawns the medic. |
+| `web/serve.py` | dashboard server | Stdlib-only Python server; incremental bounded tail of `events.jsonl`, one shared snapshot over SSE, status derived from events + PID liveness (never `run.log`). |
 
 ### Lifecycle
 
@@ -48,7 +49,13 @@ Durable artefacts (created by setup, updated by ticks) under `$LOOP_DIR/`:
 
 Ephemeral runtime files under `$LOOP_DIR/runtime/`:
 
-- `LOCK` — single-tick mutex (`{pid, started_at, task_id}`); stale-PID recovery on the next tick.
+- `harness.json` + `harness.lock.d/` — the harness lock (`{pid, start_epoch, host, loop_dir, plugin_version}`, acquired with an atomic `mkdir`). One harness per `LOOP_DIR`; a second exits 3. There is no tick-level lock file any more — `runtime/LOCK` was removed in 2.0.0.
+- `HEARTBEAT` — epoch seconds, rewritten every `HB_INTERVAL` (10 s) while the harness runs.
+- `tick.json` — `{tick, pid, started_at, timeout_s}` while a tick is in flight; removed after.
+- `last-activity` — epoch of the last stream line seen from the tick (stall detection).
+- `dashboard.json` — `{pid, port, url, sidecar}` written by `serve.py`.
+- `incident-<id>.json` / `medic-<id>.json` — one pair per incident: what the harness saw, what the medic did.
+- `NEEDS_HUMAN.md` — written by the harness when it stops for a human: incident summary, medic notes, the exact resume command.
 - `PAUSE` — touch to stop the loop after the in-flight tick finishes.
 - `sprint-<TASK>.json` — the Scout's sprint contract for the current task (allow_list, forbidden, verification, success_criteria, inlined scout_notes).
 - `worker-result.json` — the Worker's checkpointed result (written before deep work, so truncation never loses signal).
@@ -87,18 +94,27 @@ cd <worktree> && LOOP_DIR=.claude/loop/<run-id> bash "${CLAUDE_PLUGIN_ROOT}/run.
 
 To pause: `touch .claude/loop/<run-id>/runtime/PAUSE`. To resume: delete that `PAUSE` file and re-run the start command. Tick numbers stay **continuous** across resumes (never restart at 1), and a pause writes a resume checkpoint (`runtime/CHECKPOINT.json`).
 
-### Live dashboard
+Run the harness **in its own terminal**, not as a background task of an interactive Claude session — a tick is a full `claude` process, its RAM would stack on the session's, and it would die with the session.
 
-Run **`/agent-loop`** in Claude Code to background-launch the browser dashboard (zero ongoing tokens; your session stays free), or `python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py"` for the same thing headed. It needs `python3` only (stdlib; no pip, no build step).
+### Dashboard sidecar
 
-The dashboard is **event-driven**: the harness appends one JSON line per event to `$LOOP_DIR/events.jsonl`, and the server tails that file and streams cheap snapshots over SSE — it does **not** scrape the multi-megabyte `run.log`. It shows, in real time:
+With `Dashboard: auto` (the default) `run.sh` spawns `web/serve.py` as a supervised sidecar on every launch and prints `◉ dashboard http://127.0.0.1:<port>`. The heartbeat loop restarts it if it dies (same port, so an open browser's SSE reconnects), up to `DASH_MAX_RESTARTS` per hour, then raises a `dashboard-crashloop` warning and stops trying. It is killed when the harness exits; the page keeps its last snapshot and shows the exit reason. Set `Dashboard: off` (or `LOOP_DASHBOARD=off`) to skip it; `LOOP_DASHBOARD_OPEN=1` opens the URL once.
 
-- a **status verdict** (running / stalled / rate-limited / paused / done / halted / stopped / idle), derived from event recency;
-- the live **role pipeline** — discovered from the event stream, not a fixed list: the orchestrator spine plus each subagent it hands off to, labelled with whatever identifier the stream carries (so new models or a different provider need no plugin change), with the active actor highlighted only while the loop is actually running;
-- **effort-first usage** — tokens and effort by model, per-task and burn rates, with cost secondary;
-- the full **roadmap**, including ghosted future segments still to be planned.
+The dashboard needs `python3` only (stdlib; no pip). It is **event-driven** and read-mostly: the server keeps an incremental, bounded store over `$LOOP_DIR/events.jsonl` (full detail for the current tick, per-tick aggregates for earlier ticks) and one shared snapshot thread streams to every SSE client — memory stays flat however long the run. It never reads `run.log`. It shows: a health-first **status** with the *why* (harness pid + heartbeat age, tick pid + elapsed vs timeout, dashboard uptime), the tick **phase timeline**, honest **progress** (segment-weighted while segments are unplanned — `100%` appears only when every segment is planned and every task is `[x]`/`[-]`), the **incidents** panel with each medic outcome, effort-first **usage**, and the roadmap.
 
-Launching it never auto-starts the loop — it opens at the loop's current state with ▶ Start / ⟳ Resume / ⏸ Pause / ■ Stop controls. Add `--no-spawn` for a pure read-only observer.
+Launched standalone (`python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py"` or via `/agent-loop`) it keeps its ▶ Start / ⟳ Resume / ⏸ Pause / ■ Stop controls, but Start/Resume refuse while `runtime/harness.json` names a live pid. `--no-spawn` makes it a pure observer.
+
+### Attach: `/agent-loop`
+
+Run **`/agent-loop`** in a Claude Code session on the repo. It reports harness/tick health from `runtime/harness.json` + `HEARTBEAT` + `tick.json` and the last `loop_end`, prints the sidecar's URL (or launches a standalone observer), and arms a **persistent `Monitor`** on `events.jsonl` filtered to `incident | loop_end | medic_end | memory_pressure`. That session is then woken on an incident instead of polling: a `needs-human` incident or a non-`done` `loop_end` runs `/agent-loop-medic` interactively and sends a push notification; `done` offers `/agent-loop-postmortem`. It never starts the harness — with none alive it prints the launch command.
+
+### Medic and hand-over
+
+On an incident the harness writes `runtime/incident-<id>.json`, emits an `incident` event, sends a desktop notification (`Medic: auto|notify`), and — with `Medic: auto` and budget left (`MEDIC_MAX_PER_RUN`, default 3) — runs `/agent-loop-medic <id>` headless, never concurrently with a tick. The medic reads the incident, the lifecycle events, and the runtime files, applies only the fixes on its allowlist (stale lock dir after verifying the pid is dead, stale runtime files, an orphaned `[~]`→`[ ]` flip, `git checkout --`/`git clean` inside the last sprint contract's `allow_list`, a dashboard restart, notes), and returns `resumed | paused | escalated | noop`. It escalates on the second occurrence of the same signature, on anything outside the allowlist, and on a halt sentinel or git divergence by definition. `resumed` → the loop continues. `paused`/`escalated`/no answer within `MEDIC_TIMEOUT` → the harness writes `runtime/NEEDS_HUMAN.md` (incident, medic notes, the exact resume command), emits `loop_end reason=needs-human`, and exits **2**. The medic never edits product code and never starts a harness.
+
+### Exit codes
+
+`0` done / paused / rate-limit-exit · `1` halt / error · `2` needs-human (read `runtime/NEEDS_HUMAN.md`, fix, re-run) · `3` lock-conflict (another harness owns this `LOOP_DIR`; its pid is printed — stop it first). Two of the exit-2 kinds come from the schema check, not from a tick: `migration-blocked` and `schema-newer` — see [Upgrading](#upgrading-loop-dir-schema).
 
 ### Progress & usage
 
@@ -107,8 +123,9 @@ Launching it never auto-starts the loop — it opens at the loop's current state
   - When a tick finishes, one permanent summary line scrolls into history: `✓ t3 T26 · 3m12s · lint✓ tsc✓ build✓ test✓ · → a1b2c3   62% (26/42)` (verdict glyph, task, duration, verification gates from the commit's `Loop-Verification` trailer, short SHA, and **percentage-first** progress).
   - A session header prints each tick: `── loop · 62% ███████░░░░░ 26/42 · ⏱ 1h18m · ~45m left · 5h 90% ↺2h12m ──` (task percent + bar, count, elapsed, rough ETA from average tick time, and the usage-window utilization). The `5h 90%` segment is the 5-hour rate-limit window utilization Claude reports on `rate_limit_event` lines, with time-to-reset (`↺`); it's labelled to distinguish it from the leading task percentage, and is omitted until the stream reports it (Claude only includes `utilization` near the warning threshold). No dollar figure — `cost_usd` is raw list-price and is never summed or projected.
   - The full per-tool/per-text trace still tees to `$LOOP_DIR/run.log` (`tail -f`), and `LOOP_VERBOSE=1` restores it to the terminal in place of the heartbeat. Piped/non-TTY runs stay quiet (header + summary lines only).
-- The harness reads the `rate_limit_event` from each tick. When the usage window is exhausted it **auto-waits until the reset** (`resetsAt`) and resumes; if the reset is further out than `MAX_WAIT` (default 6h, e.g. a weekly window) it logs the reset time and **exits cleanly** so you can re-run `run.sh` later. Resume is safe at any point: work is committed per task, with stale-lock recovery and the Worker's checkpoint file.
-- The loop also self-terminates on `LOOP_DONE`, a tick `LOOP_HALT`, 3 consecutive failed/garbage ticks, or 3 consecutive `CONTINUE` ticks with no drop in remaining tasks (no-progress guard).
+- The harness reads the `rate_limit_event` from each tick. When the usage window is exhausted it **auto-waits until the reset** (`resetsAt`) and resumes; if the reset is further out than `MAX_WAIT` (default 6h, e.g. a weekly window) it logs the reset time and **exits cleanly** so you can re-run `run.sh` later. Resume is safe at any point: work is committed per task, an orphaned `[~]` is re-evaluated by the next tick (or reset by the medic), and the Worker's checkpoint file survives.
+- The loop also self-terminates on `LOOP_DONE`, a tick `LOOP_HALT`, 3 consecutive failed/garbage ticks, or 3 consecutive `CONTINUE` ticks with no drop in remaining tasks (no-progress guard) — each of these raises an incident first, so the medic gets a look before the harness stops.
+- Each `tick_end` carries a `cause` (`ok | timeout | killed | terminated | api_error | rate_limit | no_sentinel | crashed`), so the summary line distinguishes `killed (SIGKILL — likely OS memory pressure)` from a tick that produced nothing. A pre-tick memory guard delays (never halts) while free RAM is below `MEM_MIN_MB` and swap above `SWAP_MAX_PCT`, emitting `sleep reason=memory` so the dashboard says "waiting for memory headroom" rather than "stalled".
 
 ## Configuration
 
@@ -119,6 +136,71 @@ Set in `LOOP_CONFIG.md` (under `.claude/loop/<run-id>/`):
 - **Limits** (one line): `tick_timeout` (per-tick seconds — rabbit-hole kill for a single stuck tick). There is **no cost/iteration/wall-clock budget.** The subscription usage window is the only ceiling.
 - **Blocker policy**: `continue-independent` (default — on a blocker, mark dependents `[blocked-upstream]` and keep working unblocked tasks) or `halt` (stop the loop).
 - **Granularity**: `single` (whole plan up front) or `segmented` (segments mapped in config, each expanded by its own PLAN tick).
+- **Dashboard**: `auto` (default — `run.sh` spawns and supervises the sidecar) or `off`.
+- **Medic**: `auto` (default — notify + headless `/agent-loop-medic`, budgeted) · `notify` (desktop notification only; error incidents go straight to `NEEDS_HUMAN.md`) · `off`. **Medic model**: alias or blank (inherit).
+
+### Env knobs (`run.sh`)
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `HB_INTERVAL` | `10` | Heartbeat and supervisor period, seconds. Observers treat the harness as dead when `HEARTBEAT` is older than 3×. |
+| `STALL_S` | `300` | No stream activity for this long during a tick → `incident kind=tick-stalled` (warn; `tick_timeout` still owns the kill). |
+| `MEM_MIN_MB` / `SWAP_MAX_PCT` | `1024` / `90` | Pre-tick memory guard: delay when free MB is below **and** swap % is above. |
+| `MEM_BACKOFF` / `MEM_MAX_DELAYS` | `60` / `5` | Seconds per delay, and how many before proceeding regardless with a warning. |
+| `MEDIC_MAX_PER_RUN` | `3` | Medic invocations per harness run; beyond it error incidents escalate directly. |
+| `MEDIC_TIMEOUT` | `600` | Wall clock per medic run; overrun counts as `escalated`. |
+| `DASH_MAX_RESTARTS` | `5` | Sidecar respawns per hour before `dashboard-crashloop`. |
+| `LOOP_DASHBOARD` | config | `auto`/`off`, overrides the `Dashboard:` line for one launch. |
+| `LOOP_DASHBOARD_OPEN` | unset | `1` → `open`/`xdg-open` the URL once. |
+| `LOOP_DASHBOARD_CMD` | serve.py | Full sidecar command override (tests, or a different observer). |
+| `LOOP_MEDIC_CMD` | claude | Full medic command override; default `claude --print --dangerously-skip-permissions [--model M] "/agent-loop-medic <id>"`. |
+| `LOOP_ORCHESTRATOR_MODEL` | config | One-off override of `Orchestrator model:`. |
+| `LOOP_MIGRATE_FORCE` | unset | `1` → run a pending schema migration even though `run.log` looks like a pre-2.0 harness is still writing it. Only after you have confirmed that harness is dead. |
+| `LOOP_VERBOSE` | unset | `1` → raw stream to the terminal instead of the heartbeat line. |
+| `MAX_WAIT` | `6h` | Longest rate-limit reset the harness will wait for before exiting cleanly. |
+
+### Events (`events.jsonl`)
+
+One JSON object per line, every one carrying `t` (epoch), `seq` (monotonic per harness process) and `type`. `events.jsonl` is the single source of truth for status; `run.log` is forensic only.
+
+| type | fields | when |
+| --- | --- | --- |
+| `loop_start` | `pid`, `host`, `plugin_version`, `resume`, `dashboard_url?` | after the lock is acquired |
+| `tick_start` | `tick`, `pid`, `timeout_at` | a tick is launched |
+| `tick_end` | `tick`, `verdict`, `cause`, `rc`, `dur`, `by_model` | a tick returns |
+| `sleep` | `tick`, `until`, `reason` ∈ `between-ticks\|backoff\|rate-limit\|memory` | any harness sleep |
+| `memory_pressure` | `free_mb`, `swap_used_pct`, `action` | the pre-tick guard runs |
+| `incident` | `id`, `kind`, `severity` ∈ `warn\|error\|needs-human`, `detail`, `tick` | see the medic section |
+| `medic_start` / `medic_end` | `id` / `id`, `outcome`, `summary` | around a medic run |
+| `migration` | `from`, `to`, `actions`, `plugin_version` | once per schema step when a launch upgrades an older loop dir (after `loop_start`, before the first tick) |
+| `loop_end` | `reason` ∈ `done\|halt\|paused\|rate-limit-exit\|error\|signal\|needs-human`, `detail`, `exit_code` | every exit path of the lock owner (a refused second harness raises `incident kind=lock-conflict` instead) |
+| `paused`, `role_start`, `role_end`, `handoff`, `tool`, `task_status`, `plan_oversize` | unchanged | as before |
+
+Incident kinds: `harness-crash`, `tick-killed`, `tick-timeout`, `tick-stalled`, `garbage-ticks`, `no-progress`, `halt-sentinel`, `lock-conflict`, `git-divergence`, `dashboard-crashloop`, `migration-blocked`, `schema-newer`. The medic's per-kind action and outcome table lives in `skills/agent-loop-medic/SKILL.md`.
+
+### Operator notes
+
+- **Liveness is `runtime/harness.json` + `HEARTBEAT`, never `pgrep`.** The harness is alive when the pid in `harness.json` passes `kill -0` **and** `ps -o command= -p PID` mentions `run.sh`, **and** `HEARTBEAT` is younger than 3×`HB_INTERVAL`. `pgrep run.sh` / `ps | grep run.sh` from inside a Claude session matches the session's own tool calls and reports a phantom harness — that is how the 1.x "concurrent loop harnesses" false alarms happened. The skills, the dashboard and the medic all use the pid test.
+- **One harness per `LOOP_DIR`, enforced by the harness.** In 1.x the only mutex was a `runtime/LOCK` file the tick prompt asked the model to write and check by pid; a second `bash run.sh` started instantly and two harnesses raced on the same plan. The lock now lives in the harness (`mkdir runtime/harness.lock.d`), a second launch exits 3 with the owner's pid, and a stale lock from a crashed harness is taken over with an `incident kind=harness-crash` so the medic reconciles orphans (with `Medic: notify|off` it is a warning and the loop continues — the next tick re-evaluates an orphaned `[~]` itself).
+- **Status cannot lie.** 1.x derived `halted`/`done` by grepping the last 4 KB of `run.log` for `HALT:`/`LOOP_DONE` — text that legitimately appears in a Worker prompt or the orchestrator's reasoning, which produced "HALTED" during an ordinary hand-off between agents. Terminal states now require a `loop_end` event; nothing reads `run.log` for state.
+- **Run the harness standalone, in its own terminal.** Not under an interactive session (RAM stacks, dies with the session), not twice. Attach with `/agent-loop`.
+- **Host memory hogs.** A repeated `tick-killed` (rc=137) is the OS killing the tick for RAM, not the loop misbehaving. On a developer Mac the usual residents are a Docker / `Virtualization.framework` VM and the `vercel.turbo-vsc` daemon (multiple GB each) plus idle interactive Claude sessions (~400 MB each). The memory guard delays ticks while headroom is low but cannot create headroom; the medic names these in `human_next_step`.
+- **Why the dashboard used to be a hog, and no longer is.** 1.x `serve.py` re-read and re-parsed the whole `events.jsonl` (tens of MB after a long run) once per second, per connected browser, on its own thread — several × the file size in Python objects churned every second, which is the most plausible reason it was the recurring OOM victim and competed with the tick for RAM. 2.0 keeps an incremental tail with an offset, folds finished ticks to aggregates, and serves one cached snapshot to every client. Memory is O(current tick + number of ticks).
+
+### Upgrading (loop-dir schema)
+
+A loop dir outlives plugin versions, so its **layout** carries its own integer version: `LOOP_SCHEMA` in `lib/migrate.sh`, stamped in `runtime/schema`. The stamp is independent of the plugin semver — it bumps only when a file name, format or sentinel under the loop dir changes meaning. Prompt, UI and harness-internal changes never bump it. Nothing but the harness writes the stamp.
+
+Every launch checks the stamp right after `loop_start`. A dir with no stamp and a `runtime/tickseq` was started by a pre-2.0 plugin (schema 1); a dir with neither is new and is stamped without a migration. An older dir is migrated in place, one step at a time, each step writing the stamp and a `migration` event, so an interrupted upgrade resumes where it stopped. Migrations never edit `LOOP_CONFIG.md` or `LOOP_PLAN.md`. Two refusals exit 2 with `runtime/NEEDS_HUMAN.md`, and no medic runs for either because the fix is a human action:
+
+- `migration-blocked` — the dir is schema 1 and `run.log` was written in the last two minutes without ending in a 1.x exit line, which usually means the old harness is still running (1.x wrote no pid file, so this is the only evidence there is). Pause it at a tick boundary (`touch <loop-dir>/runtime/PAUSE`, wait for its terminal to exit, delete the file), kill its dashboard, relaunch. `LOOP_MIGRATE_FORCE=1` skips the guard once you have confirmed it is dead.
+- `schema-newer` — an older plugin was pointed at a newer dir. Update the plugin on that machine.
+
+| step | what changes on disk | why |
+| --- | --- | --- |
+| 1 → 2 | `runtime/LOCK` removed (`actions=legacy-lock-removed`, or `none`) | 1.x asked the tick prompt to write and check a pid lock; 2.0's mutex is the harness's `runtime/harness.lock.d`, and nothing reads the old file. Tick numbering, plan, config, learnings and the usage ledger carry over unchanged; ticks recorded before the migration show no `cause` because 1.x did not record one. |
+
+**Authoring rule.** A change that alters anything a loop dir contains — a file name, a format, a sentinel's meaning, a runtime file another component reads — bumps `LOOP_SCHEMA`, adds `migrate_<k>_to_<k+1>` in `lib/migrate.sh` with a case in `migrate_loop_dir`, adds cases to `tests/migrate.test.sh`, and adds a row to the table above. A change that does not touch the dir's contents does not bump it, however large.
 
 ### Safety posture
 
@@ -142,5 +224,5 @@ The plugin hardcodes **no** model names — everything is expressed in tiers (`c
 bash tests/all.sh
 ```
 
-Runs `lib.test.sh`, `events.test.sh`, `run.e2e.test.sh`, the `tick-prompt.contract.sh`, `setup.contract.sh`, and `postmortem.contract.sh` suites, `serve.test.py` (skipped non-fatally if `python3` is absent), and `web.contract.sh`. Linting is repo-wide via `scripts/lint.sh`, run once by `scripts/test-all.sh`, not per-plugin. Note: `lib.test.sh` and `run.e2e.test.sh` use `mktemp -d`; if the sandbox blocks it, run with the sandbox disabled.
+Runs `lib.test.sh`, `harness.test.sh`, `events.test.sh`, `run.e2e.test.sh`, the `tick-prompt.contract.sh`, `setup.contract.sh`, `postmortem.contract.sh`, and `medic.contract.sh` suites, `serve.test.py` (skipped non-fatally if `python3` is absent), and `web.contract.sh`. The contract suites pin the skills' promises: the medic's allowlist, forbidden list, outcomes and output keys; the attach skill's Monitor command and "never `pgrep`" rule; the tick prompt's lock-free boot. Linting is repo-wide via `scripts/lint.sh`, run once by `scripts/test-all.sh`, not per-plugin. Note: `lib.test.sh` and `run.e2e.test.sh` use `mktemp -d`; if the sandbox blocks it, run with the sandbox disabled.
 

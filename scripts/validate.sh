@@ -32,6 +32,7 @@ config/ccstatusline/ccsl-model.sh
 config/ccstatusline/ccsl-sandbox.sh
 plugins/agent-loop/run.sh
 plugins/agent-loop/tests/fixtures/claude
+plugins/agent-loop/tests/fixtures/dashboard-stub
 scripts/lint.sh
 scripts/test-all.sh
 scripts/validate.sh"

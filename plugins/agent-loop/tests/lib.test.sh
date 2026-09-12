@@ -93,6 +93,43 @@ assert_eq "── loop · 62% ███████░░░░░ 26/42 · ⏱ 
 assert_eq "── loop · 62% ███████░░░░░ 26/42 · ⏱ 1h12m · ~45m00s left ──" \
   "$(session_header 26 42 4332 2700 '')" "session_header omits empty plan segment"
 
+# --- segment accounting: a segment is "done" only when it HAS tasks and all are [x]/[-] ---
+TMP="$(mktemp -d)"; SEGPLAN="$TMP/plan.md"
+cat > "$SEGPLAN" <<'PLAN'
+# Plan
+## S1: bootstrap
+- [x] T1 first
+- [-] T2 skipped
+## S2: middle
+- [ ] T3 pending
+## S3: not planned yet
+PLAN
+assert_eq "3" "$(segments_total "$SEGPLAN")"     "segments_total counts ## headings"
+assert_eq "1" "$(segments_done "$SEGPLAN")"      "segments_done: all-[x]/[-] segment with >=1 task"
+assert_eq "1" "$(segments_unplanned "$SEGPLAN")" "segments_unplanned: heading with zero task lines"
+assert_eq "0" "$(segments_total "$TMP/nope.md")" "segments_total on a missing plan is 0"
+rm -rf "$TMP"
+
+# session_header segment form: honest progress while segments are still unplanned.
+# 3/3 planned tasks must NOT read as 100% when segments 2 and 3 are unwritten.
+SH="$(session_header 3 3 60 0 '' 1 3)"
+case "$SH" in *"seg 1/3"*)     assert_true 0 "segment header shows seg done/total" ;;
+  *)                           assert_true 1 "segment header shows seg done/total ($SH)" ;; esac
+case "$SH" in *"3/3 planned"*) assert_true 0 "segment header labels the task count as planned" ;;
+  *)                           assert_true 1 "segment header labels the task count as planned ($SH)" ;; esac
+case "$SH" in *"33%"*)         assert_true 0 "segment header percent is segment-weighted" ;;
+  *)                           assert_true 1 "segment header percent is segment-weighted ($SH)" ;; esac
+case "$SH" in *"100%"*)        assert_true 1 "segment header never claims 100% mid-plan" ;;
+  *)                           assert_true 0 "segment header never claims 100% mid-plan" ;; esac
+assert_eq "── loop · 100% ████████████ 3/3 · ⏱ 1m00s · ~0s left ──"   "$(session_header 3 3 60 0 '')" "no segment args keeps the task-percent form"
+assert_eq "── loop · 100% ████████████ 3/3 · ⏱ 1m00s · ~0s left ──"   "$(session_header 3 3 60 0 '' 3 3)" "all segments done falls back to the task-percent form"
+
+# tick_line 9th arg: a non-ok cause is spelled out for the operator
+case "$(tick_line retry 12 T34 1800 '' '' 26 42 killed)" in
+  *SIGKILL*) assert_true 0 "tick_line appends the human cause for a killed tick" ;;
+  *)         assert_true 1 "tick_line appends the human cause for a killed tick" ;; esac
+assert_eq "✓ t3 T26 · 3m12s · lint✓ test✓ · → a1b2c3   62% (26/42)"   "$(tick_line continue 3 T26 192 'lint✓ test✓' a1b2c3 26 42 ok)" "cause=ok adds nothing"
+
 # --- worktree guard ---
 worktree_guard "/a/b/wt" "/a/b/wt"; assert_true  $? "cwd matches worktree"
 worktree_guard "/a/b/wt" "/a/b/other"; assert_false $? "cwd differs from worktree"
@@ -177,6 +214,15 @@ assert_eq "Worker" "$(jq -r 'select(.type=="tool" and .name=="Edit") | .role' "$
 # omitting the 4th arg keeps the old behaviour: no events file written
 RES2="$(format_stream "$TMP/r2.log" "$TMP/rl2.json" 7 < "$HERE/fixtures/stream-sample.jsonl" 2>/dev/null)"
 assert_eq "result" "$(printf '%s' "$RES2" | jq -r '.type')" "3-arg call still works (no events)"
+rm -rf "$TMP"
+
+# --- format_stream 5th arg: the last-activity stamp the harness stall detector reads ---
+TMP="$(mktemp -d)"; ACT="$TMP/last-activity"
+format_stream "$TMP/r.log" "$TMP/rl.json" 7 "$TMP/ev.jsonl" "$ACT" \
+  < "$HERE/fixtures/stream-sample.jsonl" >/dev/null 2>&1
+# a bare [[ ]] status would be a condition's, not a command's (SC2319)
+isint() { [[ "$1" =~ ^[0-9]+$ ]]; }
+isint "$(cat "$ACT" 2>/dev/null)"; assert_true $? "format_stream stamps last-activity with an epoch"
 rm -rf "$TMP"
 
 # --- ratelimit_action <rate_limit_info_json> <now_epoch> <max_wait_s> -> ok | "wait N" | exit ---

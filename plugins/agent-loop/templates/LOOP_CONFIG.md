@@ -12,6 +12,13 @@ Worktree: <absolute path — the harness refuses to run elsewhere>
 Segment count: <N or 1>
 Spec: docs/superpowers/specs/<file>.md
 Plan: docs/superpowers/plans/<file>.md
+# auto = run.sh spawns the dashboard as a supervised sidecar and prints its URL; off = don't.
+Dashboard: auto
+# auto = a budgeted headless medic tick triages incidents; notify = desktop notification only;
+# off = neither (an error-severity incident then stops the loop for a human).
+Medic: auto
+# Model alias for the medic tick. Blank inherits your Claude default.
+Medic model:
 
 ## Model tiers (optional). Blank = let each role pick the least-powerful capable model.
 # The orchestrator (the per-tick process) is a coordination + verification spine: it
