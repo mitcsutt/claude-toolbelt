@@ -414,3 +414,18 @@ never spawns a harness; it prints the resume command.
 **Observers.** `serve.py` keeps `migration` as a lifecycle event and adds `loop.schema` (int or null) and `loop.migration` (last migration event or null) to the snapshot; the dashboard footer shows `schema N`. `/agent-loop` attach reads `runtime/schema` and, when it is absent or behind, tells the user what the next launch will do and how to pause a 1.x harness first. The medic decision table gains rows for `migration-blocked` and `schema-newer` (interactive only, outcome `noop`, never force).
 
 **Authoring rule.** Any change that alters what a loop dir contains bumps `LOOP_SCHEMA`, adds a `migrate_<k>_to_<k+1>` function with tests, and adds a one-paragraph note under “Upgrading” in the plugin README. The CLAUDE.md “Changing a plugin” checklist links that section.
+
+## 13. Dashboard-first launch (revision of §4.7, §7, §9.1)
+
+**What was wrong.** §9.1 made the dashboard a sidecar the harness owns, and §7 made `/agent-loop` an attach-only skill that starts a read-only observer and tells the user to launch the harness in a separate terminal. In use that meant: attach starts a dashboard that cannot start anything, the user opens a terminal, a second dashboard appears on a new port. The memory rationale ("a tick's RAM stacks on the session") was wrong: a tick is its own process and its memory is the same whichever parent it has. The one real requirement is survival — the loop must outlive the Claude session — and that is solved by detaching, not by terminals.
+
+**The model.** Exactly one dashboard per loop dir, and it is the launcher.
+
+1. `/agent-loop` ensures one dashboard exists: if `runtime/dashboard.json` names a live `serve.py` pid, print its URL; otherwise run `serve.py --detach` in the foreground. `--detach` re-launches the server in a new process session (`start_new_session=True`, stdio to `runtime/dashboard.out`), waits until `runtime/dashboard.json` names the child, prints the `dashboard-started` banner, and exits. A second `--detach` on a dir with a live dashboard prints the same banner (`reused: true`) and launches nothing.
+2. The dashboard's ▶ Start / ⟳ Resume spawn `run.sh` as its child with `LOOP_DASHBOARD=off` in the environment and in a new process session, so a dashboard crash does not take the loop down. Both clear `runtime/PAUSE`; both refuse (409) while `harness.json` names a live harness. "Tell the agent to start it" is the same path: `POST <url>/api/resume` (or `/api/start` before the first tick).
+3. A terminal launch (`bash run.sh`) still works. Before spawning a sidecar the harness checks `runtime/dashboard.json`: a live non-sidecar `serve.py` is **adopted** — its URL is announced and recorded in `loop_start`, nothing is spawned, nothing is supervised, and it is not killed on exit. Only when no dashboard is alive (or the recorded one is a dead/orphaned sidecar) does `Dashboard: auto` spawn and supervise a sidecar as in §4.7.
+4. Monitor fallback: when the Monitor tool is unavailable, the attach skill arms a background Bash task `tail -n 0 -F events.jsonl | grep -m1 -E …` that exits on the first matching event (the harness re-invokes the session on exit) and is re-armed after handling.
+
+**Unchanged.** The lock, heartbeat, liveness rule, tick classification, medic, migrations, and every event. Where the harness process is started never mattered to any of them.
+
+**Helpers.** `serve.py`: `existing_dashboard(runtime_dir)`, `run_detached(loop_dir, runtime_dir, argv, launcher, timeout)`. `lib/harness.sh`: `dashboard_adoptable <runtime_dir>` → prints the URL and returns 0 iff `dashboard.json` names a live `serve.py` pid with `sidecar != true`.

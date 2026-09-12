@@ -1121,12 +1121,18 @@ class Supervisor:
             return {"error": "harness pid %d is alive" % pid}
         return None
 
-    def _spawn(self):  # pragma: no cover (exercised in web.contract.sh)
+    def _spawn(self):
         env = dict(os.environ)
         env["LOOP_DIR"] = self.loop_dir
+        # This process IS the loop's dashboard: the harness must not open a sidecar.
+        # (run.sh would adopt us anyway via runtime/dashboard.json; the env makes
+        # the intent explicit and survives a dashboard.json race.)
+        env["LOOP_DASHBOARD"] = "off"
         run_sh = os.path.join(self.plugin_root, "run.sh")
+        # Own session: a dashboard crash or Ctrl-C must never take the loop down.
+        # Stop still works — it SIGTERMs the pid in harness.json, not our child.
         self.proc = subprocess.Popen(
-            ["bash", run_sh], cwd=self.worktree, env=env)
+            ["bash", run_sh], cwd=self.worktree, env=env, start_new_session=True)
 
     def start(self):
         with self._lock:
@@ -1350,6 +1356,62 @@ def _bind_server(port, handler, server_cls=None):
         return cls(("127.0.0.1", 0), handler)
 
 
+def existing_dashboard(runtime_dir):
+    """runtime/dashboard.json when it names a live serve.py, else None."""
+    d = _read_json(os.path.join(runtime_dir, "dashboard.json")) or {}
+    if d.get("pid") and process_alive(d.get("pid"), "serve.py"):
+        return d
+    return None
+
+
+def _launch_detached(argv, out_path):
+    """Re-exec this server in a NEW SESSION so it outlives whatever launched it
+    (an interactive Claude session, a terminal). stdio goes to out_path."""
+    out = open(out_path, "ab")
+    proc = subprocess.Popen([sys.executable, os.path.abspath(__file__)] + list(argv),
+                            stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                            cwd=os.getcwd(), start_new_session=True, close_fds=True)
+    return proc.pid
+
+
+def run_detached(loop_dir, runtime_dir, argv, launcher=None, timeout=10.0):
+    """`--detach`: ensure exactly one dashboard for loop_dir and print its banner.
+
+    A live dashboard is reused (nothing launched). Otherwise the server is
+    launched detached and we wait until runtime/dashboard.json names the child.
+    Prints one JSON line to stdout; returns the process exit code."""
+    launcher = launcher or _launch_detached
+    os.makedirs(runtime_dir, exist_ok=True)
+    live = existing_dashboard(runtime_dir)
+    if live:
+        print(json.dumps({"type": "dashboard-started", "url": live.get("url"),
+                          "loop_dir": loop_dir, "pid": live.get("pid"),
+                          "reused": True}), flush=True)
+        return 0
+    child_argv = [a for a in argv if a != "--detach"]
+    out_path = os.path.join(runtime_dir, "dashboard.out")
+    pid = launcher(child_argv, out_path)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        d = _read_json(os.path.join(runtime_dir, "dashboard.json")) or {}
+        if d.get("pid") == pid and d.get("url"):
+            print(json.dumps({"type": "dashboard-started", "url": d["url"],
+                              "loop_dir": loop_dir, "pid": pid, "reused": False}),
+                  flush=True)
+            return 0
+        time.sleep(0.1)
+    tail = ""
+    try:
+        with open(out_path, "rb") as f:
+            tail = f.read()[-800:].decode("utf-8", "replace")
+    except OSError:
+        pass
+    print(json.dumps({"type": "dashboard-failed", "loop_dir": loop_dir, "pid": pid,
+                      "detail": "no dashboard.json from the child within %.0fs" % timeout,
+                      "log_tail": tail}), flush=True)
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser(description="agent-loop dashboard server")
     ap.add_argument("--loop-dir", default=os.environ.get("LOOP_DIR", ".claude/loop/run"))
@@ -1361,10 +1423,16 @@ def main():
                     help="launched and supervised by run.sh; recorded in "
                          "runtime/dashboard.json so an attaching session reuses "
                          "this server instead of starting another")
+    ap.add_argument("--detach", action="store_true",
+                    help="ensure one dashboard for this loop dir: reuse a live one, "
+                         "else launch the server in its own session (survives the "
+                         "launching shell/session), print the banner, and exit")
     args = ap.parse_args()
     DASHBOARD["sidecar"] = bool(args.sidecar)
 
     loop_dir = os.path.abspath(args.loop_dir)
+    if args.detach:
+        sys.exit(run_detached(loop_dir, os.path.join(loop_dir, "runtime"), sys.argv[1:]))
     config = parse_config(_read(os.path.join(loop_dir, "LOOP_CONFIG.md")))
     worktree = config.get("worktree") or os.getcwd()
     sup = Supervisor(loop_dir=loop_dir, plugin_root=os.path.dirname(HERE),
