@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Unit tests for web/serve.py (stdlib unittest; no pip)."""
+import json
 import os
 import sys
 import tempfile
-import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "web"))
@@ -222,50 +222,6 @@ class TestParseConfig(unittest.TestCase):
         self.assertEqual(c["limits"]["tick_timeout"], "1200")
 
 
-RUNLOG_SAMPLE = "\n".join([
-    "2026-06-16T00:00:00Z tick 26 starting",
-    '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}',
-    "2026-06-16T00:05:00Z tick 27 starting",
-    '{"type":"assistant","message":{"model":"claude-opus","content":'
-    '[{"type":"text","text":"EXECUTE TICK now"}]}}',
-    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Agent",'
-    '"input":{"subagent_type":"Worker","model":"sonnet"}}]}}',
-    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",'
-    '"input":{"command":"pnpm lint"}}]}}',
-    "not json at all",
-])
-
-
-class TestSliceCurrentTick(unittest.TestCase):
-    def test_finds_last_tick(self):
-        s = serve.slice_current_tick(RUNLOG_SAMPLE)
-        self.assertEqual(s["tick"], 27)
-        self.assertTrue(any("EXECUTE TICK" in ln for ln in s["lines"]))
-        self.assertFalse(any("tick 26 starting" in ln for ln in s["lines"]))
-
-    def test_no_marker(self):
-        s = serve.slice_current_tick("just some text\n{}")
-        self.assertIsNone(s["tick"])
-
-
-class TestParseCurrentActivity(unittest.TestCase):
-    def test_fields(self):
-        s = serve.slice_current_tick(RUNLOG_SAMPLE)
-        a = serve.parse_current_activity(s["lines"])
-        self.assertEqual(a["mode"], "execute")
-        self.assertEqual(a["subagent"], "Worker")
-        self.assertEqual(a["model"], "sonnet")
-        self.assertEqual(a["tools"], 2)
-
-    def test_mode_default_execute(self):
-        a = serve.parse_current_activity(['{"type":"assistant","message":{"content":[]}}'])
-        self.assertEqual(a["mode"], "execute")
-
-    def test_tolerates_garbage(self):
-        a = serve.parse_current_activity(["nonsense", ""])
-        self.assertEqual(a["tools"], 0)
-
-
 EVENTS_SAMPLE = "\n".join([
     '{"t":100,"type":"tick_start","tick":7}',
     '{"t":101,"type":"role_start","role":"Scout","model":"sonnet"}',
@@ -371,79 +327,405 @@ class TestDeriveCurrent(unittest.TestCase):
         self.assertEqual(pipe["active"]["role"], "opus")
 
 
-class TestDetectLoopStatus(unittest.TestCase):
+NOW = 1000
+
+
+def mk(events, loop_dir=None):
+    """Build an EventStore over a temp events.jsonl holding `events`."""
+    d = loop_dir or tempfile.mkdtemp()
+    path = os.path.join(d, "events.jsonl")
+    with open(path, "w") as f:
+        for e in events:
+            f.write(json.dumps(e) + "\n")
+    store = serve.EventStore(path)
+    store.refresh()
+    return store
+
+
+def live(**kw):
+    """Default liveness: harness up, heartbeat fresh, a tick in flight."""
+    base = {"pause": False, "harness_pid": 4812, "harness_pid_alive": True,
+            "harness_started_at": 900, "heartbeat_age_s": 1,
+            "tick_pid": 4999, "tick_pid_alive": True, "tick_no": 7,
+            "tick_started_at": None, "tick_timeout_s": 1800,
+            "activity_age_s": 2}
+    base.update(kw)
+    return base
+
+
+def status_of(events, now=NOW, **livekw):
+    return serve.derive_status(mk(events), live(**livekw), now)
+
+
+class TestDeriveStatus(unittest.TestCase):
+    """The status table. Pure function of (store, liveness, now) — never run.log."""
+
+    def test_idle_no_events(self):
+        self.assertEqual(status_of([])["state"], "idle")
+
+    def test_running_with_tick_in_flight(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start", "pid": 4812},
+            {"t": 100, "type": "tick_start", "tick": 7, "pid": 4999},
+            {"t": 101, "type": "role_start", "role": "Worker", "model": "sonnet"},
+        ], tick_started_at=100)
+        self.assertEqual(s["state"], "running")
+        self.assertEqual(s["phase"], "Worker")
+        self.assertEqual(s["since"], 100)
+        self.assertIn("Worker (sonnet)", s["why"])
+        self.assertIn("last activity 2s ago", s["why"])
+
+    def test_running_names_the_current_task(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 101, "type": "task_status", "id": "T34", "status": "doing"},
+            {"t": 102, "type": "role_start", "role": "Worker", "model": "sonnet"},
+        ])
+        self.assertIn("on T34", s["why"])
+
+    def test_between_ticks_from_sleep(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 200, "type": "tick_end", "tick": 7, "verdict": "continue", "cause": "ok"},
+            {"t": 200, "type": "sleep", "tick": 7, "until": NOW + 5,
+             "reason": "between-ticks"},
+        ])
+        self.assertEqual(s["state"], "between-ticks")
+        self.assertIn("next tick in 5s", s["why"])
+
+    def test_sleep_in_the_same_second_as_tick_end_still_wins(self):
+        # tick_end and the between-ticks sleep are emitted back to back; a
+        # strict `sleep.t > tick_end.t` would call this "waiting for next tick"
+        # with no countdown for the whole gap.
+        s = status_of([
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 200, "type": "tick_end", "tick": 7, "verdict": "continue"},
+            {"t": 200, "type": "sleep", "until": NOW + 9, "reason": "backoff"},
+        ])
+        self.assertEqual(s["state"], "between-ticks")
+        self.assertIn("backoff", s["why"])
+
+    def test_rate_limited(self):
+        s = status_of([
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 200, "type": "tick_end", "tick": 7, "verdict": "retry"},
+            {"t": 200, "type": "sleep", "until": NOW + 600, "reason": "rate-limit"},
+        ])
+        self.assertEqual(s["state"], "rate-limited")
+        self.assertIn("usage window", s["why"])
+
+    def test_memory_wait(self):
+        s = status_of([
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 200, "type": "tick_end", "tick": 7, "verdict": "continue"},
+            {"t": 210, "type": "memory_pressure", "free_mb": 500, "swap_used_pct": 95,
+             "action": "delay"},
+            {"t": 210, "type": "sleep", "until": NOW + 60, "reason": "memory"},
+        ])
+        self.assertEqual(s["state"], "memory-wait")
+        self.assertIn("memory", s["why"])
+
+    def test_expired_sleep_does_not_stick(self):
+        s = status_of([
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 200, "type": "tick_end", "tick": 7, "verdict": "continue"},
+            {"t": 200, "type": "sleep", "until": NOW - 1, "reason": "between-ticks"},
+        ])
+        self.assertEqual(s["state"], "between-ticks")
+        self.assertEqual(s["why"], "waiting for next tick")
+
+    def test_stalled(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], activity_age_s=400, tick_started_at=100, tick_timeout_s=1800)
+        self.assertEqual(s["state"], "stalled")
+        self.assertIn("no activity", s["why"])
+        self.assertIn("killed in", s["why"])
+
+    def test_pausing_while_harness_alive(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], pause=True)
+        self.assertEqual(s["state"], "pausing")
+        self.assertIn("stops after tick 7", s["why"])
+
+    def test_paused_terminal(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 300, "type": "loop_end", "reason": "paused", "exit_code": 0},
+        ])
+        self.assertEqual(s["state"], "paused")
+
+    def test_paused_when_pause_file_outlives_a_dead_harness(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], pause=True, harness_pid_alive=False)
+        self.assertEqual(s["state"], "paused")
+        self.assertIn("PAUSE present", s["why"])
+
     def test_done(self):
-        self.assertEqual(
-            serve.detect_loop_status(pause=False, lock=False, child_alive=False,
-                                     last_log="LOOP_DONE after 5 ticks"), "done")
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 300, "type": "loop_end", "reason": "done", "exit_code": 0},
+        ])
+        self.assertEqual(s["state"], "done")
+        self.assertEqual(s["since"], 300)
 
-    def test_halted(self):
-        self.assertEqual(
-            serve.detect_loop_status(pause=False, lock=True, child_alive=True,
-                                     last_log="HALT: no progress"), "halted")
+    def test_halted_why_is_the_detail(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 300, "type": "loop_end", "reason": "halt",
+             "detail": "blocked on T2", "exit_code": 1},
+        ])
+        self.assertEqual(s["state"], "halted")
+        self.assertEqual(s["why"], "blocked on T2")
 
-    def test_paused(self):
-        self.assertEqual(
-            serve.detect_loop_status(pause=True, lock=True, child_alive=True,
-                                     last_log="tick 3 starting"), "paused")
+    def test_needs_human_from_loop_end(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 300, "type": "loop_end", "reason": "needs-human",
+             "detail": "medic paused the run", "exit_code": 2},
+        ])
+        self.assertEqual(s["state"], "needs-human")
+        self.assertEqual(s["why"], "medic paused the run")
 
-    def test_running(self):
-        self.assertEqual(
-            serve.detect_loop_status(pause=False, lock=True, child_alive=False,
-                                     last_log="tick 3 starting"), "running")
+    def test_needs_human_from_incident_severity(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 150, "type": "incident", "id": "i-004", "kind": "tick-killed",
+             "severity": "needs-human", "detail": "rc=137 twice", "tick": 7},
+        ])
+        self.assertEqual(s["state"], "needs-human")
+        self.assertEqual(s["why"], "rc=137 twice")
+        self.assertEqual(s["since"], 150)
 
-    def test_idle(self):
-        self.assertEqual(
-            serve.detect_loop_status(pause=False, lock=False, child_alive=False,
-                                     last_log=""), "idle")
+    def test_stopped_on_signal_and_lock_conflict(self):
+        for reason in ("signal", "lock-conflict"):
+            s = status_of([
+                {"t": 90, "type": "loop_start"},
+                {"t": 300, "type": "loop_end", "reason": reason, "exit_code": 3},
+            ])
+            self.assertEqual(s["state"], "stopped", reason)
 
-    def test_stopped(self):
-        self.assertEqual(
-            serve.detect_loop_status(pause=False, lock=False, child_alive=False,
-                                     last_log="tick 3 starting"), "stopped")
+    def test_rate_limit_exit_is_paused(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 300, "type": "loop_end", "reason": "rate-limit-exit", "exit_code": 0},
+        ])
+        self.assertEqual(s["state"], "paused")
+        self.assertIn("re-run to resume", s["why"])
+
+    def test_crashed_when_harness_pid_is_gone(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start", "pid": 4812},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], harness_pid_alive=False, heartbeat_age_s=9)
+        self.assertEqual(s["state"], "crashed")
+        self.assertIn("4812", s["why"])
+
+    def test_crashed_when_heartbeat_is_stale(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start", "pid": 4812},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], heartbeat_age_s=100)
+        self.assertEqual(s["state"], "crashed")
+        self.assertIn("last heartbeat", s["why"])
+
+    def test_crashed_when_no_heartbeat_file(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start", "pid": 4812},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], heartbeat_age_s=None)
+        self.assertEqual(s["state"], "crashed")
+
+    def test_resume_after_terminal_is_running_again(self):
+        # A loop_start newer than the loop_end means the operator restarted.
+        s = status_of([
+            {"t": 10, "type": "loop_end", "reason": "done", "exit_code": 0},
+            {"t": 20, "type": "loop_start", "pid": 4812, "resume": 1},
+            {"t": 21, "type": "tick_start", "tick": 8},
+        ])
+        self.assertEqual(s["state"], "running")
+
+    def test_between_ticks_when_nothing_else_applies(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+            {"t": 200, "type": "tick_end", "tick": 7, "verdict": "continue"},
+        ])
+        self.assertEqual(s["state"], "between-ticks")
 
 
-class TestEventVerdict(unittest.TestCase):
-    def test_running_recent_event(self):
-        v = serve.event_verdict(last_event_t=1000, now=1010, lock=True, pause=False,
-                                last_log="tick 7 starting", quota=None, stall_s=45)
-        self.assertEqual(v, "running")
+class TestRunLogNeverDecidesStatus(unittest.TestCase):
+    """The 1.2 regression: run.log text must not be able to stop the loop."""
 
-    def test_stalled_lock_but_no_recent_event(self):
-        v = serve.event_verdict(last_event_t=1000, now=1100, lock=True, pause=False,
-                                last_log="tick 7 starting", quota=None, stall_s=45)
-        self.assertEqual(v, "stalled")
+    def test_halt_and_done_text_in_runlog_with_a_live_tick_is_running(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        with open(os.path.join(d, "LOOP_PLAN.md"), "w") as f:
+            f.write(PLAN_SAMPLE)
+        # Exactly the poison that used to flip the badge: a subagent prompt
+        # quoting the halt sentinel, and the word LOOP_DONE, in the tail.
+        with open(os.path.join(d, "run.log"), "w") as f:
+            f.write("dispatching Worker: if you cannot proceed report HALT: x\n")
+            f.write("...and print LOOP_DONE when the plan is empty\n")
+        store = mk([
+            {"t": 90, "type": "loop_start", "pid": 4812},
+            {"t": 100, "type": "tick_start", "tick": 12, "pid": 4999},
+            {"t": 101, "type": "role_start", "role": "Worker", "model": "sonnet"},
+            {"t": 102, "type": "tool", "role": "Worker", "name": "Edit", "count": 1},
+        ], loop_dir=d)
+        lv = live(tick_started_at=100)
+        st = serve.derive_status(store, lv, NOW)
+        snap = serve.build_snapshot(d, store, lv, st, NOW)
+        self.assertEqual(snap["status"]["state"], "running")
+        self.assertEqual(snap["loop"]["status"], "running")
+        # ...and run.log is still there for the operator, purely as text.
+        self.assertTrue(any("HALT:" in ln for ln in snap["log"]))
 
-    def test_rate_limited_when_quota_resetting(self):
-        v = serve.event_verdict(last_event_t=1000, now=1100, lock=False, pause=False,
-                                last_log="usage limit hit — sleeping",
-                                quota={"resets_at": 9999}, stall_s=45)
-        self.assertEqual(v, "rate-limited")
 
-    def test_paused(self):
-        v = serve.event_verdict(last_event_t=1000, now=1001, lock=False, pause=True,
-                                last_log="tick 7 starting", quota=None, stall_s=45)
-        self.assertEqual(v, "paused")
+class TestEventStore(unittest.TestCase):
+    def _path(self):
+        return os.path.join(tempfile.mkdtemp(), "events.jsonl")
 
-    def test_done_and_halted_win(self):
-        self.assertEqual(serve.event_verdict(0, 1, False, False, "LOOP_DONE after 7", None, 45), "done")
-        self.assertEqual(serve.event_verdict(0, 1, True, False, "HALT: no progress", None, 45), "halted")
+    def _append(self, path, events):
+        with open(path, "a") as f:
+            for e in events:
+                f.write(json.dumps(e) + "\n")
+
+    def test_incremental_refresh_only_reads_the_tail(self):
+        path = self._path()
+        self._append(path, [
+            {"t": 1, "type": "loop_start"},
+            {"t": 2, "type": "tick_start", "tick": 1},
+            {"t": 3, "type": "tool", "role": "Worker", "name": "Read", "count": 1},
+        ])
+        store = serve.EventStore(path)
+        store.refresh()
+        first_offset = store._offset
+        self.assertEqual(first_offset, os.path.getsize(path))
+        self.assertEqual(len(store.current), 1)
+        self._append(path, [
+            {"t": 4, "type": "tool", "role": "Worker", "name": "Edit", "count": 2},
+            {"t": 5, "type": "tool", "role": "Worker", "name": "Bash", "count": 3},
+        ])
+        store.refresh()
+        self.assertEqual(len(store.current), 3)
+        self.assertGreater(store._offset, first_offset)
+        self.assertEqual(store._offset, os.path.getsize(path))
+        # A refresh with nothing appended re-parses nothing at all.
+        store.refresh()
+        self.assertEqual(len(store.current), 3)
+
+    def test_partial_trailing_line_is_not_lost(self):
+        path = self._path()
+        with open(path, "a") as f:
+            f.write(json.dumps({"t": 1, "type": "tick_start", "tick": 1}) + "\n")
+            f.write('{"t":2,"type":"to')
+        store = serve.EventStore(path)
+        store.refresh()
+        self.assertEqual(len(store.current), 0)
+        with open(path, "a") as f:
+            f.write('ol","role":"Worker","name":"Edit","count":1}\n')
+        store.refresh()
+        self.assertEqual(len(store.current), 1)
+        self.assertEqual(store.current[0]["name"], "Edit")
+
+    def test_truncation_resets_the_store(self):
+        path = self._path()
+        self._append(path, [{"t": i, "type": "tick_start", "tick": i} for i in range(1, 6)])
+        store = serve.EventStore(path)
+        store.refresh()
+        self.assertEqual(len(store.lifecycle), 5)
+        with open(path, "w") as f:            # a fresh run rewrites the file
+            f.write(json.dumps({"t": 9, "type": "loop_start"}) + "\n")
+        store.refresh()
+        self.assertEqual(len(store.lifecycle), 1)
+        self.assertEqual(store.lifecycle[0]["type"], "loop_start")
+        self.assertEqual(store._offset, os.path.getsize(path))
+
+    def test_memory_is_bounded_to_the_current_tick(self):
+        # 3 ticks x 200 tool events: only the live tick's events are retained,
+        # finished ticks survive as one aggregate dict each.
+        path = self._path()
+        evs = []
+        t = 0
+        for tick in (1, 2, 3):
+            evs.append({"t": t, "type": "tick_start", "tick": tick})
+            evs.append({"t": t, "type": "role_start", "role": "Worker", "model": "sonnet"})
+            for i in range(200):
+                t += 1
+                evs.append({"t": t, "type": "tool", "role": "Worker",
+                            "name": "Edit", "count": i + 1, "desc": "src/x.ts"})
+            if tick < 3:
+                evs.append({"t": t, "type": "task_status", "id": "T%d" % tick,
+                            "status": "done", "sha": "abc123%d" % tick})
+                evs.append({"t": t, "type": "tick_end", "tick": tick,
+                            "verdict": "continue", "cause": "ok", "dur": 200})
+        self._append(path, evs)
+        store = serve.EventStore(path)
+        store.refresh()
+        tools = [e for e in store.current if e.get("type") == "tool"]
+        self.assertEqual(len(tools), 200)
+        self.assertEqual(len(store.ticks), 2)
+        self.assertEqual(store.ticks[0]["tools"], 200)
+        self.assertEqual(store.ticks[0]["roles"], ["Worker"])
+        self.assertEqual(store.ticks[0]["task"], "T1")
+        self.assertEqual(store.ticks[0]["cause"], "ok")
+        self.assertEqual(store.cur_tick, 3)
+
+    def test_incidents_fold_the_medic_outcome(self):
+        store = mk([
+            {"t": 10, "type": "incident", "id": "i-001", "kind": "tick-killed",
+             "severity": "error", "detail": "rc=137", "tick": 11},
+            {"t": 11, "type": "medic_start", "id": "i-001"},
+            {"t": 90, "type": "medic_end", "id": "i-001", "outcome": "resumed",
+             "summary": "memory pressure; retrying"},
+        ])
+        self.assertEqual(len(store.incidents), 1)
+        self.assertEqual(store.incidents[0]["medic"]["outcome"], "resumed")
+        self.assertEqual(store.incidents[0]["kind"], "tick-killed")
+
+    def test_last_returns_the_newest_of_a_type(self):
+        store = mk([
+            {"t": 1, "type": "tick_start", "tick": 1},
+            {"t": 2, "type": "tick_end", "tick": 1, "verdict": "continue"},
+            {"t": 3, "type": "tick_start", "tick": 2},
+        ])
+        self.assertEqual(store.last("tick_start")["tick"], 2)
+        self.assertIsNone(store.last("loop_end"))
+
+    def test_missing_file_is_empty_not_an_error(self):
+        store = serve.EventStore("/no/such/dir/events.jsonl")
+        store.refresh()
+        self.assertEqual(store.count, 0)
 
 
 class TestBuildSnapshot(unittest.TestCase):
-    def _loop_dir(self):
+    def _loop_dir(self, events=EVENTS_SAMPLE):
         d = tempfile.mkdtemp()
         os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
         for name, body in [("LOOP_PLAN.md", PLAN_SAMPLE), ("LOOP_USAGE.jsonl", USAGE_SAMPLE),
-                           ("LOOP_CONFIG.md", CONFIG_SAMPLE), ("events.jsonl", EVENTS_SAMPLE)]:
+                           ("LOOP_CONFIG.md", CONFIG_SAMPLE), ("events.jsonl", events)]:
             with open(os.path.join(d, name), "w") as f:
                 f.write(body)
         return d
 
+    def _snap(self, d, now=200, stall_s=300, **livekw):
+        store = serve.EventStore(os.path.join(d, "events.jsonl"))
+        store.refresh()
+        lv = live(**livekw)
+        st = serve.derive_status(store, lv, now, stall_s=stall_s)
+        return serve.build_snapshot(d, store, lv, st, now, stall_s=stall_s)
+
     def test_composes_sections(self):
-        d = self._loop_dir()
-        snap = serve.build_snapshot(d, now=200, status="running")
-        self.assertEqual(snap["loop"]["status"], "running")
+        snap = self._snap(self._loop_dir())
         self.assertEqual(snap["loop"]["tick"], 7)               # continuous tick from events
         self.assertEqual(snap["current"]["role"], "Worker")     # from events, not run.log
         self.assertEqual(snap["pipeline"]["active"]["role"], "Worker")
@@ -452,19 +734,303 @@ class TestBuildSnapshot(unittest.TestCase):
         # Segment B (0/2 done, after current is marked -> future). Mirrors TestRoadmap.
         self.assertEqual([s["state"] for s in snap["roadmap"]], ["current", "future"])
 
+    def test_contract_keys_present_and_narrative_gone(self):
+        snap = self._snap(self._loop_dir())
+        for key in ("status", "health", "ticks", "incidents", "progress",
+                    "roadmap", "plan", "usage", "config", "log"):
+            self.assertIn(key, snap)
+        self.assertNotIn("narrative", snap)
+        self.assertEqual(snap["loop"]["status"], snap["status"]["state"])
+        self.assertIn("harness", snap["health"])
+        self.assertIn("tick", snap["health"])
+        self.assertIn("dashboard", snap["health"])
+        self.assertEqual(snap["health"]["harness"]["pid"], 4812)
+        self.assertEqual(snap["config"]["dashboard"], "auto")   # absent line -> auto
+        self.assertEqual(snap["config"]["medic"], "auto")
+        self.assertEqual(snap["now"], 200)                      # server clock
+
+    def test_stall_s_is_echoed_from_the_same_setting_derive_status_used(self):
+        d = self._loop_dir()
+        self.assertEqual(self._snap(d)["health"]["tick"]["stall_s"], 300)
+        snap = self._snap(d, stall_s=45, activity_age_s=60)
+        self.assertEqual(snap["health"]["tick"]["stall_s"], 45)
+        # ...and the page's threshold is the one the verdict was made with.
+        self.assertEqual(snap["status"]["state"], "stalled")
+
+    def test_dashboard_alive_reads_runtime_dashboard_json(self):
+        d = self._loop_dir()
+        # No dashboard.json yet -> not alive, but we still name our own pid.
+        snap = self._snap(d)
+        self.assertFalse(snap["health"]["dashboard"]["alive"])
+        self.assertEqual(snap["health"]["dashboard"]["pid"], os.getpid())
+        with open(os.path.join(d, "runtime", "dashboard.json"), "w") as f:
+            json.dump({"pid": os.getpid(), "port": 1, "url": "http://x",
+                       "sidecar": True}, f)
+        snap = self._snap(d)
+        self.assertTrue(snap["health"]["dashboard"]["alive"])
+        self.assertEqual(snap["health"]["dashboard"]["pid"], os.getpid())
+        # A dead pid in the file is reported dead, not assumed live.
+        with open(os.path.join(d, "runtime", "dashboard.json"), "w") as f:
+            json.dump({"pid": 999999, "port": 1, "url": "http://x"}, f)
+        snap = self._snap(d)
+        self.assertFalse(snap["health"]["dashboard"]["alive"])
+
+    def test_resume_cmd_is_always_present_and_runnable(self):
+        d = self._loop_dir()
+        cmd = self._snap(d)["status"]["resume_cmd"]
+        # CONFIG_SAMPLE's Worktree wins over the loop dir's ancestry.
+        self.assertTrue(cmd.startswith("cd /repo/.claude/worktrees/feat &&"), cmd)
+        self.assertIn("LOOP_DIR=.claude/loop/%s" % os.path.basename(d), cmd)
+        self.assertIn("run.sh", cmd)
+        self.assertNotIn("None", cmd)
+
+    def test_resume_cmd_falls_back_to_the_loop_dir_ancestry(self):
+        # No Worktree line: <worktree>/.claude/loop/<name> is the layout.
+        d = tempfile.mkdtemp()
+        nested = os.path.join(d, ".claude", "loop", "run-1")
+        os.makedirs(os.path.join(nested, "runtime"))
+        cmd = self._snap(nested)["status"]["resume_cmd"]
+        self.assertTrue(cmd.startswith("cd %s &&" % d), cmd)
+        self.assertIn("LOOP_DIR=.claude/loop/run-1", cmd)
+
+    def test_config_modes_are_read_from_the_file(self):
+        d = self._loop_dir()
+        with open(os.path.join(d, "LOOP_CONFIG.md"), "a") as f:
+            f.write("Dashboard: off\nMedic: notify\nMedic model: haiku\n")
+        snap = self._snap(d)
+        self.assertEqual(snap["config"]["dashboard"], "off")
+        self.assertEqual(snap["config"]["medic"], "notify")
+
+    def test_ticks_carry_aggregates_and_ledger_cost(self):
+        d = self._loop_dir(events="\n".join([
+            '{"t":100,"type":"tick_start","tick":1}',
+            '{"t":101,"type":"role_start","role":"Scout","model":"haiku"}',
+            '{"t":102,"type":"tool","role":"Scout","name":"Read","count":1}',
+            '{"t":103,"type":"task_status","id":"T1","status":"done","sha":"a1b2c3d"}',
+            '{"t":104,"type":"tick_end","tick":1,"verdict":"continue","cause":"ok","dur":4}',
+            '{"t":105,"type":"tick_start","tick":2}',
+        ]) + "\n")
+        snap = self._snap(d)
+        self.assertEqual(len(snap["ticks"]), 1)
+        row = snap["ticks"][0]
+        self.assertEqual(row["tick"], 1)
+        self.assertEqual(row["cause"], "ok")
+        self.assertEqual(row["tools"], 1)
+        self.assertEqual(row["roles"], ["Scout"])
+        self.assertEqual(row["task"], "T1")
+        self.assertEqual(row["sha"], "a1b2c3d")
+        self.assertEqual(row["mode"], "plan")            # joined from LOOP_USAGE
+        self.assertAlmostEqual(row["cost_usd"], 0.5)
+
+    def test_incidents_surface_in_the_snapshot(self):
+        d = self._loop_dir(events="\n".join([
+            '{"t":90,"type":"loop_start"}',
+            '{"t":95,"type":"incident","id":"i-001","kind":"tick-killed",'
+            '"severity":"error","detail":"rc=137","tick":1}',
+            '{"t":96,"type":"medic_end","id":"i-001","outcome":"resumed","summary":"ok"}',
+            '{"t":100,"type":"tick_start","tick":2}',
+        ]) + "\n")
+        snap = self._snap(d)
+        self.assertEqual(len(snap["incidents"]), 1)
+        self.assertEqual(snap["incidents"][0]["id"], "i-001")
+        self.assertEqual(snap["incidents"][0]["medic"]["outcome"], "resumed")
+
     def test_no_runlog_required(self):
         # The hot path must not depend on run.log existing (the 14 MB scrape is gone).
         d = self._loop_dir()
         os.remove(os.path.join(d, "events.jsonl"))  # even with no events yet
-        snap = serve.build_snapshot(d, now=0, status="idle")
+        snap = self._snap(d, now=0)
         self.assertEqual(snap["current"]["role"], None)
+        self.assertEqual(snap["status"]["state"], "idle")
         self.assertIn("roadmap", snap)
 
     def test_missing_files_safe(self):
         d = tempfile.mkdtemp()
-        snap = serve.build_snapshot(d, now=0, status="idle")
+        snap = self._snap(d, now=0)
         self.assertEqual(snap["progress"]["total"], 0)
         self.assertIsNone(snap["quota"])
+        self.assertEqual(snap["log"], [])
+
+
+    def test_schema_stamp_and_migration_event_surface(self):
+        d = self._loop_dir(events="\n".join([
+            '{"t":90,"type":"loop_start"}',
+            '{"t":91,"type":"migration","from":1,"to":2,"actions":"legacy-lock-removed",'
+            '"plugin_version":"2.0.0"}',
+            '{"t":100,"type":"tick_start","tick":42}',
+        ]) + "\n")
+        with open(os.path.join(d, "runtime", "schema"), "w") as f:
+            f.write("2")
+        snap = self._snap(d)
+        self.assertEqual(snap["loop"]["schema"], 2)
+        self.assertEqual(snap["loop"]["migration"],
+                         {"from": 1, "to": 2, "actions": "legacy-lock-removed", "at": 91})
+
+    def test_schema_absent_is_null_not_a_crash(self):
+        snap = self._snap(self._loop_dir())
+        self.assertIsNone(snap["loop"]["schema"])
+        self.assertIsNone(snap["loop"]["migration"])
+        with open(os.path.join(self._loop_dir(), "runtime", "schema"), "w") as f:
+            f.write("junk")  # a garbage stamp is null, never an exception
+
+class TestProgressSegments(unittest.TestCase):
+    PLAN = (
+        "## Segment 1: Done\n- [x] T1: a\n- [-] T2: dropped\n"
+        "## Segment 2: Current\n- [~] T3: b\n- [ ] T4: c\n"
+        "## Segment 3: Later\nGoal: unplanned\n"
+    )
+
+    def test_segment_stats(self):
+        plan = serve.parse_plan(self.PLAN)
+        self.assertEqual(serve.segment_stats(plan), (3, 1, 1))
+
+    def test_pct_basis_is_segments_when_any_are_unplanned(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        with open(os.path.join(d, "LOOP_PLAN.md"), "w") as f:
+            f.write(self.PLAN)
+        store = mk([], loop_dir=d)
+        snap = serve.build_snapshot(d, store, live(), serve.derive_status(store, live(), NOW), NOW)
+        p = snap["progress"]
+        self.assertEqual(p["segments_total"], 3)
+        self.assertEqual(p["segments_done"], 1)
+        self.assertEqual(p["segments_unplanned"], 1)
+        self.assertEqual(p["pct_basis"], "segments")
+        self.assertEqual(p["pct"], 33)          # 1 of 3 segments, not 2 of 4 tasks
+
+    def test_pct_basis_is_tasks_when_every_segment_is_planned(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        with open(os.path.join(d, "LOOP_PLAN.md"), "w") as f:
+            f.write("## S1\n- [x] T1: a\n- [ ] T2: b\n")
+        store = mk([], loop_dir=d)
+        snap = serve.build_snapshot(d, store, live(), serve.derive_status(store, live(), NOW), NOW)
+        self.assertEqual(snap["progress"]["pct_basis"], "tasks")
+        self.assertEqual(snap["progress"]["pct"], 50)
+
+
+class TestSupervisorGuards(unittest.TestCase):
+    """start/resume must never race a live harness, whoever started it."""
+
+    def _sup(self, pid=4242):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        with open(os.path.join(d, "runtime", "harness.json"), "w") as f:
+            json.dump({"pid": pid, "start_epoch": 1, "host": "x", "loop_dir": d,
+                       "plugin_version": "2.0.0"}, f)
+        sup = serve.Supervisor(loop_dir=d, plugin_root="/plugin", worktree=d)
+        sup.spawned = []
+        sup._spawn = lambda: sup.spawned.append(True)
+        return sup, d
+
+    def test_start_refuses_when_harness_pid_is_alive(self):
+        sup, _ = self._sup()
+        orig = serve.process_alive
+        serve.process_alive = lambda pid, must_contain=None: True
+        try:
+            res = sup.start()
+        finally:
+            serve.process_alive = orig
+        self.assertEqual(res, {"error": "harness pid 4242 is alive"})
+        self.assertEqual(sup.spawned, [])
+
+    def test_resume_refuses_when_harness_pid_is_alive(self):
+        sup, d = self._sup()
+        sup.pause()
+        orig = serve.process_alive
+        serve.process_alive = lambda pid, must_contain=None: True
+        try:
+            res = sup.resume()
+        finally:
+            serve.process_alive = orig
+        self.assertIn("error", res)
+        self.assertEqual(sup.spawned, [])
+        self.assertTrue(os.path.exists(os.path.join(d, "runtime", "PAUSE")))
+
+    def test_start_spawns_when_the_recorded_pid_is_dead(self):
+        sup, _ = self._sup()
+        orig = serve.process_alive
+        serve.process_alive = lambda pid, must_contain=None: False
+        try:
+            res = sup.start()
+        finally:
+            serve.process_alive = orig
+        self.assertIsNone(res)
+        self.assertEqual(len(sup.spawned), 1)
+
+    def test_stop_sigterms_the_recorded_harness(self):
+        sup, d = self._sup(pid=777)
+        killed = []
+        orig_alive, orig_kill = serve.process_alive, os.kill
+        serve.process_alive = lambda pid, must_contain=None: True
+        os.kill = lambda pid, sig: killed.append((pid, sig))
+        try:
+            sup.stop()
+        finally:
+            serve.process_alive, os.kill = orig_alive, orig_kill
+        self.assertEqual(killed, [(777, serve.signal.SIGTERM)])
+        self.assertTrue(os.path.exists(os.path.join(d, "runtime", "PAUSE")))
+
+
+class TestProcessAlive(unittest.TestCase):
+    def test_self_is_alive(self):
+        self.assertTrue(serve.process_alive(os.getpid()))
+
+    def test_command_filter_rejects_this_process(self):
+        # This interpreter is not a run.sh; the filter is what defeats PID reuse.
+        self.assertFalse(serve.process_alive(os.getpid(), "run.sh"))
+
+    def test_bad_pids(self):
+        self.assertFalse(serve.process_alive(None))
+        self.assertFalse(serve.process_alive(0))
+        self.assertFalse(serve.process_alive("nonsense"))
+        self.assertFalse(serve.process_alive(999999))
+
+
+class TestLivenessFiles(unittest.TestCase):
+    def _dir(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        return d
+
+    def test_empty_runtime(self):
+        d = self._dir()
+        lv = serve.liveness(d, NOW)
+        self.assertFalse(lv["pause"])
+        self.assertIsNone(lv["harness_pid"])
+        self.assertFalse(lv["harness_pid_alive"])
+        self.assertIsNone(lv["heartbeat_age_s"])
+        self.assertIsNone(lv["activity_age_s"])
+        self.assertIsNone(lv["tick_no"])
+
+    def test_reads_runtime_files(self):
+        d = self._dir()
+        rt = os.path.join(d, "runtime")
+        with open(os.path.join(rt, "harness.json"), "w") as f:
+            json.dump({"pid": os.getpid(), "start_epoch": 900}, f)
+        with open(os.path.join(rt, "tick.json"), "w") as f:
+            json.dump({"tick": 12, "pid": os.getpid(), "started_at": 950,
+                       "timeout_s": 1800}, f)
+        with open(os.path.join(rt, "HEARTBEAT"), "w") as f:
+            f.write("%d\n" % (NOW - 3))
+        with open(os.path.join(rt, "last-activity"), "w") as f:
+            f.write("%d\n" % (NOW - 4))
+        open(os.path.join(rt, "PAUSE"), "w").close()
+        lv = serve.liveness(d, NOW)
+        self.assertTrue(lv["pause"])
+        self.assertEqual(lv["heartbeat_age_s"], 3)
+        self.assertEqual(lv["activity_age_s"], 4)
+        self.assertEqual(lv["tick_no"], 12)
+        self.assertEqual(lv["tick_timeout_s"], 1800)
+        self.assertTrue(lv["tick_pid_alive"])          # no command filter on the tick
+        self.assertFalse(lv["harness_pid_alive"])      # ...but this is not a run.sh
+        self.assertEqual(lv["harness_started_at"], 900)
+
+    def test_garbage_heartbeat_is_none(self):
+        d = self._dir()
+        with open(os.path.join(d, "runtime", "HEARTBEAT"), "w") as f:
+            f.write("not-an-epoch\n")
+        self.assertIsNone(serve.heartbeat_age(os.path.join(d, "runtime"), NOW))
 
 
 class TestSupervisor(unittest.TestCase):
@@ -516,55 +1082,6 @@ class TestSupervisor(unittest.TestCase):
         self.assertEqual(len(sup.spawned), 0)
 
 
-class TestLoopLiveness(unittest.TestCase):
-    def _sup(self):
-        d = tempfile.mkdtemp()
-        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
-        return serve.Supervisor(loop_dir=d, plugin_root="/plugin", worktree=d), d
-
-    def test_lock_path_is_uppercase(self):
-        sup, d = self._sup()
-        # Must match the harness's $LOOP_DIR/runtime/LOCK (tick-prompt.md §14).
-        self.assertEqual(sup.lock_path, os.path.join(d, "runtime", "LOCK"))
-
-    def test_active_when_lock_present(self):
-        sup, d = self._sup()
-        open(os.path.join(d, "runtime", "LOCK"), "w").close()
-        self.assertTrue(sup.loop_seems_active())
-
-    def test_inactive_without_runlog(self):
-        sup, _ = self._sup()
-        self.assertFalse(sup.loop_seems_active())
-
-    def test_active_with_recent_runlog(self):
-        sup, d = self._sup()
-        with open(os.path.join(d, "run.log"), "w") as f:
-            f.write("2026-06-16T00:00:00Z tick 5 starting\n")
-        self.assertTrue(sup.loop_seems_active())
-
-    def test_inactive_with_stale_runlog(self):
-        sup, d = self._sup()
-        p = os.path.join(d, "run.log")
-        with open(p, "w") as f:
-            f.write("tick 5 starting\n")
-        old = time.time() - 600
-        os.utime(p, (old, old))
-        self.assertFalse(sup.loop_seems_active())
-
-    def test_inactive_when_done_even_if_recent(self):
-        sup, d = self._sup()
-        with open(os.path.join(d, "run.log"), "w") as f:
-            f.write("LOOP_DONE after 5 ticks\n")
-        self.assertFalse(sup.loop_seems_active())
-
-    def test_status_running_between_ticks(self):
-        sup, d = self._sup()
-        with open(os.path.join(d, "run.log"), "w") as f:
-            f.write("tick 5 starting\n")
-        # No LOCK (between ticks) but recent run.log -> still 'running'.
-        self.assertEqual(sup.status(), "running")
-
-
 class TestCanonModel(unittest.TestCase):
     def test_canon_model_collapses_region_and_window_variants(self):
         self.assertEqual(serve._canon_model("claude-sonnet-4-6"), "claude-sonnet-4-6")
@@ -593,6 +1110,39 @@ class TestTailLines(unittest.TestCase):
             f.write("X" * 1000 + "\n" + "last\n")
         # tiny window forces a mid-file start -> leading partial dropped
         self.assertEqual(serve._tail_lines(p, 5, window=10), ["last"])
+
+
+class TestBindServerFallback(unittest.TestCase):
+    """A busy requested port (a 1.x dashboard still up during migration, or any
+    other listener) must not stop the sidecar: fall back to an ephemeral port."""
+
+    def test_falls_back_to_ephemeral_when_requested_port_is_taken(self):
+        import socket
+        from http.server import BaseHTTPRequestHandler
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        busy = blocker.getsockname()[1]
+        try:
+            httpd = serve._bind_server(busy, BaseHTTPRequestHandler)
+            try:
+                self.assertNotEqual(httpd.server_address[1], busy)
+                self.assertGreater(httpd.server_address[1], 0)
+            finally:
+                httpd.server_close()
+        finally:
+            blocker.close()
+
+    def test_binds_requested_port_when_free(self):
+        from http.server import BaseHTTPRequestHandler
+        probe = serve._bind_server(0, BaseHTTPRequestHandler)
+        free = probe.server_address[1]
+        probe.server_close()
+        httpd = serve._bind_server(free, BaseHTTPRequestHandler)
+        try:
+            self.assertEqual(httpd.server_address[1], free)
+        finally:
+            httpd.server_close()
 
 
 if __name__ == "__main__":

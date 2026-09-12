@@ -3,6 +3,9 @@
 
 # Event emission helpers (emit_event). Path resolves relative to this lib dir.
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/events.sh"
+# Harness primitives (cause_human is used by tick_line; the rest is run.sh's).
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harness.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/migrate.sh"
 
 # parse_sentinel <text> -> prints "DONE"|"CONTINUE"|"HALT"|"NONE"; for HALT, reason on line 2.
 parse_sentinel() {
@@ -45,7 +48,8 @@ extract_result() {
   printf '%s' "$out"
 }
 
-# format_stream <runlog> <ratelimit_file> <tick> : reads JSONL stream on stdin.
+# format_stream <runlog> <ratelimit_file> <tick> [<events_file>] [<activity_file>]
+#   reads JSONL stream on stdin.
 #   - tees raw stream to <runlog>
 #   - writes the last rate_limit_event's rate_limit_info to <ratelimit_file>
 #   - emits ONLY the final type:"result" line to stdout
@@ -53,8 +57,13 @@ extract_result() {
 #       LOOP_VERBOSE=1        -> per-tool/per-text forensic feed (the original behaviour)
 #       default + TTY (fd 2)  -> a single mutating heartbeat line (\r ... \033[K), cleared at end
 #       default + non-TTY     -> silent (the full trace still lands in <runlog>)
+#   <activity_file> gets the epoch of every stream line seen. It is the harness's
+#   stall signal: a tick that has stopped emitting anything for STALL_S is wedged,
+#   and that is not something the tick can report about itself. One `date` fork per
+#   line and no jq — this runs on the hot path.
 format_stream() {
-  local runlog="$1" rlfile="$2" tick="${3:-?}" events="${4:-}" line typ result=""
+  local runlog="$1" rlfile="$2" tick="${3:-?}" events="${4:-}" actfile="${5:-}"
+  local line typ result=""
   local verbose=0 tty=0 tools=0 frame=0 activity="booting" start now
   local active_role="" etools=0
   [[ "${LOOP_VERBOSE:-0}" == "1" ]] && verbose=1
@@ -63,6 +72,7 @@ format_stream() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" ]] && continue
     printf '%s\n' "$line" >> "$runlog"
+    [[ -n "$actfile" ]] && date +%s > "$actfile" 2>/dev/null
     typ="$(printf '%s' "$line" | jq -r '.type // empty' 2>/dev/null)"
     case "$typ" in
       result)
@@ -218,6 +228,43 @@ done_tasks() {
   grep -cE '^[[:space:]]*- \[x\] ' "$plan" || true
 }
 
+# --- segment accounting ---
+# A plan's `## ` headings are its segments. Adaptive planning writes tasks a segment
+# at a time, so "48/48 tasks done" can be true while most of the work is still
+# unwritten. These three make that visible: a segment counts as DONE only when it
+# has at least one task line and every one of them is [x] or [-]; a segment with no
+# task lines at all is UNPLANNED, and its existence is what makes the task percent
+# a lie. The task-state character class is [x-] (never [ ] or [~]).
+
+# segments_total <plan> -> count of "## " headings
+segments_total() {
+  local plan="$1"
+  [[ -f "$plan" ]] || { echo 0; return; }
+  grep -cE '^## ' "$plan" || true
+}
+
+# segments_done <plan> -> segments with >=1 task line and no unfinished task
+segments_done() {
+  local plan="$1"
+  [[ -f "$plan" ]] || { echo 0; return; }
+  awk '
+    /^## / { if (seg && tasks > 0 && open == 0) n++; seg = 1; tasks = 0; open = 0; next }
+    /^[ \t]*- \[.\] / { if (!seg) next; tasks++; if ($0 !~ /- \[[x-]\] /) open++ }
+    END { if (seg && tasks > 0 && open == 0) n++; print n + 0 }
+  ' "$plan"
+}
+
+# segments_unplanned <plan> -> segments with zero task lines (headings only)
+segments_unplanned() {
+  local plan="$1"
+  [[ -f "$plan" ]] || { echo 0; return; }
+  awk '
+    /^## / { if (seg && tasks == 0) n++; seg = 1; tasks = 0; next }
+    /^[ \t]*- \[.\] / { if (seg) tasks++ }
+    END { if (seg && tasks == 0) n++; print n + 0 }
+  ' "$plan"
+}
+
 # pct <done> <total> -> integer percent 0..100, rounded to nearest (0 when total is 0)
 pct() {
   local done="$1" total="$2"
@@ -349,12 +396,16 @@ pause_countdown() {
   return 0
 }
 
-# tick_line <verdict> <tick> <task> <dur_s> <gates> <sha> <done> <total>
+# tick_line <verdict> <tick> <task> <dur_s> <gates> <sha> <done> <total> [<cause>]
 #   -> "✓ t3 T26 · 3m12s · lint✓ tsc✓ build✓ test✓ · → a1b2c3   62% (26/42)"
 #   no sha -> "(no commit)" in place of gates+sha. Percentage leads the progress chunk.
+#   <cause> (optional, from classify_cause) is appended in words when it is not "ok":
+#   "✗ t12 T34 · 30m00s · (no commit)   62% (26/42) · killed (SIGKILL — likely OS memory
+#   pressure)". Without it the line is byte-identical to the pre-v2 form.
 tick_line() {
   local verdict="$1" tick="$2" task="$3" dur="$4" gates="$5" sha="$6" done="$7" total="$8"
-  local glyph mid p
+  local cause="${9:-}"
+  local glyph mid p why=""
   glyph="$(_verdict_glyph "$verdict")"
   p="$(pct "$done" "$total")"
   if [[ -n "$sha" ]]; then
@@ -362,15 +413,31 @@ tick_line() {
   else
     mid="(no commit)"
   fi
-  printf '%s t%s %s · %s · %s   %d%% (%d/%d)' \
-    "$glyph" "$tick" "${task:-?}" "$(fmt_dur "$dur")" "$mid" "$p" "$done" "$total"
+  [[ -n "$cause" && "$cause" != "ok" ]] && why=" · $(cause_human "$cause")"
+  printf '%s t%s %s · %s · %s   %d%% (%d/%d)%s' \
+    "$glyph" "$tick" "${task:-?}" "$(fmt_dur "$dur")" "$mid" "$p" "$done" "$total" "$why"
 }
 
-# session_header <done> <total> <elapsed_s> <eta_s> <plan_str>
+# session_header <done> <total> <elapsed_s> <eta_s> <plan_str> [<seg_done> <seg_total>]
 #   -> "── loop · 62% ████████░░░░ 26/42 · ⏱ 1h18m · ~45m left · 5h 90% ↺2h12m ──"
 #   <plan_str> is the pre-rendered plan_usage segment; when empty the quota segment is omitted.
+#   With segment args and unfinished segments the percent switches to the
+#   segment-weighted estimate and the task count is labelled "planned tasks":
+#   "── loop · 25% ███░░░░░░░░░ seg 3/12 · 48/48 planned tasks · ⏱ … ──".
+#   That is the only honest reading while nine segments are still unwritten: 100%
+#   appears only once every segment is planned and every task is [x]/[-], which is
+#   exactly when the caller stops passing the segment args (or seg_done == seg_total).
 session_header() {
   local done="$1" total="$2" elapsed="$3" eta="$4" plan="$5"
+  local sdone="${6:-0}" stotal="${7:-0}"
+  [[ "$sdone" =~ ^[0-9]+$ ]] || sdone=0
+  [[ "$stotal" =~ ^[0-9]+$ ]] || stotal=0
+  if (( stotal > 0 && sdone < stotal )); then
+    printf '── loop · %d%% %s seg %d/%d · %d/%d planned tasks · ⏱ %s · ~%s left%s ──' \
+      "$(pct "$sdone" "$stotal")" "$(progress_bar "$sdone" "$stotal" 12)" \
+      "$sdone" "$stotal" "$done" "$total" "$(fmt_dur "$elapsed")" "$(fmt_dur "$eta")" "${plan:+ · $plan}"
+    return
+  fi
   printf '── loop · %d%% %s %d/%d · ⏱ %s · ~%s left%s ──' \
     "$(pct "$done" "$total")" "$(progress_bar "$done" "$total" 12)" \
     "$done" "$total" "$(fmt_dur "$elapsed")" "$(fmt_dur "$eta")" "${plan:+ · $plan}"

@@ -38,11 +38,7 @@ Before doing anything else:
 2. Read `$LOOP_DIR/LOOP_PLAN.md` — the task plan with checkbox state (see legend below).
 3. Read **only the Patterns digest** (the `## Patterns` section at the top) of `$LOOP_DIR/LOOP_LEARNINGS.md` — the curated, capped cross-task rules from prior ticks in *this* run; honour them so you do not repeat known mistakes. Do NOT read the raw `## Log` below it at boot; that append-only section is for the postmortem, and re-reading it every tick is wasted context. The persistent cross-run knowledge at `$LOOP_KNOWLEDGE` (default `.claude/loop/KNOWLEDGE.md`, the sibling of `$LOOP_DIR`) is consumed per task by the Scout (§6), not bulk-read here.
 
-Then acquire the lock so two ticks never run concurrently:
-
-- Inspect `$LOOP_DIR/runtime/LOCK`. If it does not exist, create it and write a JSON object `{pid, started_at, task_id}` identifying this tick.
-- If `$LOOP_DIR/runtime/LOCK` exists and names a **live** PID (a process that is still running), another tick owns the loop. Do not proceed. Release nothing, print `<<LOOP_HALT:lock held by live pid — concurrent tick>>` only if it blocks all progress; otherwise simply exit without a sentinel so the harness's existing tick continues. Prefer to exit quietly rather than fight for the lock.
-- If `$LOOP_DIR/runtime/LOCK` exists but names a **stale** PID (no such process is alive), the previous tick died mid-flight. Recover: log the stale lock, reconcile any half-written `$LOOP_DIR/runtime/sprint-<TASK>.json` / `$LOOP_DIR/runtime/worker-result.json` and any task left marked `[~]` in `$LOOP_DIR/LOOP_PLAN.md` (treat an orphaned in-progress task as needing re-evaluation, not as silently done), then overwrite the lock with your own `{pid, started_at, task_id}` and continue.
+**Crash recovery.** The harness guarantees only one tick runs at a time; you do not manage a lock. If any task is `[~]` at boot, a previous tick died mid-flight: reconcile any half-written `$LOOP_DIR/runtime/sprint-<TASK>.json` / `worker-result.json` and re-evaluate the orphaned task — never assume it completed.
 
 ### Checkbox legend used throughout `$LOOP_DIR/LOOP_PLAN.md`
 
@@ -63,7 +59,6 @@ All paths are relative to `$LOOP_DIR` (the per-run base dir). Durable artefacts 
 - `$LOOP_KNOWLEDGE` (default `.claude/loop/KNOWLEDGE.md`, sibling of `$LOOP_DIR`) — persistent, repo-scoped, committed cross-run knowledge. Read per task by the Scout (§6); auto-promoted into at loop close by `/agent-loop-postmortem`. Never per-run, never bulk-seeded.
 - `$LOOP_DIR/LOOP_LOG.jsonl` — append-only structured event log.
 - `$LOOP_DIR/LOOP_CLEANUP.md` — the human-facing list of blockers and decisions needed.
-- `$LOOP_DIR/runtime/LOCK` — single-tick mutex (`{pid, started_at, task_id}`).
 - `$LOOP_DIR/runtime/sprint-<TASK>.json` — the Scout's contract for the current task.
 - `$LOOP_DIR/runtime/worker-result.json` — the Worker's checkpointed result.
 
@@ -96,7 +91,7 @@ Decide which kind of tick this is from the plan and segment mapping in `$LOOP_DI
   3. Verify the Planner wrote well-formed `[ ]` tasks with explicit dependencies into `$LOOP_DIR/LOOP_PLAN.md`; fix up only formatting/structure if needed — do not silently re-plan in-process.
   4. Commit with message `loop: plan segment <X>` (substitute the actual segment id).
   5. Append a learnings entry if planning surfaced anything reusable (§13).
-  6. Release the lock (§14), print `<<LOOP_CONTINUE>>`, and stop.
+  6. Print `<<LOOP_CONTINUE>>` (§14) and stop.
 
 - **Otherwise**, this is an **EXECUTE TICK**. Print `EXECUTE TICK` near the start of your output and proceed through §4 onward.
 
@@ -106,8 +101,8 @@ Decide which kind of tick this is from the plan and segment mapping in `$LOOP_DI
 
 Before picking up work, check whether the loop is already finished or stuck:
 
-- If **every** task is `[x]` or `[-]` and there are no `[!]` / `[blocked-upstream]` tasks remaining, the plan is complete. Release the lock, print `<<LOOP_DONE>>`, and stop.
-- If the only remaining tasks are `[!]` or `[blocked-upstream]` and nothing else is actionable, the loop is stuck on human decisions. Release the lock, print `<<LOOP_HALT:partial — N blocked>>` (substitute the real count of blocked tasks for N), and stop.
+- If **every** task is `[x]` or `[-]` and there are no `[!]` / `[blocked-upstream]` tasks remaining, the plan is complete. Print `<<LOOP_DONE>>` and stop.
+- If the only remaining tasks are `[!]` or `[blocked-upstream]` and nothing else is actionable, the loop is stuck on human decisions. Print `<<LOOP_HALT:partial — N blocked>>` (substitute the real count of blocked tasks for N), and stop.
 
 Only if there is at least one actionable task do you continue to §5.
 
@@ -117,7 +112,7 @@ Only if there is at least one actionable task do you continue to §5.
 
 Select the next dependency-eligible `[ ]` task — one whose prerequisites are all `[x]`/`[-]`. Skip any `[blocked-upstream]` task; it is not eligible until its blocking dependency is resolved by a human. Choose exactly one task per tick.
 
-Mark the chosen task `[~]` in `$LOOP_DIR/LOOP_PLAN.md` and commit `loop: start <TASK>` (substitute the task id). This makes the in-progress state durable so a crash mid-tick is recoverable (§2 stale-lock recovery).
+Mark the chosen task `[~]` in `$LOOP_DIR/LOOP_PLAN.md` and commit `loop: start <TASK>` (substitute the task id). This makes the in-progress state durable so a crash mid-tick is recoverable (§2 crash recovery).
 
 Note the chosen task's class flag (trailing metadata): `| mechanical`, `| complex`, or neither. It governs whether the Evaluator runs and at what tier (§10): `| mechanical` skips it, `| complex` runs it at the most-capable tier, no flag runs it at the standard tier.
 
@@ -158,7 +153,7 @@ Dispatch a **Worker** subagent via the Agent tool at the model tier resolved per
 
 The Worker reads **ONLY** the sprint contract (`$LOOP_DIR/runtime/sprint-<TASK>.json`). It must **never** read `$LOOP_DIR/LOOP_PLAN.md` or other loop artefacts — its world is the contract, which keeps it focused and prevents it from acting on stale or out-of-scope plan state.
 
-**Worker scope boundary (HARD — containment).** The Worker's ENTIRE job is: edit the allow_list files to satisfy the contract, and write `$LOOP_DIR/runtime/worker-result.json`. **Nothing else.** Instruct it explicitly, and enforce it on return: the Worker must **NEVER** run `git commit`/`git add`, **NEVER** edit `$LOOP_DIR/LOOP_PLAN.md` (no `[x]`/`[~]` marking), **NEVER** touch `$LOOP_DIR/LOOP_LEARNINGS.md` or the `LOCK`, **NEVER** run the verification pipeline as its own gate, and **NEVER** pick up or start the next task. Those steps — the sandbox check (§8), the parent-side verification gate (§9), the Evaluator dispatch (§10), the commit and `[x]` bookkeeping (§11), and selecting the next task (§5) — are **exclusively the orchestrator's**, and they happen only AFTER control returns to you via the Worker's `role_end`. A Worker that commits its own work bypasses the §9 gate and the §10 Evaluator entirely, converting a reviewed change into an unreviewed one — treat any commit, plan edit, or next-task pickup inside a Worker dispatch as a containment breach. The Worker dispatch ends when the code is written and `worker-result.json` is saved; verification, judgement, and commit are yours alone.
+**Worker scope boundary (HARD — containment).** The Worker's ENTIRE job is: edit the allow_list files to satisfy the contract, and write `$LOOP_DIR/runtime/worker-result.json`. **Nothing else.** Instruct it explicitly, and enforce it on return: the Worker must **NEVER** run `git commit`/`git add`, **NEVER** edit `$LOOP_DIR/LOOP_PLAN.md` (no `[x]`/`[~]` marking), **NEVER** touch `$LOOP_DIR/LOOP_LEARNINGS.md`, **NEVER** run the verification pipeline as its own gate, and **NEVER** pick up or start the next task. Those steps — the sandbox check (§8), the parent-side verification gate (§9), the Evaluator dispatch (§10), the commit and `[x]` bookkeeping (§11), and selecting the next task (§5) — are **exclusively the orchestrator's**, and they happen only AFTER control returns to you via the Worker's `role_end`. A Worker that commits its own work bypasses the §9 gate and the §10 Evaluator entirely, converting a reviewed change into an unreviewed one — treat any commit, plan edit, or next-task pickup inside a Worker dispatch as a containment breach. The Worker dispatch ends when the code is written and `worker-result.json` is saved; verification, judgement, and commit are yours alone.
 
 **checkpoint-write-first:** instruct the Worker to write a partial `$LOOP_DIR/runtime/worker-result.json` **before** it begins deep work, then update it as it progresses. This way, if the Worker process is truncated mid-task, the checkpoint still carries signal (what it attempted, how far it got, what it learned) rather than leaving nothing behind. Truncation must never equal lost signal.
 
@@ -222,7 +217,7 @@ When §3 selected a REVIEW TICK for segment `<X>`:
 
 4. Stamp the segment reviewed: append a `Reviewed: <HEAD-sha>` line directly beneath the segment's heading in `$LOOP_DIR/LOOP_PLAN.md`. This is a plain text line, NOT a `- [ ]` task line — the harness counts `- [.]` lines as tasks, so a task-shaped marker would corrupt the progress denominator.
 5. Commit `loop: review segment <X>` with trailer `Loop-Status: reviewed`. Append a learnings entry (§13) and a `LOOP_LOG.jsonl` event (§13).
-6. Release the lock (§14), print `<<LOOP_CONTINUE>>`, and stop. A review tick never changes production code, so the next tick proceeds to plan/execute the next segment.
+6. Print `<<LOOP_CONTINUE>>` (§14) and stop. A review tick never changes production code, so the next tick proceeds to plan/execute the next segment.
 
 ---
 
@@ -255,8 +250,8 @@ If the only way to make a task "pass" is a **workaround** that deviates from the
 
 When you commit this blocked-state change (the marker/cleanup commit that records the `[!]` task and the `[blocked-upstream]` fan-out), use trailer `Loop-Status: halted`. Blocker/halt commits carry `Loop-Status: halted` and skip commits carry `Loop-Status: skipped` (§11), so the postmortem can build its done/skipped/halted distribution from the commit trailers.
 4. Apply the `Blocker policy` from `$LOOP_DIR/LOOP_CONFIG.md`:
-   - `continue-independent` (default): there are still independent, dependency-eligible tasks to do, so keep the loop productive — release the lock and print `<<LOOP_CONTINUE>>` so the next tick picks up an unblocked task.
-   - `halt` (or when the dependency graph is thin enough that the blocker starves the loop of independent work): release the lock and print `<<LOOP_HALT:blocked on <TASK> — <decision needed>>>`.
+   - `continue-independent` (default): there are still independent, dependency-eligible tasks to do, so keep the loop productive — print `<<LOOP_CONTINUE>>` so the next tick picks up an unblocked task.
+   - `halt` (or when the dependency graph is thin enough that the blocker starves the loop of independent work): print `<<LOOP_HALT:blocked on <TASK> — <decision needed>>>`.
 
 ---
 
@@ -275,7 +270,6 @@ Also append a structured event to `$LOOP_DIR/LOOP_LOG.jsonl` describing this tic
 
 ## 14. Close
 
-- Release `$LOOP_DIR/runtime/LOCK` (delete it, or clear your ownership).
 - Print the sentinel: `<<LOOP_CONTINUE>>` for a normal productive tick, or — if you already printed `<<LOOP_DONE>>` (§4) or `<<LOOP_HALT:...>>` (§4/§12) — do not print another. Exactly one sentinel per tick.
 - Stop. The process will exit. The harness takes it from here.
 

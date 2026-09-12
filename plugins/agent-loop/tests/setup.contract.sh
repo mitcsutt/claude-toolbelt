@@ -29,6 +29,47 @@ has 'persistent'
 hasnt '.zshrc'
 hasnt 'ScheduleWakeup'
 
+# Plan 6 (resilience) Task 4: wizard gains Dashboard + Medic questions; launch print explains
+# the sidecar, the own-terminal rule, and /agent-loop attach; the LLM lock and the old
+# version gate are gone.
+has 'Dashboard'
+grep -qE '^1?[0-9]\. \*\*Dashboard\*\*' "$F"; assert_true $? "setup wizard has a numbered Dashboard question"
+has 'Medic'
+grep -qE '^1?[0-9]\. \*\*Medic\*\*' "$F"; assert_true $? "setup wizard has a numbered Medic question"
+has 'Medic model'
+has 'own terminal'
+has 'not as a background task'
+has 'NEEDS_HUMAN.md'
+has 'To attach:'
+grep -qF -e 'runtime/LOCK' -e 'LOCK,' "$F"; assert_false $? "setup must NOT mention the removed runtime/LOCK"
+hasnt '0.11.0'
+
+# The /agent-loop attach skill: liveness from runtime files, Monitor armed, never starts the harness.
+A="$HERE/../skills/agent-loop/SKILL.md"
+ahas() { grep -qF -e "$1" "$A"; assert_true $? "attach skill must mention: $1"; }
+ahas 'runtime/harness.json'
+ahas 'HEARTBEAT'
+ahas 'tick.json'
+ahas 'runtime/dashboard.json'
+ahas 'Never `pgrep`/`ps | grep run.sh` — those match your own tool calls.'
+n_pgrep="$(grep -c 'pgrep' "$A")"; n_never="$(grep -c 'Never `pgrep`' "$A")"
+[ "$n_pgrep" -eq "$n_never" ]; assert_true $? "attach skill: pgrep appears only in the 'Never' sentence ($n_pgrep vs $n_never)"
+ahas 'Monitor'
+ahas 'persistent: true'
+ahas 'agent-loop <run-id> incidents'
+ahas 'tail -n 0 -F "<loop-dir>/events.jsonl" | grep -E --line-buffered '"'"'"type":"(incident|loop_end|medic_end|memory_pressure)"'"'"''
+ahas '/agent-loop-medic'
+ahas 'PushNotification'
+ahas '/agent-loop-postmortem'
+ahas 'never run it'
+grep -q '^disable-model-invocation: true' "$A"; assert_true $? "attach skill keeps disable-model-invocation: true"
+grep -qF 'runtime/LOCK' "$A"; assert_false $? "attach skill must not mention runtime/LOCK"
+# Schema stamp: attach reads it and previews the upgrade; the harness (not the skill) migrates.
+ahas 'runtime/schema'
+ahas 'LOOP_MIGRATE_FORCE'
+ahas 'schema 1'
+grep -qF 'migrate' "$A"; assert_true $? "attach skill explains that run.sh migrates on the next launch"
+
 # Task 8: machine logs gitignored, ledgers dropped from seed git add
 SETUP="$HERE/../skills/agent-loop-setup/SKILL.md"
 for f in run.log events.jsonl LOOP_LOG.jsonl LOOP_USAGE.jsonl; do

@@ -16,6 +16,15 @@ has 'PLAN TICK'; has 'EXECUTE TICK'
 has 'REVIEW TICK'
 has 'cumulative segment diff'
 has 'Reviewed:'
+# Plan 6 (resilience) Task 4: the LLM-managed PID lock is gone; the harness owns exclusivity.
+# The [~] crash-recovery rule stays.
+hasnt 'runtime/LOCK'
+hasnt 'acquire the lock'
+hasnt 'Release the lock'
+hasnt 'release the lock'
+has 'you do not manage a lock'
+has 'If any task is `[~]` at boot'
+has 'never assume it completed'
 # Segment-review follow-ups land in the segment being reviewed, never a later/unplanned one
 has 'to the segment being reviewed'
 has 'Follow-ups (from segment <X> review)'
