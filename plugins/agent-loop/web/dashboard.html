@@ -3,364 +3,971 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agent-loop · mission control</title>
+<title>agent-loop</title>
 <style>
+/* ─────────────────────────────────────────────────────────────────────────
+   agent-loop console.
+   One question first: is the loop healthy, or is it broken? The state word is
+   a small tag; the sentence explaining it is the headline. That inversion is
+   deliberate — the old page shouted HALTED between agent hand-offs, and a
+   one-word verdict with no reason is exactly what made that lie readable.
+   Everything below the health band is quiet: hairline bands, no shadows, no
+   ambient gradients, colour used only as signal.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --bg:#f2f3f6; --surface:#ffffff; --surface-2:#f7f8fa; --surface-3:#eceef3;
+  --ink:#15181d; --ink-2:#59616f; --ink-3:#8c93a1;
+  --rule:#dde0e6; --rule-2:#c6cad3;
+
+  --ok:#0f7346;    --ok-bg:#e2f1e9;   --ok-edge:#2f9c68;
+  --warn:#8a5800;  --warn-bg:#f9eed6; --warn-edge:#c98f18;
+  --bad:#a82a1d;   --bad-bg:#fae4e1;  --bad-edge:#cf4c3c;
+  --info:#23479f;  --info-bg:#e4e9f9; --info-edge:#4f74d4;
+  --idle:#767e8d;  --idle-bg:#e9ebef; --idle-edge:#a8aeba;
+}
+@media (prefers-color-scheme: dark) {
   :root {
-    --bg:#0c0d12; --bg2:#11131b; --panel:#13151f; --panel2:#171a26;
-    --line:#252938; --line2:#323750; --mut:#697089; --txt:#d6dae8;
-    --ok:#4ade80; --cur:#fbbf24; --acc:#7c8cff; --hot:#ff6b6b;
-    --info:#5ec8e6; --idle:#454b63;
-  }
-  * { box-sizing:border-box; }
-  html, body { height:100%; }
-  body {
-    margin:0; color:var(--txt);
-    font:13px/1.45 ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, monospace;
-    background:
-      radial-gradient(900px 500px at 78% -12%, rgba(124,140,255,.08), transparent 60%),
-      radial-gradient(700px 400px at -8% 0%, rgba(94,200,230,.05), transparent 55%),
-      var(--bg);
-    display:flex; flex-direction:column; min-height:100%;
-  }
-  ::-webkit-scrollbar { width:8px; height:8px; }
-  ::-webkit-scrollbar-thumb { background:var(--line2); border-radius:4px; }
-  ::-webkit-scrollbar-track { background:transparent; }
+    --bg:#0e1114; --surface:#15181d; --surface-2:#1a1e24; --surface-3:#22272e;
+    --ink:#e7eaef; --ink-2:#98a0ad; --ink-3:#6f7784;
+    --rule:#252a31; --rule-2:#343b45;
 
-  .mut { color:var(--mut); }
-  .t { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  h5, h6 { margin:0; }
-  h5 { font-size:10px; letter-spacing:.13em; text-transform:uppercase; color:var(--mut);
-       margin:0 0 9px; display:flex; align-items:center; gap:7px; }
-  h5::after { content:""; flex:1; height:1px; background:linear-gradient(90deg,var(--line),transparent); }
-  h6 { font-size:11px; letter-spacing:.06em; color:var(--cur); margin:11px 0 6px;
-       text-transform:uppercase; }
+    --ok:#57c88d;    --ok-bg:#12281e;   --ok-edge:#3ba36c;
+    --warn:#dda033;  --warn-bg:#2c2312; --warn-edge:#b8811f;
+    --bad:#f4796a;   --bad-bg:#2f1815;  --bad-edge:#c9513f;
+    --info:#7fa0f5;  --info-bg:#171d2e; --info-edge:#4f74d4;
+    --idle:#8b93a1;  --idle-bg:#1e2229; --idle-edge:#454d59;
+  }
+}
 
-  button {
-    font:inherit; font-size:12px; color:var(--txt); background:#1b1f2e;
-    border:1px solid var(--line2); border-radius:6px; padding:6px 12px; cursor:pointer;
-    transition:background .12s, border-color .12s, transform .06s;
-  }
-  button:hover:not(:disabled) { background:#232838; border-color:#454c70; }
-  button:active:not(:disabled) { transform:translateY(1px); }
-  button:disabled { opacity:.3; cursor:default; }
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 14px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--info-edge); outline-offset: 2px; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: 16px; padding-right: 16px; }
+.band { background: var(--surface); border-bottom: 1px solid var(--rule); }
+.band > .wrap { padding-block: 18px; }
+.mono { font-family: var(--mono); }
+.dim { color: var(--ink-2); }
 
-  /* ───── HERO ───────────────────────────────────────────── */
-  .hero {
-    position:relative; flex:none; padding:18px 20px 16px;
-    background:
-      linear-gradient(180deg, rgba(124,140,255,.04), transparent),
-      var(--bg2);
-    border-bottom:1px solid var(--line);
-    overflow:hidden;
-  }
-  .hero::before {
-    content:""; position:absolute; inset:0;
-    background-image:linear-gradient(var(--line) 1px, transparent 1px),
-                     linear-gradient(90deg, var(--line) 1px, transparent 1px);
-    background-size:34px 34px; opacity:.20; pointer-events:none;
-    -webkit-mask-image:linear-gradient(180deg, #000, transparent 75%);
-            mask-image:linear-gradient(180deg, #000, transparent 75%);
-  }
-  .hero > * { position:relative; }
+/* ── banner ─────────────────────────────────────────────────────── */
+#banner {
+  background: var(--warn-bg); color: var(--warn);
+  border-bottom: 1px solid var(--warn-edge);
+  font-size: 12.5px; font-weight: 500;
+}
+#banner > .wrap { padding-block: 7px; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+#banner code { font-family: var(--mono); font-size: 11px; color: inherit; }
+#banner.terminal { background: var(--idle-bg); color: var(--ink-2); border-bottom-color: var(--rule-2); }
 
-  .verdict {
-    font-size:clamp(30px, 8vw, 52px); font-weight:800; letter-spacing:.02em;
-    line-height:1; margin:0 0 4px; color:var(--mut);
-    text-shadow:0 0 26px currentColor; transition:color .3s;
-  }
-  .verdict.v-running      { color:var(--ok); }
-  .verdict.v-done         { color:var(--ok); }
-  .verdict.v-paused       { color:var(--cur); }
-  .verdict.v-pausing      { color:var(--cur); animation:flash 1.4s ease-in-out infinite; }
-  .verdict.v-stalled      { color:var(--hot); animation:flash 1.4s ease-in-out infinite; }
-  .verdict.v-halted,
-  .verdict.v-stopped      { color:var(--hot); }
-  .verdict.v-rate-limited { color:var(--info); animation:flash 1.8s ease-in-out infinite; }
-  .verdict.v-idle         { color:var(--idle); }
-  @keyframes flash { 0%,100%{opacity:1} 50%{opacity:.45} }
+/* ── masthead ───────────────────────────────────────────────────── */
+.mast > .wrap {
+  padding-block: 12px; display: flex; flex-wrap: wrap; gap: 10px 16px;
+  align-items: baseline; justify-content: space-between;
+}
+.ident { min-width: 0; }
+.ident h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.ident h1 .prod { color: var(--ink-3); font-weight: 500; }
+.ident p {
+  margin: 1px 0 0; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52ch;
+}
+.ctrls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+button {
+  font: inherit; font-size: 12.5px; line-height: 1.2; color: var(--ink);
+  background: var(--surface-2); border: 1px solid var(--rule-2); border-radius: 6px;
+  padding: 6px 11px; cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--surface-3); }
+button:disabled { opacity: .38; cursor: not-allowed; }
+#btnStart:not(:disabled), #btnResume:not(:disabled) { color: var(--ok); border-color: var(--ok-edge); }
+#btnStop:not(:disabled) { color: var(--bad); border-color: var(--bad-edge); }
+#btnBell { padding: 6px 8px; }
+#btnBell[aria-pressed="true"] { color: var(--info); border-color: var(--info-edge); }
+#ctrlErr {
+  font-size: 12px; color: var(--bad); background: var(--bad-bg);
+  border: 1px solid var(--bad-edge); border-radius: 6px; padding: 5px 9px;
+}
 
-  .loopid { font-size:13px; margin:0 0 12px; }
-  .loopid #worktree { display:inline-block; max-width:62vw; vertical-align:bottom;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; direction:rtl; text-align:left; }
+/* ── health band: the one loud thing on the page ─────────────────── */
+.health { background: var(--surface-2); }
+.health > .wrap { padding-block: 22px 20px; }
+.statusline { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+#status {
+  display: inline-flex; align-items: baseline; gap: 7px;
+  font-family: var(--mono); font-size: 12px; font-weight: 600;
+  letter-spacing: .06em; padding: 4px 10px; border-radius: 3px;
+  border: 1px solid currentColor;
+}
+#status .glyph { font-size: 11px; }
+.statusline .meta { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.statusline .meta b { color: var(--ink); font-weight: 600; }
 
-  .ctrls { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin:0 0 12px; }
-  .ctrls button { min-width:40px; text-align:center; font-size:14px; padding:6px 13px; }
-  #btnStart:not(:disabled)  { border-color:#2f6a45; color:var(--ok); }
-  #btnStop:not(:disabled)   { border-color:#6a2f37; color:var(--hot); }
-  #btnPause:not(:disabled)  { border-color:#6a5a2f; color:var(--cur); }
-  #copyResume, #btnBell { font-size:11px; min-width:0; }
-  #btnBell.on { border-color:var(--acc); color:var(--acc); }
-  .ctrls .spacer { flex:1; }
+#why {
+  margin: 12px 0 0; max-width: 60ch;
+  font-size: clamp(19px, 4.4vw, 27px); font-weight: 400; line-height: 1.28;
+  letter-spacing: -0.015em; text-wrap: balance;
+}
 
-  .metaline { font-size:12px; color:var(--txt); letter-spacing:.02em; margin:0 0 8px; }
-  .metaline b, .metaline span#tickNo, .metaline span#segPos { color:var(--acc); }
-  .now {
-    font-size:15px; padding:9px 13px; border-radius:7px; margin:0 0 8px;
-    background:linear-gradient(90deg, rgba(124,140,255,.10), rgba(124,140,255,.02));
-    border:1px solid var(--line2); border-left:3px solid var(--acc);
-    color:#c3ccff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  }
-  .tonight { font-size:12px; color:var(--mut); letter-spacing:.03em; }
+#callout {
+  margin-top: 14px; border: 1px solid var(--bad-edge); background: var(--bad-bg);
+  border-radius: 6px; padding: 12px 14px;
+}
+#callout h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--bad); }
+#callout p { margin: 0; font-size: 13.5px; color: var(--ink); max-width: 72ch; }
+#callout p + p { margin-top: 7px; color: var(--ink-2); }
+#callout.soft { border-color: var(--rule-2); background: var(--surface-3); }
+#callout.soft h2 { color: var(--ink); }
+.resume { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.resume code {
+  font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--rule-2); border-radius: 4px;
+  padding: 5px 8px; overflow-x: auto; white-space: pre; max-width: 100%;
+}
+.copybtn { padding: 4px 9px; font-size: 11.5px; }
 
-  /* ───── PIPELINE (agent roster + activity feed) ────────── */
-  .pipeline {
-    flex:none; padding:14px 20px; background:var(--bg2); border-bottom:1px solid var(--line);
-    display:grid; gap:18px; align-items:start;
-    grid-template-columns: minmax(210px, .82fr) minmax(0, 1.5fr);
-  }
-  .ptitle { font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--mut); margin:0 0 8px; }
-  /* model-tier colour semantics, shared across roster chips + feed dividers */
-  .tier-haiku  { color:var(--info);  border-color:rgba(56,189,248,.40); }
-  .tier-sonnet { color:#c3ccff;      border-color:rgba(124,140,255,.45); }
-  .tier-opus   { color:var(--cur);   border-color:rgba(251,191,36,.45); }
+/* vitals: instrument readouts, colour on the leading edge only */
+#health { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.vital {
+  flex: 1 1 210px; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+  padding: 7px 11px; background: var(--surface);
+  border: 1px solid var(--rule); border-left-width: 3px; border-radius: 0 5px 5px 0;
+}
+.vital .vk { font-size: 11px; color: var(--ink-2); }
+.vital .vv { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+.v-ok   { border-left-color: var(--ok-edge); }
+.v-warn { border-left-color: var(--warn-edge); background: var(--warn-bg); }
+.v-bad  { border-left-color: var(--bad-edge); background: var(--bad-bg); }
+.v-idle { border-left-color: var(--idle-edge); }
+.v-warn .vk, .v-warn .vv { color: var(--warn); }
+.v-bad  .vk, .v-bad  .vv { color: var(--bad); }
 
-  /* ── roster: orchestrator spine + indented subagents ── */
-  .roster { display:flex; flex-direction:column; }
-  .rrow {
-    display:flex; align-items:center; gap:9px; padding:6px 9px; border-radius:7px;
-    border:1px solid transparent;
-  }
-  .rrow.r-orch { border-left:3px solid var(--line2); border-radius:0 7px 7px 0; }
-  .rsubs { position:relative; padding-left:15px; }
-  .rsubs::before { /* tree rail down from the spine */
-    content:""; position:absolute; left:6px; top:-2px; bottom:13px; width:1px; background:var(--line2);
-  }
-  .rrow.r-active {
-    background:linear-gradient(180deg, rgba(124,140,255,.10), transparent);
-    border-color:rgba(124,140,255,.32);
-  }
-  .rdot { width:8px; height:8px; border-radius:50%; background:var(--idle); flex:none; }
-  .rrow.r-done .rdot { background:var(--ok); }
-  .rrow.r-active .rdot { background:var(--acc); animation:pulse 1.5s ease-in-out infinite; }
-  .rname { font-size:12.5px; font-weight:700; letter-spacing:.02em; color:var(--txt); }
-  .rrow.r-done .rname { color:var(--mut); }
-  .rrow.r-idle .rname { color:var(--mut); }
-  .rmeta { margin-left:auto; display:flex; align-items:center; gap:8px; font-size:11px; color:var(--mut); }
-  .rchip {
-    font-size:10px; padding:1px 7px; border-radius:5px; border:1px solid var(--line2);
-    background:#10131d; color:var(--info); white-space:nowrap;
-  }
-  .rchip.dash { opacity:.4; }
-  .rtools { font-variant-numeric:tabular-nums; }
-  .rela { color:var(--cur); font-weight:700; font-variant-numeric:tabular-nums; }
-  .rtask {
-    font-size:11px; color:var(--mut); margin:-1px 0 5px 33px; overflow-wrap:anywhere;
-    border-left:1px solid var(--line2); padding-left:8px;
-  }
-  .rempty { font-size:11px; color:var(--mut); padding:4px 0 2px 15px; }
+/* ── section furniture ──────────────────────────────────────────── */
+.hd { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; margin-bottom: 12px; }
+.hd h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.hd .note { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+.hd .grow { flex: 1; }
+.empty { font-size: 13px; color: var(--ink-3); }
 
-  /* ── activity feed: chronological, internally-scrolling tail ── */
-  .feed {
-    max-height:210px; overflow:auto;
-    border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:4px 0;
-  }
-  .fdiv {
-    display:flex; align-items:center; gap:8px; padding:6px 12px 3px; font-size:10px;
-    font-weight:700; letter-spacing:.12em; text-transform:uppercase;
-  }
-  .fdiv:first-child { padding-top:3px; }
-  .fdiv::after { content:""; flex:1; height:1px; background:var(--line2); opacity:.6; }
-  .fline {
-    display:flex; align-items:baseline; gap:8px; padding:2px 12px 2px 22px;
-    font-size:11.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-    white-space:nowrap; overflow:hidden;
-  }
-  .ficon { flex:none; color:var(--mut); width:1.2em; text-align:center; }
-  .fname { flex:none; color:var(--txt); font-weight:600; }
-  .fdesc { flex:1 1 auto; min-width:0; color:var(--mut); overflow:hidden; text-overflow:ellipsis; }
-  .fempty { font-size:11px; color:var(--mut); padding:8px 12px; }
-  @keyframes pulse {
-    0%,100% { box-shadow:0 0 0 1px rgba(124,140,255,.45), 0 0 7px rgba(124,140,255,.3); }
-    50%     { box-shadow:0 0 0 3px rgba(124,140,255,.10), 0 0 15px rgba(124,140,255,.55); }
-  }
+/* ── tick timeline ──────────────────────────────────────────────── */
+.stepper { display: flex; flex-wrap: wrap; align-items: stretch; gap: 0; }
+.node {
+  flex: 1 1 150px; min-width: 0; padding: 9px 12px 10px;
+  border: 1px solid var(--rule); border-right-width: 0; background: var(--surface-2);
+}
+.node:first-child { border-radius: 5px 0 0 5px; }
+.node:last-child { border-right-width: 1px; border-radius: 0 5px 5px 0; }
+.node .top { display: flex; align-items: center; gap: 7px; }
+.node .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle-edge); flex: none; }
+.node .role { font-size: 13px; font-weight: 600; }
+.node .sub { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.node .desc {
+  margin-top: 5px; font-size: 12px; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.node.n-done { background: var(--surface); }
+.node.n-done .dot { background: var(--ok-edge); }
+.node.n-active { background: var(--info-bg); border-color: var(--info-edge); }
+.node.n-active .dot { background: var(--info-edge); }
+.node.n-pending { opacity: .62; }
+.node.n-parked { background: var(--surface); }
+.node.n-parked .dot { background: var(--idle-edge); }
+.chip {
+  font-family: var(--mono); font-size: 10.5px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid var(--rule-2); color: var(--ink-2); background: var(--surface);
+}
+.chip.m-opus   { color: var(--warn); border-color: var(--warn-edge); }
+.chip.m-sonnet { color: var(--info); border-color: var(--info-edge); }
+.chip.m-haiku  { color: var(--ok);   border-color: var(--ok-edge); }
+.chip.t { color: var(--ink-3); border-style: dashed; }
 
-  /* ───── GRID ───────────────────────────────────────────── */
-  .grid {
-    flex:1 1 auto; display:grid; gap:12px; padding:14px 20px 20px;
-    grid-template-columns: minmax(0,1.35fr) minmax(0,1fr);
-  }
-  .panel {
-    background:linear-gradient(180deg, var(--panel2), var(--panel));
-    border:1px solid var(--line); border-radius:10px; padding:13px 15px; min-width:0;
-  }
-  #roadmap { grid-column:1; }
-  #usagePanel { grid-column:2; grid-row:1 / span 2; }
-  #logPanel { grid-column:1; }
+.meter { margin-top: 12px; }
+.meter .track { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.meter .fill { height: 100%; background: var(--info-edge); }
+.meter .fill.warn { background: var(--warn-edge); }
+.meter .fill.bad { background: var(--bad-edge); }
+.meter .cap { margin-top: 5px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); }
+.meter .cap.off { color: var(--ink-3); }
 
-  /* ───── ROADMAP ────────────────────────────────────────── */
-  .rm-ctrls { display:flex; gap:6px; margin-bottom:8px; }
-  .rm-ctrls button { font-size:11px; padding:3px 9px; }
-  details.seg-d { margin:0 0 5px; }
-  details.seg-d > summary {
-    list-style:none; cursor:pointer; padding:2px 0; display:flex; align-items:center; gap:7px;
-  }
-  details.seg-d > summary::-webkit-details-marker { display:none; }
-  details.seg-d > summary::before {
-    content:"▸"; color:var(--mut); font-size:10px; transition:transform .12s; display:inline-block;
-  }
-  details.seg-d[open] > summary::before { transform:rotate(90deg); }
-  .seg-body { padding:4px 0 8px 17px; }
-  .seg {
-    padding:5px 11px; border-radius:6px; font-size:11px; font-weight:600; letter-spacing:.03em;
-    border:1px solid var(--line2); background:var(--panel); white-space:nowrap;
-  }
-  .seg-done .seg { border-color:#2f6a45; color:var(--ok); background:rgba(74,222,128,.07); }
-  .seg-current .seg {
-    border-color:var(--cur); color:#1a1408; background:var(--cur); font-weight:800;
-    box-shadow:0 0 16px rgba(251,191,36,.3);
-  }
-  .seg-future .seg { border-style:dashed; border-color:var(--idle); color:var(--mut); opacity:.7; }
-  .tbd { margin-top:10px; font-size:11px; }
+.strip { margin-top: 18px; }
+.strip .bars { display: flex; align-items: flex-end; gap: 4px; height: 40px; }
+.strip .cell { flex: 1 1 0; min-width: 0; max-width: 58px; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+.strip .bar { border-radius: 2px 2px 0 0; min-height: 4px; background: var(--idle-edge); }
+.strip .cell.c-ok   .bar { background: var(--ok-edge); }
+.strip .cell.c-warn .bar { background: var(--warn-edge); }
+.strip .cell.c-bad  .bar { background: var(--bad-edge); }
+.strip .cell.c-live .bar { background: var(--info-edge); }
+.strip .nums { display: flex; gap: 4px; margin-top: 4px; }
+.strip .num { flex: 1 1 0; min-width: 0; max-width: 58px; text-align: center; font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+.strip .cap { margin-top: 6px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
 
-  .task { display:flex; gap:8px; align-items:baseline; padding:4px 0; border-bottom:1px solid #1c1f2c; }
-  .task:last-child { border-bottom:none; }
-  .task .g  { flex:none; width:1.2em; text-align:center; color:var(--mut); }
-  .task .d  { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
-  .task .id { color:var(--acc); margin-right:5px; opacity:.8; }
-  .task.done   { color:var(--mut); } .task.done .g   { color:var(--ok); }
-  .task.doing  { color:var(--cur); } .task.doing .g  { color:var(--cur); }
-  .task.blocked .g { color:var(--hot); }
-  .task.skipped { opacity:.5; }
+#activity { margin-top: 18px; border-top: 1px solid var(--rule); max-height: 208px; overflow-y: auto; }
+.act {
+  display: flex; gap: 10px; align-items: baseline; padding: 3px 0;
+  border-bottom: 1px solid var(--rule); font-size: 12.5px;
+}
+.act .r { font-size: 11px; color: var(--ink-3); width: 66px; flex: none; }
+.act .n { font-family: var(--mono); font-size: 11.5px; width: 62px; flex: none; color: var(--ink-2); }
+.act .d { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.act .t { font-family: var(--mono); font-size: 11px; color: var(--ink-3); flex: none; }
 
-  /* ───── USAGE ──────────────────────────────────────────── */
-  #usage .headline {
-    font-size:14px; font-weight:700; color:var(--txt); padding:8px 10px; margin-bottom:12px;
-    border-radius:7px; background:rgba(74,222,128,.06); border:1px solid #234433;
-    overflow-wrap:anywhere;
-  }
-  #usage .t { margin-top:7px; }
-  .mini { height:6px; background:#1a1d2a; border-radius:3px; margin:4px 0 4px; overflow:hidden; }
-  .mini > i { display:block; height:100%;
-    background:linear-gradient(90deg, var(--acc), var(--info)); border-radius:3px; transition:width .4s; }
-  #narrative .t { padding:2px 0; font-size:12px; }
-  #narrative details.nrow > summary { list-style:none; cursor:pointer; }
-  #narrative details.nrow > summary::-webkit-details-marker { display:none; }
-  #narrative details.nrow > summary::before {
-    content:"▸"; color:var(--mut); font-size:9px; margin-right:5px; display:inline-block; transition:transform .12s;
-  }
-  #narrative details.nrow[open] > summary::before { transform:rotate(90deg); }
-  #narrative .nsplit { font-size:11px; padding:1px 0 4px 14px; }
-  #quota { font-size:12px; }
-  #quota .qok { color:var(--ok); }
-  #quota .qlim { color:var(--info); font-weight:600; }
+/* ── roadmap ────────────────────────────────────────────────────── */
+.seg { border-top: 1px solid var(--rule); }
+.seg:last-child { border-bottom: 1px solid var(--rule); }
+.seg > summary {
+  list-style: none; cursor: pointer; padding: 9px 0;
+  display: grid; grid-template-columns: 14px 1fr auto; gap: 10px; align-items: baseline;
+}
+.seg > summary::-webkit-details-marker { display: none; }
+.seg .mark { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.seg.s-done .mark { color: var(--ok); }
+.seg.s-current .mark { color: var(--info); }
+.seg .nm { font-size: 13.5px; min-width: 0; }
+.seg .goal { display: block; font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.seg .cnt { font-family: var(--mono); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.seg .segbar { grid-column: 2 / -1; height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.seg .segbar i { display: block; height: 100%; background: var(--ok-edge); }
+.seg.s-current .segbar i { background: var(--info-edge); }
+.tasks { padding: 2px 0 10px 24px; }
+.task { display: flex; gap: 9px; align-items: baseline; padding: 2px 0; font-size: 12.5px; }
+.task .g { font-family: var(--mono); font-size: 11px; width: 12px; flex: none; color: var(--ink-3); }
+.task .id { font-family: var(--mono); font-size: 11.5px; width: 40px; flex: none; color: var(--ink-2); }
+.task .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task.k-done { color: var(--ink-3); }
+.task.k-done .g { color: var(--ok); }
+.task.k-doing .g { color: var(--info); }
+.task.k-blocked .g, .task.k-blocked .tx { color: var(--bad); }
 
-  /* ───── LOG ────────────────────────────────────────────── */
-  #logPanel { font-size:11px; }
-  #log { max-height:200px; overflow:auto; }
-  #log div { color:var(--mut); white-space:pre-wrap; word-break:break-all; padding:1px 0;
-             border-left:2px solid var(--line); padding-left:8px; }
-  #log div:last-child { color:var(--txt); border-left-color:var(--acc); }
+/* ── incidents ──────────────────────────────────────────────────── */
+.inc { display: grid; grid-template-columns: 3px 1fr; gap: 12px; padding: 10px 0; border-top: 1px solid var(--rule); }
+#incidents .inc:last-child { border-bottom: 1px solid var(--rule); }
+.inc .edge { border-radius: 2px; background: var(--idle-edge); }
+.inc.sev-warn .edge { background: var(--warn-edge); }
+.inc.sev-error .edge { background: var(--bad-edge); }
+.inc.sev-needs-human .edge { background: var(--bad-edge); }
+.inc .row1 { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.inc .kind { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.inc.sev-error .kind, .inc.sev-needs-human .kind { color: var(--bad); }
+.inc.sev-warn .kind { color: var(--warn); }
+.inc .when { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+.inc .detail { margin-top: 3px; font-size: 13px; color: var(--ink-2); max-width: 80ch; }
+.inc .medic { margin-top: 6px; font-size: 12.5px; color: var(--ink-2); max-width: 80ch; }
+.badge {
+  font-family: var(--mono); font-size: 10.5px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid var(--rule-2); color: var(--ink-2);
+}
+.badge.o-resumed { color: var(--ok); border-color: var(--ok-edge); }
+.badge.o-paused, .badge.o-escalated { color: var(--bad); border-color: var(--bad-edge); }
 
-  @media (max-width: 820px) {
-    .grid { grid-template-columns:1fr; padding:12px 14px 18px; }
-    #roadmap, #usagePanel, #logPanel { grid-column:1; grid-row:auto; }
-    .hero { padding:14px 14px 13px; }
-    /* stack panels: roster (first in DOM) stays above the ever-scrolling feed */
-    .pipeline { padding:12px 14px; grid-template-columns:1fr; }
-    .loopid #worktree { max-width:80vw; }
-  }
+/* ── usage ──────────────────────────────────────────────────────── */
+.ugrid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 22px; }
+.ubar { display: grid; grid-template-columns: 92px 1fr auto; gap: 10px; align-items: center; padding: 3px 0; }
+.ubar .ml { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.ubar .tr { height: 8px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.ubar .tr i { display: block; height: 100%; background: var(--info-edge); }
+.ubar.m-opus .tr i { background: var(--warn-edge); }
+.ubar.m-haiku .tr i { background: var(--ok-edge); }
+.ubar .vl { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); white-space: nowrap; }
+.figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+.fig .k { font-size: 11px; color: var(--ink-2); }
+.fig .v { font-family: var(--mono); font-size: 17px; letter-spacing: -0.02em; }
+.fig .s { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+
+/* ── log ────────────────────────────────────────────────────────── */
+.logbox > summary { cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
+.logbox > summary::-webkit-details-marker { display: none; }
+.logbox > summary::before { content: "▸ "; color: var(--ink-3); }
+.logbox[open] > summary::before { content: "▾ "; }
+#log {
+  margin: 10px 0 0; padding: 10px 12px; background: var(--surface-2);
+  border: 1px solid var(--rule); border-radius: 5px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.65; color: var(--ink-2);
+  overflow-x: auto; white-space: pre;
+}
+footer { color: var(--ink-3); font-size: 11.5px; font-family: var(--mono); }
+footer > .wrap { padding-block: 14px 26px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.live .glyph { animation: breathe 2.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .live .glyph { animation: none; } }
+
+@media (max-width: 720px) {
+  .ugrid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .node { flex: 1 1 100%; border-right-width: 1px; border-bottom-width: 0; border-radius: 0; }
+  .node:first-child { border-radius: 5px 5px 0 0; }
+  .node:last-child { border-bottom-width: 1px; border-radius: 0 0 5px 5px; }
+  .ident p { max-width: 100%; }
+  .act .r { display: none; }
+  .ubar { grid-template-columns: 72px 1fr auto; }
+}
 </style>
 </head>
 <body>
-  <header class="hero">
-    <div class="verdict" id="verdict">—</div>
-    <div class="loopid"><span id="loopName">—</span> · <span id="worktree" class="mut">—</span></div>
-    <div class="ctrls">
-      <button id="btnStart" title="start" aria-label="start">▶</button><button id="btnPause" title="pause" aria-label="pause">⏸</button>
-      <button id="btnResume" title="resume" aria-label="resume">⟳</button><button id="btnStop" title="stop" aria-label="stop">■</button>
-      <span class="spacer"></span>
-      <button id="btnBell" title="enable stall notifications">🔔</button>
-      <button id="copyResume" style="display:none">⧉ copy resume</button>
+
+<div id="banner" class="band" hidden><div class="wrap">
+  <span id="bannerText"></span>
+  <code id="bannerCmd" hidden></code>
+  <button id="bannerCopy" class="copybtn" type="button" hidden>Copy</button>
+</div></div>
+
+<header class="band mast">
+  <div class="wrap">
+    <div class="ident">
+      <h1><span class="prod">agent-loop</span> <span id="loopName">…</span></h1>
+      <p id="worktree"></p>
     </div>
-    <div class="metaline">tick #<span id="tickNo">–</span> · Seg <span id="segPos">–</span>
-      · <span id="progTxt">0/0</span> <span id="segTBD" class="mut"></span></div>
-    <div class="now" id="nowLine">idle</div>
-    <div class="tonight" id="tonight"></div>
-    <span id="ctrlNote" class="mut" style="display:block;font-size:11px;margin-top:6px"></span>
-  </header>
+    <div class="ctrls">
+      <span id="ctrlErr" hidden></span>
+      <button id="btnStart" type="button">Start</button>
+      <button id="btnPause" type="button">Pause</button>
+      <button id="btnResume" type="button">Resume</button>
+      <button id="btnStop" type="button">Stop</button>
+      <button id="btnBell" type="button" aria-pressed="false" title="Notify me when the loop stalls or needs a human">Notify me</button>
+    </div>
+  </div>
+</header>
 
-  <section class="pipeline">
-    <div class="rosterwrap"><h5 class="ptitle">Agents</h5><div id="roster"></div></div>
-    <div class="feedwrap"><h5 class="ptitle">Activity</h5><div class="feed" id="feed"></div></div>
-  </section>
+<section class="band health" aria-label="Loop health">
+  <div class="wrap">
+    <div class="statusline">
+      <span id="status" class="s-idle"><span class="glyph">·</span><span class="word">IDLE</span></span>
+      <span class="meta">tick <b id="tickNo">–</b></span>
+      <span class="meta" id="since"></span>
+    </div>
+    <p id="why">Waiting for the first snapshot.</p>
+    <div id="callout" hidden></div>
+    <div id="health"></div>
+  </div>
+</section>
 
-  <main class="grid">
-    <section class="panel" id="roadmap"></section>
-    <section class="panel" id="usagePanel">
-      <h5>Effort</h5>
-      <div id="usage"></div>
-      <h5 style="margin-top:14px">Quota</h5>
-      <div id="quota" class="mut">—</div>
-      <h5 style="margin-top:14px">Narrative</h5>
-      <div id="narrative"></div>
-    </section>
-    <section class="panel" id="logPanel">
-      <h5>run.log</h5>
-      <div id="log"></div>
-    </section>
-  </main>
+<section class="band" aria-label="This tick">
+  <div class="wrap">
+    <div class="hd"><h2>This tick</h2><span class="grow"></span><span class="note" id="tickNote"></span></div>
+    <div id="timeline"></div>
+    <div id="activity"></div>
+  </div>
+</section>
+
+<section class="band" aria-label="Roadmap">
+  <div class="wrap">
+    <div class="hd"><h2>Roadmap</h2><span class="grow"></span><span class="note" id="progNote"></span></div>
+    <div id="roadmap"></div>
+  </div>
+</section>
+
+<section class="band" aria-label="Incidents">
+  <div class="wrap">
+    <div class="hd"><h2>Incidents</h2><span class="grow"></span><span class="note" id="incNote"></span></div>
+    <div id="incidents"></div>
+  </div>
+</section>
+
+<section class="band" aria-label="Effort">
+  <div class="wrap">
+    <div class="hd"><h2>Effort</h2><span class="grow"></span><span class="note" id="quotaNote"></span></div>
+    <div id="usage"></div>
+  </div>
+</section>
+
+<section class="band" aria-label="Log">
+  <div class="wrap">
+    <details class="logbox" data-key="log">
+      <summary>run.log, last lines</summary>
+      <pre id="log"></pre>
+    </details>
+  </div>
+</section>
+
+<footer><div class="wrap"><span id="footVersion"></span><span id="footDash"></span><span id="footElapsed"></span></div></footer>
 
 <script>
+"use strict";
+/* Reads the Snapshot contract and nothing else. No field is invented; where the
+   contract omits something (the stall threshold) the default is a named constant
+   below and is documented as an assumption, not fabricated into the payload. */
+
+// #mock renders this constant, kept byte-identical to tests/fixtures/snapshot-sample.json
+const MOCK = {
+  "loop": {
+    "name": "2026-09-11-internal-app",
+    "worktree": "/Users/dev/work/internal-app.loop",
+    "status": "running",
+    "tick": 12,
+    "plugin_version": "2.0.0",
+    "schema": 2,
+    "migration": {"from": 1, "to": 2, "actions": "legacy-lock-removed", "at": 1757635200}
+  },
+  "now": 1757600004,
+  "status": {
+    "state": "running",
+    "since": 1757599900,
+    "why": "Worker (sonnet) on T14 · last activity 4s ago",
+    "phase": "Worker",
+    "resume_cmd": "cd /Users/dev/work/internal-app.loop && LOOP_DIR=.claude/loop/2026-09-11-internal-app bash run.sh"
+  },
+  "health": {
+    "harness": {
+      "alive": true,
+      "pid": 4812,
+      "heartbeat_age_s": 3,
+      "started_at": 1757590000
+    },
+    "tick": {
+      "alive": true,
+      "pid": 4999,
+      "tick": 12,
+      "elapsed_s": 190,
+      "timeout_s": 1800,
+      "activity_age_s": 4,
+      "stall_s": 300
+    },
+    "dashboard": {
+      "alive": true,
+      "pid": 5001,
+      "uptime_s": 9000,
+      "sidecar": true
+    }
+  },
+  "current": {
+    "tick": 12,
+    "role": "Worker",
+    "model": "claude-sonnet-4-6",
+    "tools": 17,
+    "task": "T14"
+  },
+  "pipeline": {
+    "role": "orchestrator",
+    "state": "active",
+    "active": {
+      "role": "Worker",
+      "model": "claude-sonnet-4-6",
+      "tools": 17,
+      "desc": "Worker: migrate the notifications settings page",
+      "since": 1757599900
+    },
+    "children": [
+      {
+        "role": "Scout",
+        "model": "claude-haiku-4-5",
+        "state": "done",
+        "tools": 9,
+        "desc": "Scout: recon T14"
+      },
+      {
+        "role": "Worker",
+        "model": "claude-sonnet-4-6",
+        "state": "active",
+        "tools": 17,
+        "desc": "Worker: migrate the notifications settings page"
+      },
+      {
+        "role": "Evaluator",
+        "model": "claude-sonnet-4-6",
+        "state": "pending",
+        "tools": 0,
+        "desc": "Evaluator: verify T14 against the sprint contract"
+      }
+    ]
+  },
+  "activity": [
+    {
+      "role": "Scout",
+      "name": "Grep",
+      "desc": "useSettingsQuery",
+      "t": 1757599824
+    },
+    {
+      "role": "Scout",
+      "name": "Read",
+      "desc": "src/settings/notifications.tsx",
+      "t": 1757599851
+    },
+    {
+      "role": "Worker",
+      "name": "Read",
+      "desc": "src/api/client.ts",
+      "t": 1757599912
+    },
+    {
+      "role": "Worker",
+      "name": "Edit",
+      "desc": "src/settings/notifications.tsx",
+      "t": 1757599948
+    },
+    {
+      "role": "Worker",
+      "name": "Edit",
+      "desc": "src/settings/notifications.test.tsx",
+      "t": 1757599971
+    },
+    {
+      "role": "Worker",
+      "name": "Bash",
+      "desc": "pnpm vitest run src/settings",
+      "t": 1757599988
+    },
+    {
+      "role": "Worker",
+      "name": "Read",
+      "desc": "src/settings/index.ts",
+      "t": 1757599996
+    },
+    {
+      "role": "Worker",
+      "name": "Edit",
+      "desc": "src/settings/index.ts",
+      "t": 1757600000
+    }
+  ],
+  "progress": {
+    "done": 13,
+    "total": 19,
+    "remaining": 6,
+    "pct": 33,
+    "pct_basis": "segments",
+    "segments_total": 3,
+    "segments_done": 1,
+    "segments_unplanned": 1
+  },
+  "roadmap": [
+    {
+      "name": "Segment 1: Extract the API client",
+      "done": 10,
+      "total": 10,
+      "goal": "One typed client; no fetch calls left in components",
+      "state": "done",
+      "planned": true
+    },
+    {
+      "name": "Segment 2: Migrate the settings pages",
+      "done": 3,
+      "total": 9,
+      "goal": "Settings runs entirely on the new client",
+      "state": "current",
+      "planned": true
+    },
+    {
+      "name": "Segment 3: Retire the legacy bundle",
+      "done": 0,
+      "total": 0,
+      "goal": null,
+      "state": "future",
+      "planned": false
+    }
+  ],
+  "plan": [
+    {
+      "id": "T1",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Scaffold the typed client module",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T2",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Generate request/response types from the OpenAPI doc",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T3",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Move auth headers into the client",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T4",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Add retry and timeout policy",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T5",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the accounts endpoints",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T6",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the billing endpoints",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T7",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the notification endpoints",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T8",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Delete the ad-hoc fetch helpers",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T9",
+      "status": "skipped",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the legacy export endpoint (removed upstream)",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T10",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Contract tests for the client",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T11",
+      "status": "done",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the profile settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T12",
+      "status": "done",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the billing settings page",
+      "model": "opus",
+      "mechanical": false
+    },
+    {
+      "id": "T13",
+      "status": "done",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the team settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T14",
+      "status": "doing",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the notifications settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T15",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the security settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T16",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the integrations settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T17",
+      "status": "blocked",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the SSO settings page (waiting on the identity service)",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T18",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Delete the settings data layer",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T19",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Settings smoke tests on the new client",
+      "model": null,
+      "mechanical": false
+    }
+  ],
+  "ticks": [
+    {
+      "tick": 8,
+      "mode": "execute",
+      "verdict": "continue",
+      "cause": "ok",
+      "dur": 542,
+      "task": "T11",
+      "sha": "a9f1c02",
+      "cost_usd": 3.14,
+      "tools": 38,
+      "roles": [
+        "Scout",
+        "Worker",
+        "Evaluator"
+      ]
+    },
+    {
+      "tick": 9,
+      "mode": "execute",
+      "verdict": "retry",
+      "cause": "timeout",
+      "dur": 1800,
+      "task": "T12",
+      "sha": null,
+      "cost_usd": 8.02,
+      "tools": 66,
+      "roles": [
+        "Scout",
+        "Worker"
+      ]
+    },
+    {
+      "tick": 10,
+      "mode": "execute",
+      "verdict": "continue",
+      "cause": "ok",
+      "dur": 610,
+      "task": "T12",
+      "sha": "4d81e07",
+      "cost_usd": 5.77,
+      "tools": 41,
+      "roles": [
+        "Scout",
+        "Worker",
+        "Evaluator"
+      ]
+    },
+    {
+      "tick": 11,
+      "mode": "execute",
+      "verdict": "retry",
+      "cause": "killed",
+      "dur": 288,
+      "task": "T13",
+      "sha": null,
+      "cost_usd": 1.06,
+      "tools": 12,
+      "roles": [
+        "Scout",
+        "Worker"
+      ]
+    }
+  ],
+  "incidents": [
+    {
+      "id": "i-001",
+      "t": 1757596800,
+      "kind": "tick-timeout",
+      "severity": "warn",
+      "detail": "rc=124 after 1800s on T12",
+      "tick": 9,
+      "medic": null
+    },
+    {
+      "id": "i-002",
+      "t": 1757598600,
+      "kind": "tick-killed",
+      "severity": "error",
+      "detail": "rc=137 (SIGKILL — likely OS memory pressure)",
+      "tick": 11,
+      "medic": {
+        "outcome": "resumed",
+        "summary": "1.1 GB free with swap at 94%. Cleared the orphaned sprint-T13.json, flipped T13 back to [ ], tree clean. Retrying with the memory guard armed."
+      }
+    }
+  ],
+  "usage": {
+    "by_model": {
+      "claude-haiku-4-5": {
+        "cost_usd": 0.86,
+        "input_tokens": 41200,
+        "output_tokens": 9800,
+        "cache_read_tokens": 612000,
+        "cache_creation_tokens": 38000,
+        "tokens": 701000
+      },
+      "claude-sonnet-4-6": {
+        "cost_usd": 14.62,
+        "input_tokens": 128400,
+        "output_tokens": 61200,
+        "cache_read_tokens": 4820000,
+        "cache_creation_tokens": 214000,
+        "tokens": 5223600
+      },
+      "claude-opus-4-8": {
+        "cost_usd": 9.41,
+        "input_tokens": 22800,
+        "output_tokens": 14600,
+        "cache_read_tokens": 388000,
+        "cache_creation_tokens": 51000,
+        "tokens": 476400
+      }
+    },
+    "total_cost_usd": 24.89,
+    "total_tokens": 6401000,
+    "cache_read_tokens": 5820000,
+    "cache_read_pct": 90,
+    "per_task": {
+      "cost_usd": 1.9146,
+      "tokens": 492384
+    },
+    "burn": {
+      "usd_per_hr": 26.12,
+      "tok_per_min": 111976
+    }
+  },
+  "quota": {
+    "label": "5h",
+    "type": "five_hour",
+    "resets_at": 1757612400
+  },
+  "config": {
+    "worktree": "/Users/dev/work/internal-app.loop",
+    "orchestrator_model": "sonnet",
+    "tiers": {
+      "Planner": "most-capable",
+      "Scout": "fastest",
+      "Worker": "balanced",
+      "Evaluator": "balanced"
+    },
+    "limits": {
+      "tick_timeout": "1800",
+      "pause_between": "20"
+    },
+    "dashboard": "auto",
+    "medic": "auto"
+  },
+  "elapsed_s": 10004,
+  "log": [
+    "[09:29:41] ✓ t10 T12 · 10m10s · 4d81e07",
+    "[09:29:41] ── loop · seg 2/3 · 12/19 planned tasks · 33% · ⏱ 2h46m ──",
+    "[09:30:01] ▸ t11 T13 execute",
+    "[09:34:49] ✗ t11 T13 · 4m48s · killed (SIGKILL — likely OS memory pressure)",
+    "[09:34:49] incident i-002 tick-killed · medic dispatched",
+    "[09:36:02] medic i-002 → resumed",
+    "[09:36:22] ▸ t12 T14 execute",
+    "[09:36:40] Worker: the sprint contract says to report <<LOOP_HALT:...>> if the",
+    "[09:36:40]   allow_list cannot cover the change. It can, so proceeding.",
+    "[09:37:20] Scout → Worker handoff · 9 tools",
+    "[09:38:55] Edit src/settings/notifications.tsx",
+    "[09:39:44] Bash pnpm vitest run src/settings"
+  ]
+};
+
+// Fallback only: the snapshot carries health.tick.stall_s.
+const STALL_S_DEFAULT = 300;
+const ACTIVITY_WARN_S = 120;
+const HB_WARN_S = 20, HB_BAD_S = 30;
+const ACTIVITY_ROWS = 60, TICK_CELLS = 12, ROADMAP_TASKS = 60;
+const TERMINAL = new Set(["done", "halted", "needs-human", "stopped", "crashed", "paused"]);
+
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const fmtDur = s => { s = Math.max(0, Math.floor(s||0)); return s<60 ? s+"s" : s<3600 ? Math.floor(s/60)+"m" : Math.floor(s/3600)+"h"+Math.floor((s%3600)/60)+"m"; };
-const fmtTok = n => n>=1e6 ? (n/1e6).toFixed(1)+"M" : n>=1e3 ? Math.round(n/1e3)+"k" : (n||0);
+const num = (v, d) => (typeof v === "number" && isFinite(v)) ? v : d;
 
-/* ─── Rendering architecture ────────────────────────────────────────────────
-   Data flows DOWN from the snapshot. VIEW-STATE (which <details> are open, the
-   text selection, focus, scroll) is owned by the CLIENT and is NEVER derived
-   from the snapshot. Updates are applied by morphInner(), which reconciles the
-   live DOM to freshly-rendered HTML *in place*: matched nodes keep their identity
-   (and thus their browser UI state) instead of being recreated. That is what lets
-   the ~1/s refresh run without nuking a selection or collapsing an open panel.
-   Consequence: every <details> and every dynamic list item carries a stable
-   `data-key` (or `id`), and a <details>'s open state comes from `ui.open`. */
+function fmtDur(s) {
+  s = Math.max(0, Math.floor(num(s, 0)));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m" + String(s % 60).padStart(2, "0") + "s";
+  return Math.floor(s / 3600) + "h" + String(Math.floor((s % 3600) / 60)).padStart(2, "0") + "m";
+}
+function fmtAge(s) {
+  if (s == null) return "unknown";
+  s = Math.max(0, Math.floor(s));
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  return Math.floor(s / 3600) + "h" + Math.floor((s % 3600) / 60) + "m";
+}
+const fmtTok = n => { n = num(n, 0); return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n)); };
+const fmtUsd = n => "$" + num(n, 0).toFixed(2);
+const clock = t => t ? new Date(t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"}) : "";
 
-// Client-owned view-state: the set of open <details> keys, persisted per tab.
+// The server stamps `now` into every snapshot; every derived age is measured
+// against it, never against the browser clock, so a replayed or clock-skewed
+// payload still renders sane ages. The browser clock is the last resort.
+function snapNow(d) {
+  return typeof d.now === "number" ? d.now : Math.floor(Date.now() / 1000);
+}
+function modelTier(m) {
+  const s = String(m || "").toLowerCase();
+  if (s.includes("opus")) return "opus";
+  if (s.includes("sonnet")) return "sonnet";
+  if (s.includes("haiku")) return "haiku";
+  return "";
+}
+const modelLabel = m => modelTier(m) || String(m || "");
+
+/* ── view-state owned by the client, never by the snapshot ───────────── */
 const UIK = "agentloop.ui.open";
-const ui = { open: new Set(JSON.parse(sessionStorage.getItem(UIK) || "[]")),
-             seeded: sessionStorage.getItem(UIK) !== null };
-function persistUI(){ try { sessionStorage.setItem(UIK, JSON.stringify([...ui.open])); } catch (_) {} }
-const isOpen = k => ui.open.has(k);
-// One delegated listener (capture phase — `toggle` does not bubble) keeps ui.open
-// in sync with the user's clicks. render() reads ui.open; it never reads open from
-// the snapshot, so a tick can't reopen what you closed or close what you opened.
+let openKeys;
+try { openKeys = new Set(JSON.parse(sessionStorage.getItem(UIK) || "[]")); }
+catch (_) { openKeys = new Set(); }
+function persistUI() { try { sessionStorage.setItem(UIK, JSON.stringify([...openKeys])); } catch (_) {} }
 document.addEventListener("toggle", e => {
-  const d = e.target;
-  if (!d || d.tagName !== "DETAILS" || !d.dataset.key) return;
-  if (d.open) ui.open.add(d.dataset.key); else ui.open.delete(d.dataset.key);
+  const el = e.target;
+  if (!el || el.tagName !== "DETAILS" || !el.dataset.key) return;
+  if (el.open) openKeys.add(el.dataset.key); else openKeys.delete(el.dataset.key);
   persistUI();
 }, true);
-// Write text only when it actually changed, so an unchanged value doesn't churn
-// the text node (which would drop a selection sitting inside it).
-function setText(el, v){ v = String(v == null ? "" : v); if (el && el.textContent !== v) el.textContent = v; }
+const openAttr = k => openKeys.has(k) ? " open" : "";
+// The log panel is static markup, so restore its remembered state on load.
+document.querySelectorAll("details[data-key]").forEach(el => { el.open = openKeys.has(el.dataset.key); });
+function setText(el, v) { v = String(v == null ? "" : v); if (el && el.textContent !== v) el.textContent = v; }
 
-// ─── morphInner: reconcile a container's children to match fresh HTML, in place ─
-function morphInner(live, html){
+/* ── morphInner: reconcile a container in place so selection, focus, scroll
+      and open <details> survive a 1 Hz refresh. Keyed by id / data-key. ── */
+function morphInner(live, html) {
   const tpl = document.createElement("template");
   tpl.innerHTML = html;
   morphChildren(live, tpl.content);
 }
 const keyOf = n => n.nodeType === 1 ? (n.id || n.getAttribute("data-key") || null) : null;
-function syncAttrs(live, next){
+function syncAttrs(live, next) {
   for (const a of Array.from(next.attributes))
     if (live.getAttribute(a.name) !== a.value) live.setAttribute(a.name, a.value);
   for (const a of Array.from(live.attributes))
     if (!next.hasAttribute(a.name)) live.removeAttribute(a.name);
 }
-function morphNode(live, next){
-  if (next.nodeType === 3 || next.nodeType === 8) {            // text / comment
+function morphNode(live, next) {
+  if (next.nodeType === 3 || next.nodeType === 8) {
     if (live.nodeValue !== next.nodeValue) live.nodeValue = next.nodeValue;
     return live;
   }
-  if (live.nodeType !== 1 || live.tagName !== next.tagName) {  // incompatible → replace
+  if (live.nodeType !== 1 || live.tagName !== next.tagName) {
     const imp = document.importNode(next, true); live.replaceWith(imp); return imp;
   }
   syncAttrs(live, next);
   morphChildren(live, next);
   return live;
 }
-function morphChildren(liveParent, nextParent){
+function morphChildren(liveParent, nextParent) {
   const liveKeyed = new Map();
   for (const c of Array.from(liveParent.childNodes)) { const k = keyOf(c); if (k) liveKeyed.set(k, c); }
   let unkeyed = liveParent.firstChild;
@@ -369,292 +976,451 @@ function morphChildren(liveParent, nextParent){
   for (const next of Array.from(nextParent.childNodes)) {
     const k = keyOf(next);
     let node;
-    if (k && liveKeyed.has(k)) {                               // keyed match → reuse
+    if (k && liveKeyed.has(k)) {
       const m = liveKeyed.get(k); liveKeyed.delete(k);
-      node = (m.nodeType === 1 && m.tagName === next.tagName) ? morphNode(m, next)
-                                                              : document.importNode(next, true);
-    } else if (!k) {                                           // unkeyed → positional match
+      node = (m.nodeType === 1 && m.tagName === next.tagName) ? morphNode(m, next) : document.importNode(next, true);
+    } else if (!k) {
       nextUnkeyed();
-      if (unkeyed && unkeyed.nodeType === next.nodeType &&
-          (next.nodeType !== 1 || unkeyed.tagName === next.tagName)) {
+      if (unkeyed && unkeyed.nodeType === next.nodeType && (next.nodeType !== 1 || unkeyed.tagName === next.tagName)) {
         const m = unkeyed; unkeyed = unkeyed.nextSibling; node = morphNode(m, next);
       } else node = document.importNode(next, true);
-    } else node = document.importNode(next, true);            // keyed but new
+    } else node = document.importNode(next, true);
     result.push(node);
   }
   const keep = new Set(result);
   for (const c of Array.from(liveParent.childNodes)) if (!keep.has(c)) liveParent.removeChild(c);
-  let ref = liveParent.firstChild;                             // place result nodes in order
+  let ref = liveParent.firstChild;
   for (const node of result) {
     if (node === ref) ref = ref.nextSibling;
     else liveParent.insertBefore(node, ref);
   }
 }
 
-function post(path) { fetch(path, {method:"POST"}).catch(()=>{}); }
-$("btnStart").onclick  = () => post("/api/start");
-$("btnPause").onclick  = () => post("/api/pause");
+/* ── render-on-change: one JSON digest per section slice ─────────────── */
+const memo = Object.create(null);
+function changed(key, slice) {
+  let s;
+  try { s = JSON.stringify(slice); } catch (_) { s = String(Math.random()); }
+  if (memo[key] === s) return false;
+  memo[key] = s;
+  return true;
+}
+
+/* ── controls ────────────────────────────────────────────────────────── */
+let errTimer = null;
+function showCtrlErr(msg) {
+  const el = $("ctrlErr");
+  setText(el, msg);
+  el.hidden = false;
+  clearTimeout(errTimer);
+  errTimer = setTimeout(() => { el.hidden = true; }, 5000);
+}
+function post(path) {
+  fetch(path, {method: "POST"}).then(r => {
+    if (r.ok) return null;
+    return r.json().then(j => j && j.error ? j.error : r.status + " " + r.statusText,
+                         () => r.status + " " + r.statusText);
+  }).then(msg => { if (msg) showCtrlErr(msg); })
+    .catch(() => showCtrlErr("dashboard unreachable"));
+}
+$("btnStart").onclick = () => post("/api/start");
+$("btnPause").onclick = () => post("/api/pause");
 $("btnResume").onclick = () => post("/api/resume");
-$("btnStop").onclick   = () => post("/api/stop");
-
+$("btnStop").onclick = () => post("/api/stop");
 $("btnBell").onclick = () => {
-  if (window.Notification) Notification.requestPermission().then(p => {
-    $("btnBell").classList.toggle("on", p === "granted");
-  });
+  if (!window.Notification) return showCtrlErr("this browser has no notifications");
+  Notification.requestPermission().then(p => $("btnBell").setAttribute("aria-pressed", String(p === "granted")));
 };
-if (window.Notification && Notification.permission === "granted") $("btnBell").classList.add("on");
+if (window.Notification && Notification.permission === "granted") $("btnBell").setAttribute("aria-pressed", "true");
 
-const GLYPH = {pending:"☐", doing:"◐", done:"✓", blocked:"!", skipped:"–"};
-const VERDICT = {running:"● RUNNING", stalled:"▲ STALLED", "rate-limited":"⏳ RATE-LIMITED",
-                 pausing:"⏸ PAUSING…", paused:"⏸ PAUSED", done:"✓ DONE", halted:"✕ HALTED",
-                 stopped:"■ STOPPED", idle:"· IDLE"};
-
-function renderHero(d){
-  const st = d.loop.status;
-  const v = $("verdict"); setText(v, VERDICT[st]||st); v.className = "verdict v-"+st;
-  setText($("loopName"), d.loop.name || "loop");
-  setText($("worktree"), d.loop.worktree || "—");
-  setText($("tickNo"), d.loop.tick ?? "–");
-  setText($("segPos"), d.progress.segments_total
-     ? `${((d.roadmap||[]).findIndex(s=>s.state==="current")+1)||"–"}/${d.progress.segments_total}` : "–");
-  setText($("progTxt"), `${d.progress.done}/${d.progress.total} known`);
-  setText($("segTBD"), d.progress.segments_unplanned ? `· ~${d.progress.segments_unplanned} segs TBD` : "");
-  const c = d.current;
-  setText($("nowLine"), (st==="pausing")
-     ? "⏸ PAUSING… (finishing current tick)"
-     : (st==="running" && c.role) ? `${c.role}·${c.model||"?"} · ${c.tools} tools`
-     : (VERDICT[st]||st));
-  const u = d.usage;
-  setText($("tonight"),
-     `${fmtDur(d.elapsed_s)} · $${(u.total_cost_usd||0).toFixed(2)} · ${fmtTok(u.total_tokens)} tok · ${d.progress.done} tasks`);
-
-  $("btnStart").disabled  = (st === "running" || st === "paused" || st === "pausing");
-  $("btnPause").disabled  = (st !== "running");
-  $("btnResume").disabled = (st !== "paused" && st !== "stopped" && st !== "pausing");
-  $("btnStop").disabled   = (st !== "running" && st !== "paused" && st !== "pausing");
-  setText($("ctrlNote"),
-    (st === "pausing") ? "pause requested — the loop stops after this tick finishes"
-    : (st === "running") ? "pause/stop take effect after the current tick" : "");
+document.addEventListener("click", e => {
+  const b = e.target && e.target.closest ? e.target.closest(".copybtn") : null;
+  if (!b) return;
+  const cmd = b.getAttribute("data-cmd") || "";
+  if (!cmd) return;
+  const done = ok => { const t = b.dataset.label || b.textContent; b.dataset.label = t;
+                       b.textContent = ok ? "Copied" : "Copy failed";
+                       setTimeout(() => { b.textContent = t; }, 1600); };
+  if (navigator.clipboard) navigator.clipboard.writeText(cmd).then(() => done(true), () => done(false));
+  else done(false);
+});
+function resumeLine(cmd) {
+  return cmd ? '<div class="resume"><code>' + esc(cmd) + '</code>' +
+               '<button type="button" class="copybtn" data-cmd="' + esc(cmd) + '">Copy</button></div>' : "";
 }
 
-// roleLabel: present a role token nicely (capitalised); leave opaque values as-is.
-function roleLabel(r){ return r ? r.charAt(0).toUpperCase()+r.slice(1) : "—"; }
-// stripRole: drop a leading role token from a dispatch description for the card subtitle,
-// so "Worker: implement T9 — provider interface" reads as "implement T9 — provider interface".
-function stripRole(s){
-  return (s||"").replace(/^\s*(planner|scout|worker|evaluator|plan|evaluate|re-?evaluate)\b[\s:—–-]*/i,"").trim();
-}
-// currentTaskHint: the in-progress task description, a fallback subtitle when no desc is carried.
-function currentTaskHint(d){
-  const t = (d.plan||[]).find(x => x.status === "doing");
-  return t ? `${t.id?(t.id+" — "):""}${t.desc||""}`.trim() : "";
-}
-// modelTier: map a model id to a tier class so colour is shared across the roster
-// model chips and the feed's agent dividers (Haiku=cyan, Sonnet=indigo, Opus=amber).
-function modelTier(m){
-  m=(m||"").toLowerCase();
-  if (m.includes("haiku"))  return "haiku";
-  if (m.includes("opus"))   return "opus";
-  if (m.includes("sonnet")) return "sonnet";
-  return "";
-}
-// toolIcon: one glyph per tool *family* (≤5), so the feed's leading column stays scannable.
-function toolIcon(n){
-  n=(n||"").toLowerCase();
-  if (n==="bash")                              return "⚙";
-  if (n.includes("edit")||n==="write"||n==="notebookedit") return "✎";
-  if (n==="read"||n==="notebookread")          return "▤";
-  if (n==="grep"||n==="glob"||n.includes("search")) return "⌕";
-  if (n==="agent"||n==="task")                 return "➤";
-  return "·";
+/* ── sections ────────────────────────────────────────────────────────── */
+const GLYPH = {
+  running: "●", "between-ticks": "◔", "rate-limited": "◷", "memory-wait": "◑",
+  stalled: "▲", pausing: "▮", paused: "▮▮", done: "✓", halted: "✕",
+  "needs-human": "⚑", crashed: "✕", stopped: "■", idle: "○"
+};
+const TONE = {
+  running: "ok", done: "ok", "between-ticks": "info", "rate-limited": "warn",
+  "memory-wait": "warn", pausing: "warn", paused: "idle", stalled: "bad",
+  halted: "bad", "needs-human": "bad", crashed: "bad", stopped: "idle", idle: "idle"
+};
+const TONE_COLOR = {ok: "var(--ok)", warn: "var(--warn)", bad: "var(--bad)", info: "var(--info)", idle: "var(--idle)"};
+
+function renderMast(d) {
+  setText($("loopName"), d.loop && d.loop.name ? d.loop.name : "loop");
+  setText($("worktree"), (d.loop && d.loop.worktree) || (d.config && d.config.worktree) || "");
+  const alive = !!(d.health && d.health.harness && d.health.harness.alive);
+  $("btnStart").disabled = alive;
+  $("btnResume").disabled = alive;
+  $("btnPause").disabled = !alive;
+  $("btnStop").disabled = !alive;
 }
 
-// ① Agent roster (R1): the cast for this tick. Orchestrator is the spine; dispatched
-// subagents are indented under a tree rail. The active row pulses and carries the
-// current task on a second line (per UX review — no separate header). Bounded by the
-// number of roles in a tick, so it never overflows.
-function renderRoster(d){
-  const running = d.loop.status === "running";
-  const p = d.pipeline || {};
-  const children = p.children || [];
-  const act = p.active;
-  // Only when the loop is actually running is an agent "active". Pause/stop/done lands on a
-  // tick boundary, so every agent in that tick has FINISHED — none is live, and the one the
-  // data still marks "active" renders as done (green). Resume starts the next tick fresh.
-  const activeRole = running && act ? act.role : null;
+function renderStatus(d) {
+  const s = d.status || {};
+  const state = s.state || "idle";
+  const badge = $("status");
+  badge.className = "s-" + state + (state === "running" ? " live" : "");
+  badge.style.color = TONE_COLOR[TONE[state] || "idle"];
+  setText(badge.querySelector(".glyph"), GLYPH[state] || "·");
+  setText(badge.querySelector(".word"), state.toUpperCase());
+  setText($("tickNo"), (d.loop && d.loop.tick != null) ? d.loop.tick : "–");
+  setText($("since"), s.since ? "since " + clock(s.since) : "");
+  setText($("why"), s.why || "No reason reported.");
 
-  const row = (role, model, state, tools, isOrch) => {
-    const live  = running && role === activeRole;
-    const eff   = (!running && state === "active") ? "done" : state;
-    const cls   = live ? "r-active" : (eff === "done" ? "r-done" : "r-idle");
-    const chip  = model
-      ? `<span class="rchip tier-${modelTier(model)}">${esc(model)}</span>`
-      : `<span class="rchip dash">—</span>`;
-    const elapsed = (live && act.since)
-      ? `<span class="rela">${fmtDur(Math.max(0,Math.floor(Date.now()/1000)-act.since))}</span>` : "";
-    const taskTxt = live ? (stripRole(act && act.desc) || currentTaskHint(d)) : "";
-    const task = taskTxt
-      ? `<div class="rtask" data-key="rtask">${esc(taskTxt)}</div>` : "";
-    return `<div class="rrow ${isOrch?'r-orch':''} ${cls}" data-key="roster-${esc(role)}">
-        <span class="rdot"></span><span class="rname">${esc(roleLabel(role))}</span>
-        <span class="rmeta">${chip}${tools?`<span class="rtools">⚙${tools}</span>`:""}${elapsed}</span>
-      </div>${task}`;
+  const co = $("callout");
+  const CALLOUT_TITLE = {
+    "needs-human": "This loop needs a human", crashed: "The harness is gone",
+    halted: "The loop halted", paused: "The loop is paused", stopped: "The loop stopped"
   };
-
-  const orchModel = (d.config && d.config.orchestrator_model) || null;
-  const orchTools = (act && act.role==="orchestrator") ? act.tools : null;
-  let html = `<div class="roster">`
-    + row("orchestrator", orchModel, p.state, orchTools, true);
-  html += children.length
-    ? `<div class="rsubs">${children.map(c=>row(c.role,c.model,c.state,c.tools,false)).join("")}</div>`
-    : `<div class="rempty">no subagents dispatched yet</div>`;
-  html += `</div>`;
-  morphInner($("roster"), html);
-}
-
-// ② Activity feed (R2): a chronological, internally-scrolling tail of tool actions,
-// grouped under a per-agent divider at each handoff. Auto-scrolls to newest only when
-// the user is already pinned to the bottom — if they've scrolled up to read, leave them.
-function renderActivity(d){
-  const acts = d.activity || [];
-  const roleModel = {};
-  ((d.pipeline||{}).children||[]).forEach(c => { if (c.model) roleModel[c.role]=c.model; });
-  const orchModel = (d.config && d.config.orchestrator_model) || "";
-
-  let html = "", last = null;
-  acts.forEach((a, i) => {
-    const role = a.role || "orchestrator";
-    if (role !== last) {
-      const m = role==="orchestrator" ? orchModel : (roleModel[role]||"");
-      html += `<div class="fdiv tier-${modelTier(m)}" data-key="fdiv-${i}">${esc(roleLabel(role))}</div>`;
-      last = role;
-    }
-    html += `<div class="fline" data-key="fl-${a.t}-${i}">`
-      + `<span class="ficon">${toolIcon(a.name)}</span>`
-      + `<span class="fname">${esc(a.name||"")}</span>`
-      + `<span class="fdesc">${esc(a.desc||"")}</span></div>`;
-  });
-  if (!acts.length) html = `<div class="fempty">no activity yet — actions appear here as agents work</div>`;
-
-  const feed = $("feed");
-  const pinned = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 24;
-  morphInner(feed, html);
-  if (pinned) feed.scrollTop = feed.scrollHeight;   // follow the tail only if already at it
-}
-
-function renderRoadmap(d){
-  const segs = d.roadmap||[];
-  // One-time default: open the current segment on first load only. After that the
-  // user's open/close choices (in ui.open) are authoritative and never re-imposed.
-  if (!ui.seeded) {
-    const ci = segs.findIndex(s=>s.state==="current");
-    if (ci >= 0) ui.open.add(`seg-${ci}`);
-    ui.seeded = true; persistUI();
-  }
-  const taskList = (name, si) => (d.plan||[]).filter(t=>t.segment===name).map((t,j)=>
-    `<div class="task ${t.status}" data-key="task-${esc(t.id||(si+"-"+j))}"><span class="g">${GLYPH[t.status]||"·"}</span>`+
-    `<span class="d"><span class="id">${esc(t.id||"")}</span>${esc(t.desc)}`+
-    (t.mechanical?' <span class="mut">⚙</span>':'')+`</span></div>`).join("");
-  const body = segs.map((s,i)=>{
-    const key = `seg-${i}`;
-    const label = esc(String(s.name||"").split(":")[0]);
-    const cnt = s.planned ? ` ${s.done}/${s.total}` : "";
-    const open = isOpen(key) ? " open" : "";            // open state is client-owned
-    const list = s.planned ? taskList(s.name, i)
-      : `<div class="mut tbd">not yet expanded — a PLAN tick fills this segment in</div>`;
-    return `<details class="seg-d seg-${s.state}" data-key="${key}"${open}>`+
-      `<summary><span class="seg seg-${s.state}" title="${esc(s.goal||s.name)}">${label}${cnt}</span></summary>`+
-      `<div class="seg-body">${list||'<div class="mut tbd">no tasks</div>'}</div></details>`;
-  }).join("");
-  morphInner($("roadmap"), `<h5>Roadmap</h5>`+
-    `<div class="rm-ctrls"><button id="rmExpand">expand all</button><button id="rmCollapse">collapse all</button></div>`+
-    (body||'<span class="mut">no segments yet</span>')+
-    (d.progress.segments_unplanned?`<div class="mut tbd">~${d.progress.segments_unplanned} future segment(s) — a PLAN tick expands the next one</div>`:""));
-  // Set open via the property so the native `toggle` event fires → the delegated
-  // listener records it in ui.open (so expand/collapse-all persist like clicks do).
-  const all = () => $("roadmap").querySelectorAll("details.seg-d");
-  $("rmExpand").onclick   = () => all().forEach(x=>{ if(!x.open) x.open = true; });
-  $("rmCollapse").onclick = () => all().forEach(x=>{ if(x.open)  x.open = false; });
-}
-
-function renderUsage(d){
-  const u = d.usage, bm = u.by_model||{};
-  const totTok = Math.max(1, u.total_tokens||0);
-  const bars = Object.entries(bm).map(([m,v])=>
-    `<div class="t">${esc(m)} · ${fmtTok(v.tokens)} tok · $${(v.cost_usd||0).toFixed(2)}</div>`+
-    `<div class="mini"><i style="width:${Math.round((v.tokens||0)/totTok*100)}%"></i></div>`).join("");
-  const pt = u.per_task||{}, burn = u.burn||{};
-  morphInner($("usage"),
-    `<div class="headline">$${(u.total_cost_usd||0).toFixed(2)} / ${fmtTok(u.total_tokens)} tok (${u.cache_read_pct||0}% cache) / ${fmtDur(d.elapsed_s)} / ${d.progress.done} tasks</div>`+
-    bars+
-    `<div class="t mut">$${(pt.cost_usd||0).toFixed(2)}/task · ${fmtTok(pt.tokens)} tok/task</div>`+
-    `<div class="t mut">burn $${(burn.usd_per_hr||0).toFixed(1)}/hr · ${fmtTok(Math.round(burn.tok_per_min||0))} tok/min</div>`);
-}
-
-function renderNarrative(d){
-  morphInner($("narrative"), (d.narrative||[]).slice().reverse().map(n=>{
-    const key = `narr-${n.tick}`;
-    const split = (n.by_model||[]).map(m=>`${esc(m.model)} $${(m.cost_usd||0).toFixed(2)}`).join(" · ");
-    const head = `#${n.tick} <span class="mut">${esc(n.mode||"")}</span> · ${fmtDur(n.dur)} · $${(n.cost_usd||0).toFixed(2)}`;
-    const open = isOpen(key) ? " open" : "";
-    return split
-      ? `<details class="nrow" data-key="${key}"${open}><summary class="t">${head}</summary><div class="nsplit mut">${split}</div></details>`
-      : `<div class="t" data-key="${key}">${head}</div>`;
-  }).join("")
-    || '<div class="mut">no ticks yet</div>');
-}
-
-function renderQuota(d){
-  const q = d.quota;
-  if (!q) { morphInner($("quota"), '<span class="mut">—</span>'); return; }
-  if (q.resets_at) {
-    const left = fmtDur(q.resets_at - Math.floor(Date.now()/1000));
-    morphInner($("quota"), `<span class="qlim">${esc(q.label||"limit")} rate-limited</span>`+
-      ` <span class="mut">↺ resets in ${left}</span>`);
+  if (CALLOUT_TITLE[state]) {
+    const incs = d.incidents || [];
+    const last = incs.length ? incs[incs.length - 1] : null;
+    const medic = last && last.medic ? last.medic : null;
+    const title = CALLOUT_TITLE[state];
+    co.className = (state === "paused" || state === "stopped") ? "soft" : "";
+    // #why already carries status.why as the headline directly above. Repeating it
+    // verbatim here reads as a stutter, so the callout leads with the incident that
+    // caused the state and falls back to the why text when no incident was recorded.
+    const lede = last && state !== "paused" && state !== "stopped"
+      ? (last.kind || "incident") + " " + last.id + (last.tick != null ? " · tick " + last.tick : "") +
+        (last.detail ? " — " + last.detail : "")
+      : (s.why || "");
+    morphInner(co, "<h2>" + esc(title) + "</h2><p>" + esc(lede) + "</p>" +
+      (medic && medic.summary ? "<p>Medic (" + esc(medic.outcome || "?") + "): " + esc(medic.summary) + "</p>" : "") +
+      resumeLine(s.resume_cmd));
+    co.hidden = false;
   } else {
-    morphInner($("quota"), `<span class="qok">within limits</span>`+
-      (q.label ? ` <span class="mut">· ${esc(q.label)} window</span>` : ""));
+    co.hidden = true;
   }
 }
 
-function renderLog(d){
-  morphInner($("log"), (d.log||[]).map(l => `<div>${esc(l)}</div>`).join(""));
+function vital(key, tone, label, value) {
+  return '<div class="vital v-' + tone + '" data-key="' + key + '">' +
+         '<span class="vk">' + esc(label) + '</span>' +
+         '<span class="vv">' + esc(value) + '</span></div>';
+}
+function renderHealth(d) {
+  const h = d.health || {};
+  const ha = h.harness || {}, tk = h.tick || {}, db = h.dashboard || {};
+  const out = [];
+
+  const hb = ha.heartbeat_age_s;
+  let tone = "ok", val;
+  if (!ha.alive) { tone = "bad"; val = ha.pid ? "pid " + ha.pid + " not running" : "not running"; }
+  else if (hb == null) { tone = "warn"; val = "pid " + (ha.pid != null ? ha.pid : "?") + " · no heartbeat"; }
+  else {
+    tone = hb > HB_BAD_S ? "bad" : hb > HB_WARN_S ? "warn" : "ok";
+    val = "pid " + (ha.pid != null ? ha.pid : "?") + " · hb " + fmtAge(hb);
+  }
+  out.push(vital("harness", tone, "harness", val));
+
+  if (tk.alive) {
+    const el = num(tk.elapsed_s, 0), to = num(tk.timeout_s, 0);
+    const t2 = to && el >= to ? "bad" : to && el > to * 0.8 ? "warn" : "ok";
+    out.push(vital("tick", t2, "tick " + (tk.tick != null ? tk.tick : "?"),
+      fmtDur(el) + (to ? " of " + fmtDur(to) : "") + (tk.pid != null ? " · pid " + tk.pid : "")));
+  } else {
+    out.push(vital("tick", "idle", "tick", "no tick running"));
+  }
+
+  const aa = tk.activity_age_s, stall = num(tk.stall_s, STALL_S_DEFAULT);
+  if (aa == null) out.push(vital("activity", "idle", "activity", "nothing seen yet"));
+  else out.push(vital("activity", aa >= stall ? "bad" : aa > ACTIVITY_WARN_S ? "warn" : "ok",
+                      "activity", fmtAge(aa) + " ago"));
+
+  if (db.pid != null || db.alive != null) {
+    const label = db.sidecar ? "dashboard (sidecar)" : "dashboard";
+    if (db.alive === false) {
+      out.push(vital("dash", "bad", label, (db.pid != null ? "pid " + db.pid + " " : "") + "not running"));
+    } else {
+      out.push(vital("dash", "ok", label,
+                     (db.pid != null ? "pid " + db.pid + " · " : "") + "up " + fmtAge(db.uptime_s)));
+    }
+  }
+  morphInner($("health"), out.join(""));
 }
 
-function renderResume(d){
-  const show=["paused","done","stopped","halted"].includes(d.loop.status);
-  const btn=$("copyResume"); btn.style.display=show?"":"none";
-  btn.onclick=()=>navigator.clipboard?.writeText(
-    `cd ${d.loop.worktree||"."} && LOOP_DIR=.claude/loop/${d.loop.name} bash run.sh`);
+function nodeHtml(key, role, model, state, tools, desc, elapsed) {
+  const chips = [];
+  if (model) chips.push('<span class="chip m-' + modelTier(model) + '">' + esc(modelLabel(model)) + "</span>");
+  if (typeof tools === "number") chips.push('<span class="chip t">' + tools + " tools</span>");
+  if (elapsed != null) chips.push('<span class="chip t">' + esc(fmtDur(elapsed)) + "</span>");
+  return '<div class="node n-' + esc(state) + '" data-key="' + esc(key) + '">' +
+    '<div class="top"><span class="dot"></span><span class="role">' + esc(role) + "</span></div>" +
+    '<div class="sub">' + chips.join("") + "</div>" +
+    (desc ? '<div class="desc" title="' + esc(desc) + '">' + esc(desc) + "</div>" : "") +
+    "</div>";
+}
+function tickTone(t) {
+  if (t.verdict === "halt") return "bad";
+  if (t.cause === "ok") return "ok";
+  if (t.cause === "killed" || t.cause === "timeout" || t.cause === "crashed") return "bad";
+  return "warn";
+}
+function renderTimeline(d) {
+  const now = snapNow(d);
+  const p = d.pipeline || {};
+  const tk = (d.health && d.health.tick) || {};
+  const cfg = d.config || {};
+  const nodes = [];
+  const cur = d.current || {};
+  // A dead harness or a terminal state means no phase is running, whatever the
+  // last pipeline event said. Parked nodes stop claiming to be live.
+  const frozen = !(d.health && d.health.harness && d.health.harness.alive) ||
+                 TERMINAL.has((d.status || {}).state);
+  const park = st => (frozen && st === "active") ? "parked" : (st || "pending");
+  nodes.push(nodeHtml("n-root", p.role || "orchestrator", cfg.orchestrator_model, park(p.state),
+                      undefined, cur.task ? "tick " + (cur.tick != null ? cur.tick : "?") + " · " + cur.task : "", null));
+  setText($("tickNote"), [cur.task, cur.role, typeof cur.tools === "number" ? cur.tools + " tools" : null]
+                          .filter(Boolean).join(" · "));
+  const kids = Array.isArray(p.children) ? p.children : [];
+  const activeRole = p.active && p.active.role;
+  kids.forEach((c, i) => {
+    const isActive = !frozen && (c.state === "active" || (c.role === activeRole && c.state !== "done"));
+    const since = isActive && p.active ? p.active.since : null;
+    nodes.push(nodeHtml("n-" + i + "-" + (c.role || "?"), c.role || "?", c.model, park(c.state),
+                        typeof c.tools === "number" ? c.tools : undefined, c.desc || "",
+                        since ? Math.max(0, now - since) : null));
+  });
+
+  const el = num(tk.elapsed_s, 0), to = num(tk.timeout_s, 0);
+  const pctEl = to ? Math.min(100, Math.round(el * 100 / to)) : 0;
+  const fillTone = to && el >= to ? "bad" : to && el > to * 0.8 ? "warn" : "";
+  const meter = (tk.alive && to)
+    ? '<div class="meter"><div class="track"><div class="fill ' + fillTone + '" style="width:' + pctEl + '%"></div></div>' +
+      '<div class="cap">' + esc(fmtDur(el)) + " of " + esc(fmtDur(to)) + " tick budget · " + esc(fmtDur(Math.max(0, to - el))) + " left</div></div>"
+    : '<div class="meter"><div class="cap off">no tick running</div></div>';
+
+  const ticks = (Array.isArray(d.ticks) ? d.ticks : []).slice(-TICK_CELLS);
+  let strip = "";
+  if (ticks.length) {
+    const live = tk.alive ? [{tick: tk.tick, dur: el, cause: "live", verdict: "live", task: (d.current && d.current.task) || "", live: true}] : [];
+    const cells = ticks.concat(live);
+    const max = Math.max.apply(null, cells.map(t => num(t.dur, 0)).concat([1]));
+    const bars = cells.map(t => {
+      const h = Math.max(4, Math.round(num(t.dur, 0) * 100 / max));
+      const tone = t.live ? "live" : tickTone(t);
+      const tip = "t" + t.tick + (t.task ? " · " + t.task : "") + " · " + fmtDur(t.dur) +
+                  " · " + (t.live ? "in flight" : (t.verdict || "?") + "/" + (t.cause || "?")) +
+                  (t.sha ? " · " + t.sha : "");
+      return '<div class="cell c-' + tone + '" data-key="c' + t.tick + '" title="' + esc(tip) + '">' +
+             '<div class="bar" style="height:' + h + '%"></div></div>';
+    }).join("");
+    const nums = cells.map(t => '<div class="num" data-key="n' + t.tick + '">' + esc(t.tick) + "</div>").join("");
+    strip = '<div class="strip"><div class="bars">' + bars + '</div><div class="nums">' + nums +
+            '</div><div class="cap">recent ticks — bar height is duration, colour is cause</div></div>';
+  }
+  morphInner($("timeline"), '<div class="stepper">' + nodes.join("") + "</div>" + meter + strip);
 }
 
-let lastVerdict=null;
-function notifyStall(d){
-  const st=d.loop.status;
-  if((st==="stalled"||st==="halted") && st!==lastVerdict && window.Notification?.permission==="granted")
-    new Notification("agent-loop "+st, {body:(d.loop.name||"loop")});
-  lastVerdict=st;
+function renderActivity(d) {
+  const now = snapNow(d);
+  const rows = (Array.isArray(d.activity) ? d.activity : []).slice(-ACTIVITY_ROWS).reverse();
+  if (!rows.length) { morphInner($("activity"), '<div class="act"><span class="d dim">no tool activity yet</span></div>'); return; }
+  morphInner($("activity"), rows.map((a, i) =>
+    '<div class="act" data-key="a' + i + "-" + esc(a.t) + '">' +
+    '<span class="r">' + esc(a.role || "") + "</span>" +
+    '<span class="n">' + esc(a.name || "") + "</span>" +
+    '<span class="d" title="' + esc(a.desc || "") + '">' + esc(a.desc || "") + "</span>" +
+    '<span class="t">' + esc(a.t ? fmtAge(now - a.t) : "") + "</span></div>").join(""));
 }
 
-function render(d) {
-  // morphInner patches the DOM in place, so a 1/s refresh preserves selection,
-  // focus, scroll and open <details> — no need to pause rendering during a
-  // selection (that old hack froze updates and is gone).
+function renderRoadmap(d) {
+  const pr = d.progress || {};
+  const segBasis = pr.pct_basis === "segments";
+  // Honest header: with unplanned segments left, "48/48" is planned work only —
+  // never let it read as 100% of the job.
+  const pct = num(pr.pct, 0);
+  const shown = segBasis ? Math.min(99, pct) : pct;
+  const head = segBasis
+    ? "seg " + num(pr.segments_done, 0) + "/" + num(pr.segments_total, 0) +
+      " · " + num(pr.done, 0) + "/" + num(pr.total, 0) + " planned tasks · " + shown + "% (segment-weighted)"
+    : num(pr.done, 0) + "/" + num(pr.total, 0) + " tasks · " + shown + "%";
+  setText($("progNote"), head);
+
+  const segs = Array.isArray(d.roadmap) ? d.roadmap : [];
+  if (!segs.length) { morphInner($("roadmap"), '<div class="empty">no plan parsed yet</div>'); return; }
+  const plan = Array.isArray(d.plan) ? d.plan : [];
+  const MARK = {done: "✓", current: "▶", future: "·"};
+  const GL = {done: "✓", doing: "◐", pending: "☐", blocked: "!", skipped: "–"};
+  const html = segs.map((s, i) => {
+    const key = "seg" + i;
+    const total = num(s.total, 0), done = num(s.done, 0);
+    const w = total ? Math.round(done * 100 / total) : 0;
+    const count = s.planned ? done + "/" + total : "not planned yet";
+    const tasks = plan.filter(t => t.segment === s.name).slice(0, ROADMAP_TASKS);
+    const body = tasks.length
+      ? '<div class="tasks">' + tasks.map(t =>
+          '<div class="task k-' + esc(t.status) + '" data-key="' + esc(t.id) + '">' +
+          '<span class="g">' + esc(GL[t.status] || "·") + "</span>" +
+          '<span class="id">' + esc(t.id) + "</span>" +
+          '<span class="tx" title="' + esc(t.desc || "") + '">' + esc(t.desc || "") + "</span></div>").join("") + "</div>"
+      : '<div class="tasks"><span class="empty">' + (s.planned ? "no task rows" : "this segment is not broken into tasks yet") + "</span></div>";
+    return '<details class="seg s-' + esc(s.state) + '" data-key="' + key + '"' + openAttr(key) + ">" +
+      "<summary>" +
+      '<span class="mark">' + esc(MARK[s.state] || "·") + "</span>" +
+      '<span class="nm">' + esc(s.name) + (s.goal ? '<span class="goal">' + esc(s.goal) + "</span>" : "") + "</span>" +
+      '<span class="cnt">' + esc(count) + "</span>" +
+      (s.planned ? '<span class="segbar"><i style="width:' + w + '%"></i></span>' : "") +
+      "</summary>" + body + "</details>";
+  }).join("");
+  morphInner($("roadmap"), html);
+}
+
+function renderIncidents(d) {
+  const now = snapNow(d);
+  const list = (Array.isArray(d.incidents) ? d.incidents : []).slice().reverse();
+  setText($("incNote"), list.length ? list.length + (list.length === 1 ? " raised this run" : " raised this run") : "");
+  if (!list.length) { morphInner($("incidents"), '<div class="empty">no incidents</div>'); return; }
+  morphInner($("incidents"), list.map(x =>
+    '<div class="inc sev-' + esc(x.severity || "warn") + '" data-key="' + esc(x.id) + '">' +
+    '<span class="edge"></span><div>' +
+    '<div class="row1"><span class="kind">' + esc(x.kind || "incident") + "</span>" +
+    '<span class="when">' + esc(x.id) + (x.tick != null ? " · tick " + x.tick : "") +
+    (x.t ? " · " + fmtAge(now - x.t) + " ago" : "") + "</span>" +
+    (x.medic && x.medic.outcome ? '<span class="badge o-' + esc(x.medic.outcome) + '">medic: ' + esc(x.medic.outcome) + "</span>" : "") +
+    "</div>" +
+    '<div class="detail">' + esc(x.detail || "") + "</div>" +
+    (x.medic && x.medic.summary ? '<div class="medic">' + esc(x.medic.summary) + "</div>" : "") +
+    "</div></div>").join(""));
+}
+
+function renderUsage(d) {
+  const u = d.usage || {};
+  const by = u.by_model || {};
+  const keys = Object.keys(by).sort((a, b) => num(by[b].tokens, 0) - num(by[a].tokens, 0));
+  const max = Math.max.apply(null, keys.map(k => num(by[k].tokens, 0)).concat([1]));
+  const bars = keys.length ? keys.map(k => {
+    const m = by[k];
+    return '<div class="ubar m-' + modelTier(k) + '" data-key="u' + esc(k) + '">' +
+      '<span class="ml" title="' + esc(k) + '">' + esc(modelLabel(k)) + "</span>" +
+      '<span class="tr"><i style="width:' + Math.round(num(m.tokens, 0) * 100 / max) + '%"></i></span>' +
+      '<span class="vl">' + esc(fmtTok(m.tokens)) + " · " + esc(fmtUsd(m.cost_usd)) + "</span></div>";
+  }).join("") : '<div class="empty">no usage recorded yet</div>';
+
+  const pt = u.per_task || {}, burn = u.burn || {};
+  const figs =
+    '<div class="figs">' +
+    fig("total spend", fmtUsd(u.total_cost_usd), fmtTok(u.total_tokens) + " tokens") +
+    fig("per task", fmtUsd(pt.cost_usd), fmtTok(pt.tokens) + " tokens") +
+    fig("burn", fmtUsd(burn.usd_per_hr) + "/h", fmtTok(burn.tok_per_min) + " tok/min") +
+    fig("cache reads", num(u.cache_read_pct, 0) + "%", fmtTok(u.cache_read_tokens) + " tokens") +
+    "</div>";
+  morphInner($("usage"), '<div class="ugrid"><div>' + bars + "</div><div>" + figs + "</div></div>");
+
+  const q = d.quota;
+  setText($("quotaNote"), !q ? "" :
+    q.resets_at ? q.label + " window · resets " + clock(q.resets_at)
+                : q.label + " window · within limits");
+}
+function fig(k, v, s) {
+  return '<div class="fig" data-key="f' + k + '"><div class="k">' + esc(k) + '</div><div class="v">' +
+         esc(v) + '</div><div class="s">' + esc(s) + "</div></div>";
+}
+
+function renderLog(d) {
+  const lines = Array.isArray(d.log) ? d.log : [];
+  setText($("log"), lines.length ? lines.join("\n") : "run.log is empty");
+}
+
+function renderFooter(d) {
+  const db = (d.health && d.health.dashboard) || {};
+  setText($("footVersion"), "agent-loop " + ((d.loop && d.loop.plugin_version) || "?")
+    + (d.loop && d.loop.schema != null ? " · schema " + d.loop.schema : ""));
+  setText($("footDash"), db.sidecar ? "dashboard: harness sidecar" : "dashboard: standalone");
+  setText($("footElapsed"), "run elapsed " + fmtDur(d.elapsed_s));
+}
+
+let lastNotified = null;
+function notify(d) {
+  const st = (d.status || {}).state;
+  if (st === lastNotified) return;
+  if ((st === "stalled" || st === "needs-human") &&
+      window.Notification && Notification.permission === "granted") {
+    new Notification("agent-loop: " + st, {body: (d.status && d.status.why) || (d.loop && d.loop.name) || ""});
+  }
+  lastNotified = st;
+}
+
+/* ── paint ───────────────────────────────────────────────────────────── */
+function paint(d) {
   try {
-    renderHero(d); renderRoster(d); renderActivity(d); renderRoadmap(d);
-    renderUsage(d); renderNarrative(d); renderQuota(d); renderLog(d);
-    renderResume(d); notifyStall(d);
-  } catch (e) { console.error("render error", e); }
+    const h = d.health || {};
+    if (changed("mast", [d.loop, h.harness && h.harness.alive])) renderMast(d);
+    if (changed("status", [d.status, d.loop && d.loop.tick, d.incidents && d.incidents.length])) renderStatus(d);
+    if (changed("health", h)) renderHealth(d);
+    if (changed("timeline", [d.pipeline, d.ticks, h.tick, d.current, d.config && d.config.orchestrator_model, d.elapsed_s])) renderTimeline(d);
+    if (changed("activity", d.activity)) renderActivity(d);
+    if (changed("roadmap", [d.roadmap, d.progress, d.plan])) renderRoadmap(d);
+    if (changed("incidents", [d.incidents, d.elapsed_s])) renderIncidents(d);
+    if (changed("usage", [d.usage, d.quota])) renderUsage(d);
+    if (changed("log", d.log)) renderLog(d);
+    if (changed("footer", [d.loop, h.dashboard, d.elapsed_s])) renderFooter(d);
+    notify(d);
+  } catch (e) {
+    console.error("render error", e);
+  }
 }
 
-function connect() {
-  const es = new EventSource("/events");
-  es.onmessage = e => { try { render(JSON.parse(e.data)); } catch (_) {} };
-  es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+let latest = null;
+function render(d) {
+  latest = d;
+  if (document.hidden) return;   // hidden tab: keep the payload, do no DOM work
+  paint(d);
 }
-// initial paint via /api/state, then live updates via SSE
-fetch("/api/state").then(r => r.json()).then(render).catch(()=>{});
-connect();
+document.addEventListener("visibilitychange", () => { if (!document.hidden && latest) paint(latest); });
+
+/* ── transport ───────────────────────────────────────────────────────── */
+function setBanner(on) {
+  const b = $("banner");
+  if (!on) { b.hidden = true; return; }
+  const st = latest && latest.status ? latest.status.state : null;
+  const terminal = st && TERMINAL.has(st);
+  b.classList.toggle("terminal", !!terminal);
+  setText($("bannerText"), terminal
+    ? "Harness exited: " + st + ". Showing the last snapshot. Restart it with:"
+    : "Dashboard disconnected — retrying.");
+  const cmd = terminal && latest.status ? (latest.status.resume_cmd || "") : "";
+  const code = $("bannerCmd"), copy = $("bannerCopy");
+  setText(code, cmd);
+  code.hidden = !cmd;
+  copy.hidden = !cmd;
+  copy.setAttribute("data-cmd", cmd);
+  if (terminal && !cmd) setText($("bannerText"), "Harness exited: " + st + ". Showing the last snapshot.");
+  b.hidden = false;
+}
+
+let es = null;
+function connect() {
+  es = new EventSource("/events");
+  es.onopen = () => setBanner(false);
+  es.onmessage = e => { setBanner(false); try { render(JSON.parse(e.data)); } catch (_) {} };
+  es.onerror = () => { es.close(); setBanner(true); setTimeout(connect, 2000); };
+}
+
+if (location.hash === "#mock") {
+  render(MOCK);
+} else {
+  fetch("/api/state").then(r => r.json()).then(render).catch(() => setBanner(true));
+  connect();
+}
 </script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Smoke test: server serves /, /api/state is valid JSON, control toggles PAUSE.
+# Smoke test: server serves /, /api/state matches the snapshot contract,
+# control toggles PAUSE, and start refuses to race a live harness.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -13,7 +14,7 @@ fi
 
 tmp="$(mktemp -d)"
 mkdir -p "$tmp/runtime"
-printf '# Loop Config\nWorktree: %s\n' "$tmp" > "$tmp/LOOP_CONFIG.md"
+printf '# Loop Config\nWorktree: %s\nDashboard: auto\nMedic: notify\n' "$tmp" > "$tmp/LOOP_CONFIG.md"
 printf '# Loop Plan\n## Segment A: x\n- [ ] T1: a\n' > "$tmp/LOOP_PLAN.md"
 
 # --no-spawn: observe only, never launch a real claude loop in the test.
@@ -21,7 +22,13 @@ printf '# Loop Plan\n## Segment A: x\n- [ ] T1: a\n' > "$tmp/LOOP_PLAN.md"
 # even though stdout is redirected to a file (fully buffered by default).
 LOOP_DIR="$tmp" python3 -u "$ROOT/web/serve.py" --loop-dir "$tmp" --no-spawn >"$tmp/out" 2>"$tmp/err" &
 srv=$!
-trap 'kill "$srv" 2>/dev/null' EXIT
+fake=""
+cleanup() {
+  kill "$srv" 2>/dev/null
+  [[ -n "$fake" ]] && kill "$fake" 2>/dev/null
+  return 0
+}
+trap cleanup EXIT
 
 # Wait for the startup JSON (which carries the chosen port) to appear.
 url=""
@@ -38,7 +45,7 @@ assert_true() {
   if [[ "$1" -eq 0 ]]; then echo "ok: $2"; else echo "FAIL: $2"; fail=1; fi
 }
 
-# 1) / serves HTML (dashboard.html present after Task 9; tolerate empty pre-Task-9 by checking 200)
+# 1) / serves HTML
 code="$(curl -s -o /dev/null -w '%{http_code}' "$url/")"
 [[ "$code" == "200" ]] || { echo "FAIL: GET / => $code"; fail=1; }
 
@@ -53,25 +60,84 @@ curl -s -X POST "$url/api/pause" >/dev/null
 curl -s -X POST "$url/api/resume" >/dev/null
 [[ ! -f "$tmp/runtime/PAUSE" ]] || { echo "FAIL: resume did not remove PAUSE"; fail=1; }
 
-# 4) Task 8 — dashboard markup carries the contract element ids
+# 4) dashboard markup carries the contract element ids
 curl -s "$url/" -o "$tmp/page.html"
-grep -q 'id="verdict"'  "$tmp/page.html"; assert_true $? "hero verdict element present"
-grep -q 'id="nowLine"'  "$tmp/page.html"; assert_true $? "NOW line element present"
-grep -q 'id="tickNo"'   "$tmp/page.html"; assert_true $? "continuous tick element present"
-grep -q 'id="roster"'   "$tmp/page.html"; assert_true $? "roster (pipeline) strip present"
-grep -q 'id="roadmap"'  "$tmp/page.html"; assert_true $? "roadmap track present"
+for id in status why health timeline roadmap incidents usage log \
+          btnStart btnPause btnResume btnStop tickNo; do
+  grep -q "id=\"$id\"" "$tmp/page.html"; assert_true $? "element id=\"$id\" present"
+done
 
-# 5) Task 8 — snapshot exposes the new contract shape
+# 5) the snapshot contract: honest status, health, segments, incidents, no narrative
 curl -s "$url/api/state" -o "$tmp/state.json"
-if command -v jq >/dev/null 2>&1; then
-  jq -e 'has("roadmap") and has("pipeline")' "$tmp/state.json" >/dev/null; assert_true $? "snapshot has roadmap+pipeline"
-  jq -e 'has("loop") and (.loop|has("tick"))' "$tmp/state.json" >/dev/null; assert_true $? "snapshot loop has tick"
-else
-  python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); sys.exit(0 if ("roadmap" in d and "pipeline" in d) else 1)' "$tmp/state.json"
-  assert_true $? "snapshot has roadmap+pipeline"
-  python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); sys.exit(0 if ("loop" in d and "tick" in d["loop"]) else 1)' "$tmp/state.json"
-  assert_true $? "snapshot loop has tick"
-fi
+python3 - "$tmp/state.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+checks = [
+    ("now is an int epoch", isinstance(d.get("now"), int) and d["now"] > 1_600_000_000),
+    ("status.state is a string", isinstance(d.get("status", {}).get("state"), str)),
+    ("status.resume_cmd runnable", str(d.get("status", {}).get("resume_cmd", "")).startswith("cd ")
+     and "run.sh" in d["status"]["resume_cmd"]),
+    ("health.tick.stall_s is an int", isinstance(d.get("health", {}).get("tick", {}).get("stall_s"), int)),
+    ("health.dashboard.alive is a bool", isinstance(d.get("health", {}).get("dashboard", {}).get("alive"), bool)),
+    ("status has why+since+phase", all(k in d.get("status", {}) for k in ("why", "since", "phase"))),
+    ("loop.status mirrors status.state", d.get("loop", {}).get("status") == d["status"]["state"]),
+    ("health.harness present", "harness" in d.get("health", {})),
+    ("health.tick present", "tick" in d.get("health", {})),
+    ("health.dashboard present", "dashboard" in d.get("health", {})),
+    ("progress.segments_done present", "segments_done" in d.get("progress", {})),
+    ("progress.pct_basis present", "pct_basis" in d.get("progress", {})),
+    ("incidents is a list", isinstance(d.get("incidents"), list)),
+    ("ticks is a list", isinstance(d.get("ticks"), list)),
+    ("config.dashboard parsed", d.get("config", {}).get("dashboard") == "auto"),
+    ("config.medic parsed", d.get("config", {}).get("medic") == "notify"),
+    ("narrative removed", "narrative" not in d),
+]
+bad = [name for name, ok in checks if not ok]
+for name, ok in checks:
+    print(("ok: " if ok else "FAIL: ") + name)
+sys.exit(1 if bad else 0)
+PY
+assert_true $? "snapshot matches the contract"
+# loop-dir schema surfaces in the snapshot (null on a dir that never ticked; never a crash)
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "schema" in d["loop"] and "migration" in d["loop"], d["loop"]' "$tmp/state.json"
+assert_true $? "/api/state carries loop.schema and loop.migration"
+
+# 6) an idle loop dir with no events reports idle, never done/halted
+python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); sys.exit(0 if d["status"]["state"]=="idle" else 1)' "$tmp/state.json"
+assert_true $? "no events -> idle (not done/halted)"
+
+# 7) start refuses to race a live harness (HTTP 409).
+# `exec -a run.sh` makes the stub's argv[0] read as run.sh, which is exactly
+# what liveness checks (`ps -o command=` must contain run.sh) — a plain $$
+# would be rejected as PID reuse and the guard would not trip.
+bash -c 'exec -a run.sh sleep 30' &
+fake=$!
+sleep 0.3
+printf '{"pid":%s,"start_epoch":1,"host":"t","loop_dir":"%s","plugin_version":"2.0.0"}\n' \
+  "$fake" "$tmp" > "$tmp/runtime/harness.json"
+code="$(curl -s -o "$tmp/start.json" -w '%{http_code}' -X POST "$url/api/start")"
+[[ "$code" == "409" ]]; assert_true $? "POST /api/start over a live harness => 409 (got $code)"
+grep -q "is alive" "$tmp/start.json"; assert_true $? "409 body names the live harness pid"
+kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null
+fake=""
+rm -f "$tmp/runtime/harness.json"
+
+# 8) the live server reports itself alive, on the STALL_S it was started with
+python3 - "$tmp/state.json" <<'PY'
+import json, os, sys
+d = json.load(open(sys.argv[1]))
+dash = d["health"]["dashboard"]
+ok = dash["alive"] is True and dash["pid"] > 0 and d["health"]["tick"]["stall_s"] == 300
+print(("ok: " if ok else "FAIL: ") + "dashboard reports itself alive; stall_s=%s" %
+      d["health"]["tick"]["stall_s"])
+sys.exit(0 if ok else 1)
+PY
+assert_true $? "health.dashboard.alive true for the serving process"
+
+# 9) runtime/dashboard.json records the sidecar flag (false without --sidecar)
+python3 -c 'import sys,json; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("sidecar") is False and d.get("pid") else 1)' \
+  "$tmp/runtime/dashboard.json"
+assert_true $? "dashboard.json records pid + sidecar:false"
 
 # --- Plan 1: real billed surface from a synthetic 3-model ledger ---
 if command -v jq >/dev/null 2>&1; then

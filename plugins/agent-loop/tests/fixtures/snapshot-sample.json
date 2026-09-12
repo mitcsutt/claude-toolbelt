@@ -1,0 +1,486 @@
+{
+  "loop": {
+    "name": "2026-09-11-internal-app",
+    "worktree": "/Users/dev/work/internal-app.loop",
+    "status": "running",
+    "tick": 12,
+    "plugin_version": "2.0.0",
+    "schema": 2,
+    "migration": null
+  },
+  "now": 1757600004,
+  "status": {
+    "state": "running",
+    "since": 1757599900,
+    "why": "Worker (sonnet) on T14 \u00b7 last activity 4s ago",
+    "phase": "Worker",
+    "resume_cmd": "cd /Users/dev/work/internal-app.loop && LOOP_DIR=.claude/loop/2026-09-11-internal-app bash run.sh"
+  },
+  "health": {
+    "harness": {
+      "alive": true,
+      "pid": 4812,
+      "heartbeat_age_s": 3,
+      "started_at": 1757590000
+    },
+    "tick": {
+      "alive": true,
+      "pid": 4999,
+      "tick": 12,
+      "elapsed_s": 190,
+      "timeout_s": 1800,
+      "activity_age_s": 4,
+      "stall_s": 300
+    },
+    "dashboard": {
+      "alive": true,
+      "pid": 5001,
+      "uptime_s": 9000,
+      "sidecar": true
+    }
+  },
+  "current": {
+    "tick": 12,
+    "role": "Worker",
+    "model": "claude-sonnet-4-6",
+    "tools": 17,
+    "task": "T14"
+  },
+  "pipeline": {
+    "role": "orchestrator",
+    "state": "active",
+    "active": {
+      "role": "Worker",
+      "model": "claude-sonnet-4-6",
+      "tools": 17,
+      "desc": "Worker: migrate the notifications settings page",
+      "since": 1757599900
+    },
+    "children": [
+      {
+        "role": "Scout",
+        "model": "claude-haiku-4-5",
+        "state": "done",
+        "tools": 9,
+        "desc": "Scout: recon T14"
+      },
+      {
+        "role": "Worker",
+        "model": "claude-sonnet-4-6",
+        "state": "active",
+        "tools": 17,
+        "desc": "Worker: migrate the notifications settings page"
+      },
+      {
+        "role": "Evaluator",
+        "model": "claude-sonnet-4-6",
+        "state": "pending",
+        "tools": 0,
+        "desc": "Evaluator: verify T14 against the sprint contract"
+      }
+    ]
+  },
+  "activity": [
+    {
+      "role": "Scout",
+      "name": "Grep",
+      "desc": "useSettingsQuery",
+      "t": 1757599824
+    },
+    {
+      "role": "Scout",
+      "name": "Read",
+      "desc": "src/settings/notifications.tsx",
+      "t": 1757599851
+    },
+    {
+      "role": "Worker",
+      "name": "Read",
+      "desc": "src/api/client.ts",
+      "t": 1757599912
+    },
+    {
+      "role": "Worker",
+      "name": "Edit",
+      "desc": "src/settings/notifications.tsx",
+      "t": 1757599948
+    },
+    {
+      "role": "Worker",
+      "name": "Edit",
+      "desc": "src/settings/notifications.test.tsx",
+      "t": 1757599971
+    },
+    {
+      "role": "Worker",
+      "name": "Bash",
+      "desc": "pnpm vitest run src/settings",
+      "t": 1757599988
+    },
+    {
+      "role": "Worker",
+      "name": "Read",
+      "desc": "src/settings/index.ts",
+      "t": 1757599996
+    },
+    {
+      "role": "Worker",
+      "name": "Edit",
+      "desc": "src/settings/index.ts",
+      "t": 1757600000
+    }
+  ],
+  "progress": {
+    "done": 13,
+    "total": 19,
+    "remaining": 6,
+    "pct": 33,
+    "pct_basis": "segments",
+    "segments_total": 3,
+    "segments_done": 1,
+    "segments_unplanned": 1
+  },
+  "roadmap": [
+    {
+      "name": "Segment 1: Extract the API client",
+      "done": 10,
+      "total": 10,
+      "goal": "One typed client; no fetch calls left in components",
+      "state": "done",
+      "planned": true
+    },
+    {
+      "name": "Segment 2: Migrate the settings pages",
+      "done": 3,
+      "total": 9,
+      "goal": "Settings runs entirely on the new client",
+      "state": "current",
+      "planned": true
+    },
+    {
+      "name": "Segment 3: Retire the legacy bundle",
+      "done": 0,
+      "total": 0,
+      "goal": null,
+      "state": "future",
+      "planned": false
+    }
+  ],
+  "plan": [
+    {
+      "id": "T1",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Scaffold the typed client module",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T2",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Generate request/response types from the OpenAPI doc",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T3",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Move auth headers into the client",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T4",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Add retry and timeout policy",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T5",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the accounts endpoints",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T6",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the billing endpoints",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T7",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the notification endpoints",
+      "model": null,
+      "mechanical": true
+    },
+    {
+      "id": "T8",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Delete the ad-hoc fetch helpers",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T9",
+      "status": "skipped",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Port the legacy export endpoint (removed upstream)",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T10",
+      "status": "done",
+      "segment": "Segment 1: Extract the API client",
+      "desc": "Contract tests for the client",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T11",
+      "status": "done",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the profile settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T12",
+      "status": "done",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the billing settings page",
+      "model": "opus",
+      "mechanical": false
+    },
+    {
+      "id": "T13",
+      "status": "done",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the team settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T14",
+      "status": "doing",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the notifications settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T15",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the security settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T16",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the integrations settings page",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T17",
+      "status": "blocked",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Migrate the SSO settings page (waiting on the identity service)",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T18",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Delete the settings data layer",
+      "model": null,
+      "mechanical": false
+    },
+    {
+      "id": "T19",
+      "status": "pending",
+      "segment": "Segment 2: Migrate the settings pages",
+      "desc": "Settings smoke tests on the new client",
+      "model": null,
+      "mechanical": false
+    }
+  ],
+  "ticks": [
+    {
+      "tick": 8,
+      "mode": "execute",
+      "verdict": "continue",
+      "cause": "ok",
+      "dur": 542,
+      "task": "T11",
+      "sha": "a9f1c02",
+      "cost_usd": 3.14,
+      "tools": 38,
+      "roles": [
+        "Scout",
+        "Worker",
+        "Evaluator"
+      ]
+    },
+    {
+      "tick": 9,
+      "mode": "execute",
+      "verdict": "retry",
+      "cause": "timeout",
+      "dur": 1800,
+      "task": "T12",
+      "sha": null,
+      "cost_usd": 8.02,
+      "tools": 66,
+      "roles": [
+        "Scout",
+        "Worker"
+      ]
+    },
+    {
+      "tick": 10,
+      "mode": "execute",
+      "verdict": "continue",
+      "cause": "ok",
+      "dur": 610,
+      "task": "T12",
+      "sha": "4d81e07",
+      "cost_usd": 5.77,
+      "tools": 41,
+      "roles": [
+        "Scout",
+        "Worker",
+        "Evaluator"
+      ]
+    },
+    {
+      "tick": 11,
+      "mode": "execute",
+      "verdict": "retry",
+      "cause": "killed",
+      "dur": 288,
+      "task": "T13",
+      "sha": null,
+      "cost_usd": 1.06,
+      "tools": 12,
+      "roles": [
+        "Scout",
+        "Worker"
+      ]
+    }
+  ],
+  "incidents": [
+    {
+      "id": "i-001",
+      "t": 1757596800,
+      "kind": "tick-timeout",
+      "severity": "warn",
+      "detail": "rc=124 after 1800s on T12",
+      "tick": 9,
+      "medic": null
+    },
+    {
+      "id": "i-002",
+      "t": 1757598600,
+      "kind": "tick-killed",
+      "severity": "error",
+      "detail": "rc=137 (SIGKILL \u2014 likely OS memory pressure)",
+      "tick": 11,
+      "medic": {
+        "outcome": "resumed",
+        "summary": "1.1 GB free with swap at 94%. Cleared the orphaned sprint-T13.json, flipped T13 back to [ ], tree clean. Retrying with the memory guard armed."
+      }
+    }
+  ],
+  "usage": {
+    "by_model": {
+      "claude-haiku-4-5": {
+        "cost_usd": 0.86,
+        "input_tokens": 41200,
+        "output_tokens": 9800,
+        "cache_read_tokens": 612000,
+        "cache_creation_tokens": 38000,
+        "tokens": 701000
+      },
+      "claude-sonnet-4-6": {
+        "cost_usd": 14.62,
+        "input_tokens": 128400,
+        "output_tokens": 61200,
+        "cache_read_tokens": 4820000,
+        "cache_creation_tokens": 214000,
+        "tokens": 5223600
+      },
+      "claude-opus-4-8": {
+        "cost_usd": 9.41,
+        "input_tokens": 22800,
+        "output_tokens": 14600,
+        "cache_read_tokens": 388000,
+        "cache_creation_tokens": 51000,
+        "tokens": 476400
+      }
+    },
+    "total_cost_usd": 24.89,
+    "total_tokens": 6401000,
+    "cache_read_tokens": 5820000,
+    "cache_read_pct": 90,
+    "per_task": {
+      "cost_usd": 1.9146,
+      "tokens": 492384
+    },
+    "burn": {
+      "usd_per_hr": 26.12,
+      "tok_per_min": 111976
+    }
+  },
+  "quota": {
+    "label": "5h",
+    "type": "five_hour",
+    "resets_at": 1757612400
+  },
+  "config": {
+    "worktree": "/Users/dev/work/internal-app.loop",
+    "orchestrator_model": "sonnet",
+    "tiers": {
+      "Planner": "most-capable",
+      "Scout": "fastest",
+      "Worker": "balanced",
+      "Evaluator": "balanced"
+    },
+    "limits": {
+      "tick_timeout": "1800",
+      "pause_between": "20"
+    },
+    "dashboard": "auto",
+    "medic": "auto"
+  },
+  "elapsed_s": 10004,
+  "log": [
+    "[09:29:41] \u2713 t10 T12 \u00b7 10m10s \u00b7 4d81e07",
+    "[09:29:41] \u2500\u2500 loop \u00b7 seg 2/3 \u00b7 12/19 planned tasks \u00b7 33% \u00b7 \u23f1 2h46m \u2500\u2500",
+    "[09:30:01] \u25b8 t11 T13 execute",
+    "[09:34:49] \u2717 t11 T13 \u00b7 4m48s \u00b7 killed (SIGKILL \u2014 likely OS memory pressure)",
+    "[09:34:49] incident i-002 tick-killed \u00b7 medic dispatched",
+    "[09:36:02] medic i-002 \u2192 resumed",
+    "[09:36:22] \u25b8 t12 T14 execute",
+    "[09:36:40] Worker: the sprint contract says to report <<LOOP_HALT:...>> if the",
+    "[09:36:40]   allow_list cannot cover the change. It can, so proceeding.",
+    "[09:37:20] Scout \u2192 Worker handoff \u00b7 9 tools",
+    "[09:38:55] Edit src/settings/notifications.tsx",
+    "[09:39:44] Bash pnpm vitest run src/settings"
+  ]
+}
