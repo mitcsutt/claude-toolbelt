@@ -1,7 +1,7 @@
 # agent-loop v3 — phase runner: the harness owns the state machine, models own judgement
 
 **Date:** 2026-09-13
-**Status:** proposed, awaiting Mitch's review. Every decision in §11 was taken without him and is overridable.
+**Status:** proposed, awaiting Mitch's review. Decisions in §11 items 1–11 were taken without him; items 12–18 adopt decisions he made in the parallel session `claude-toolbelt-bd` (handoff: `docs/superpowers/plans/2026-09-13-agent-loop-v3-alt-handoff.md`). All overridable.
 **Scope:** `plugins/agent-loop` only. Host memory hygiene stays documented, not engineered.
 **Evidence base:** the 2026-09-11 `internal-app` run, archived at `~/Downloads/EXTRACT` and indexed under `EXTRACT/07-index/` (query with `07-index/q`). The analysis reports are in `EXTRACT/08-analysis/`; `00-SYNTHESIS.md` is the summary. Pointers below use `w<N>` for those reports.
 
@@ -101,13 +101,15 @@ Each phase has a wall-clock timeout, a `--max-turns`, and a `--max-budget-usd`, 
 | phase | model tier (default) | timeout | notes |
 |---|---|---|---|
 | scout | standard | 8 min | writes the contract; `w5` §2, `w4` tick 85 show haiku here is false economy |
-| worker | standard; attempt 2 = next tier up (enforced) | 25 min + 5 min wrap-up | resumable (§6) |
+| worker | standard; the tier of a re-attempt is the Judge's call from the checkpoint (§7), never a fixed ladder; at most 3 attempts per task (harness-enforced) | 25 min + 5 min wrap-up | resumable (§6); the Judge may extend the cap once, up to 2× |
 | gate / render / fidelity | — | per-command 10 min | harness runs these, not a model |
 | evaluator | standard; `\| complex` → most-capable | 8 min | must-read/must-view inputs pre-loaded (§5) |
 | judge | most-capable | 6 min | only on failure paths (§7) |
 | planner / reviewer | most-capable | 15 min | unchanged roles |
 | learner | cheap | 3 min | writes learnings with evidence (§9) |
 | commit | — | — | harness, seconds |
+
+**Where the defaults come from.** They are derived from the 2026-09-11 run's `role_start`/`role_end` durations (`EXTRACT/08-analysis/cost-effort.md` §3): Scout median 167 s / p90 327 s → 480; Worker median 406 s / p90 1065 s → 1500 (the p90 plus the wrap-up covers the max observed diff sizes; the two 2600–4170 s outliers were pre-2.0 ticks with no cap); Evaluator p90 278 s → 480; Judge and Planner from the Planner's 262–276 s. They are provisional. `runner/calibrate.py` prints suggested `Limits:` values from any loop dir's `events.jsonl` (p90 of each role's `role_start`→`role_end` span × 1.5, rounded to 60 s); the README documents running it after a segment and pasting the line into `LOOP_CONFIG.md`. Phase spans are exact in v3 (one subprocess per phase), so the calibration input is trustworthy, unlike the description-regex role sniffing in 2.x (`lib/loop.sh:106-112`).
 
 No phase can exceed its own budget; the tick has no single wall. A tick that has run every phase once takes about what it takes today minus the spine's 2.4 h / 84 ticks of lead-in.
 
@@ -128,7 +130,7 @@ The stream parser stamps `runtime/last-activity` atomically (write temp, `os.rep
 Existing keys are read as today. New or changed:
 
 ```
-Limits: tick_timeout=1800 scout=480 worker=1500 wrapup=300 evaluator=480 judge=360 planner=900 gate_cmd=600 worker_resume_max=1 worker_budget_usd=6
+Limits: tick_timeout=1800 scout_timeout=480 worker_timeout=1500 wrapup_timeout=300 eval_timeout=480 judge_timeout=360 planner_timeout=900 gate_cmd_timeout=600 worker_resume_max=1 worker_budget_usd=6 max_attempts=3
 Tiers: cheap=haiku standard=sonnet most-capable=opus
 Decision policy: autonomous | conservative
 Render: <command recipe, see §5.3>   # optional; absent = no render gate
@@ -182,8 +184,8 @@ For each `fidelity_source` pair the harness computes a normalized line-similarit
 ## 6. Worker resume and split (G2)
 
 1. Worker runs with its timeout. At timeout the harness sends SIGTERM, then runs a **wrap-up** continuation: `claude -p --resume <session> --max-turns 8` with "You are out of time. Update `worker-result.json` with exact state; do not start new work." The checkpoint finally has a consumer (`w3` smell 2).
-2. If the task is not Worker-complete, the next attempt is a **resume**: `claude -p --resume <session>` with "continue from your checkpoint; N minutes left", up to `worker_resume_max` times.
-3. If still not complete, the Judge decides between **escalate** (next tier, fresh session with the checkpoint injected) and **split**: the Judge's decision carries the ordered sub-task rows (`changes.sub_rows`, validated against the plan grammar); the harness inserts them, marks the parent `[-] split→T60a,T60b`, commits, and the loop continues. No separate Planner phase is needed: the Judge already runs at the most-capable tier with the full failure dossier. This is the "automatically split tasks" capability, applied only after resume has failed, because the evidence says most overruns are one extra iteration, not oversized work (`w4`).
+2. If the task is not Worker-complete, the Judge reads the checkpoint (§7) and picks the next attempt: steady file-by-file progress → **resume** the same session at the same tier (`claude -p --resume <session>`, "continue from your checkpoint; N minutes left"), optionally with an extended cap (once, ≤ 2×); no progress or repeated self-reported dead ends → **escalate** to the next tier in a fresh session with the checkpoint injected. `worker_resume_max` bounds resumes; `max_attempts` bounds everything.
+3. If still not complete after the bounded resumes, the Judge decides between **escalate** and **split**: the Judge's decision carries the ordered sub-task rows (`changes.sub_rows`, validated against the plan grammar); the harness inserts them, marks the parent `[-] split→T60a,T60b`, commits, and the loop continues. No separate Planner phase is needed: the Judge already runs at the most-capable tier with the full failure dossier. This is the "automatically split tasks" capability, applied only after resume has failed, because the evidence says most overruns are one extra iteration, not oversized work (`w4`).
 4. A killed phase never leaves the tree ambiguous: SANDBOX runs after every Worker phase (killed or not), reverting anything outside `allow_list`; changes inside it are kept for the resume.
 
 ---
@@ -192,7 +194,7 @@ For each `fidelity_source` pair the harness computes a normalized line-similarit
 
 The harness dispatches a Judge (most-capable tier) whenever it would otherwise mark `[!]`, halt, raise needs-human, or re-dispatch a second time with the same failure signature. Input, assembled by `judge.py`: task row, contract, gate output tail, Evaluator verdict, Worker checkpoint, `LOOP_CLEANUP.md`, the plan/spec lines that mention the task's ids and any parity ids in its row, constraint provenance (§5.1), and the attempt history for the task.
 
-Output JSON: `{"decision": "retry|escalate|widen|resume|split|defer|halt", "rationale": "…", "changes": {"allow_list_add": [...], "forbidden_remove": [...], "default_choice": "…", "blocks": ["T61","T62"]}}`.
+Output JSON: `{"decision": "retry|escalate|widen|resume|split|defer|halt", "classification": "self-imposed|spec-answered|capability|open", "rationale": "…", "changes": {"allow_list_add": [...], "forbidden_remove": [...], "default_choice": "…", "blocks": ["T61","T62"], "extend_cap_s": 0, "tier": "standard|most-capable", "sub_rows": [...]}}`. The Judge, not a fixed ladder, decides the tier of every re-attempt; the harness enforces only the bounds (`max_attempts`, one cap extension, two failed Judge decisions → defer/halt).
 
 Policy (`Decision policy:`):
 - **autonomous** (default): the Judge may widen Scout-sourced constraints, escalate tiers, split, and choose a default for a question the spec is silent on. Every such choice is appended to `LOOP_DECISIONS.md` with the alternatives, so a human can reverse it later. It still defers when the spec forbids the change, when the change touches a `plan`-sourced forbidden path, or when two Judge decisions on the same task have already failed.
@@ -227,7 +229,7 @@ The Learner phase runs after COMMIT with the gate outputs and the Evaluator verd
 1. Python runner replaces bash; `run.sh` stays as a shim. Reason: bash 3.2 forces FIFOs and per-line `jq` forks; the same code in Python is one process and testable.
 2. Phases are `claude -p` subprocesses, not Agent-tool subagents. Reason: §3.1.
 3. Scout default tier `standard`, not `cheap`. Reason: the contract is the highest-leverage document in the tick and haiku wrote the three defective ones.
-4. Worker escalation to the next tier on the second attempt is enforced by the harness, not requested of a model.
+4. Re-attempt tier is judged from the checkpoint, not laddered (Mitch's decision, parallel session); the harness enforces bounds only.
 5. `Decision policy: autonomous` by default, with `LOOP_DECISIONS.md` as the audit trail.
 6. Render gate is mandatory for UI-touching tasks once a recipe exists; absence of a recipe is a setup-time warning, not a refusal.
 7. `run.log` goes away; per-phase transcripts are referenced by path. The 12-line dashboard tail reads `harness.log`.
@@ -235,6 +237,13 @@ The Learner phase runs after COMMIT with the gate outputs and the Evaluator verd
 9. `LOOP_SCHEMA` becomes 3 (new files: `artifacts/`, `LOOP_DECISIONS.md`, `harness.log`; new contract fields). Migration 2→3 creates them and leaves everything else untouched; a v2 plan keeps working.
 10. Version 3.0.0.
 11. Model aliases live only in `Tiers:`; nothing in the plugin names a model.
+12. **Mid-run migration works** (Mitch, parallel session): a schema-2 dir stopped mid-task upgrades and resumes — §14.
+13. **Migration framework stays mechanical; ambiguous state goes to an agent** (Mitch): `migrate.py` normalises files; when it finds an in-flight task it hands reconciliation to the Judge (medic pattern: bounded, allowlisted, JSON verdict, NEEDS_HUMAN on ambiguity). No separate migration agent — the Judge already is one.
+14. **Partial Worker output is kept on overrun** (Mitch): already §6; SANDBOX only reverts paths outside `allow_list`.
+15. **Per-role caps live in `Limits:`** (Mitch): §4.6 key names follow the parallel session's `<role>_timeout=` form.
+16. **Cap defaults are provisional and calibrated** (Mitch): derivation in §4.2 plus `runner/calibrate.py`.
+17. **Concurrency and async evaluation are deferred** (Mitch): recorded with the safety rule and edge-case ledger in §15 so it has a permanent home.
+18. **The Evaluator stays** as a synchronous phase and is strengthened (§5.2), not removed or moved off the critical path — §15 explains why.
 
 ---
 
@@ -249,6 +258,28 @@ The Learner phase runs after COMMIT with the gate outputs and the Evaluator verd
 
 ## 13. Rollout
 1. Land v3 on branch `agent-loop-v3`, suite green, no loop running on this machine.
-2. On the loop machine: pull, `PAUSE` the running 2.1 harness at a tick boundary, let `run.sh` migrate (schema 3), resume. The dashboard needs no restart.
+2. On the loop machine: pull; `PAUSE` the running 2.1 harness (a tick boundary is nicer but not required — §14 handles a dir stopped mid-task); `run.sh` migrates to schema 3 and resumes. The dashboard needs no restart.
 3. First real run: `Decision policy: conservative` for one segment, then flip to `autonomous` once `LOOP_DECISIONS.md` looks sane.
 4. Postmortem compares $/task, wall/task, human touches, and needs-human count against the 2026-09-11 baseline (`EXTRACT/08-analysis/cost-effort.md`).
+
+---
+
+## 14. Per-task state and mid-run migration
+
+**Per-task state file.** `runtime/task-<T>.json` is the durable record of the task's state machine: `{"task","phase","attempt","attempts":[{"n","tier","phase_results":[…],"outcome","judge":{…}}],"session_ids":{"worker":"…"},"contract":"runtime/sprint-<T>.json","artifacts":[…],"updated":<epoch>}`. The harness writes it atomically at every phase transition. The plan file stays the graph; `events.jsonl` stays the stream the dashboard reads and is never used to reconstruct control state.
+
+**Boot resumes at the recorded phase.** If the harness starts and finds a `[~]` task, it reads `task-<T>.json` and continues from `phase`: a Worker-complete task resumes at GATE (no Worker re-run); a task killed inside WORK goes to the wrap-up/resume path of §6 with its session id; a task with no state file (a 2.x dir, or a crash before the first write) goes to the Judge with `failure = "boot-reconcile"` and the evidence the 2.x medic used to read by hand (dirty tree vs `allow_list`, `worker-result.json`, commit trailers, `sprint-<T>.json`). The Judge returns `resume|retry|revert-and-retry|defer`. This is decision 13: the framework is mechanical, the ambiguous step is an agent with a budget and an allowlist.
+
+**Migration 2→3.** `migrate.py` creates `artifacts/`, `LOOP_DECISIONS.md`, `harness.log`, adds `artifacts/` to the per-run `.gitignore`, normalises every existing `sprint-*.json` (string `forbidden` entries become `{"path", "source": "scout"}`; missing fields get defaults), stamps `runtime/schema` = 3 and emits `migration`. It refuses (exit 2, `migration-blocked`) while a 2.x harness is live, exactly as 1→2 did. It does not touch the plan. A `[~]` task after migration is handled by the boot rule above, so a dir stopped mid-task upgrades and resumes without human steps.
+
+---
+
+## 15. Deferred: concurrency and async evaluation (recorded, not designed)
+
+Mitch asked in the parallel session for this to be kept as a future enhancement, gated on evidence.
+
+**Why the Evaluator stays synchronous now.** Removing it would save ≈ $39 of $301 and a median 186 s per tick (`cost-effort.md` §2–3), but in the run its six NEEDS_WORK/BLOCKER verdicts were right every time (all six landed after a fix), it is the only workaround detector, and with guaranteed reads and views (§5.2) it becomes the gate that would have caught the Rise drift. Moving it off the critical path (commit on a green deterministic gate, evaluate later) is attractive but unsafe across a dependency edge: a later Scout reads unevaluated code as the reference pattern, and a BLOCKER verdict stops being a mechanical revert once descendants have landed — worst in `clone_of` families.
+
+**The rule that makes it safe, when it is built.** A task may not start until every task it transitively depends on has been *evaluated*, not merely committed. Evaluation becomes a dependency-graph constraint; deep chains re-serialise, wide graphs parallelise. Edge-case ledger from the parallel session, to be honoured by any implementation: (1) undeclared coupling — derive extra eval-dependencies from `Loop-Files:` trailers of unevaluated commits; (2) revert conflicts with an independent sibling → `[!]` + LOOP_CLEANUP (the one that escalates); (3) segment review only when every task is committed *and* evaluated (needs a committed-awaiting-eval marker); (4) follow-up insertion must rewrite dependents' `depends_on` and has its own tests; (5) hard cap of 2 unevaluated tasks, drained at the cap, built in from the first commit; (6) crash with evaluations outstanding → drain before leasing; (7) done requires an empty eval queue.
+
+**Decision criterion.** From v3's exact `role_start`/`role_end` spans, measure how much wall clock sits in serialised-but-independent work. Around 10 % → not worth seven edge cases. Around 35 %, as in the documented clone-family run → design it, as one work item with "never lease two conflicting tasks".
