@@ -77,7 +77,7 @@ The rules compose: a `harness-crash` that recurs is `escalated`, not a second `r
 
 ## 6. Allowed remediations (the complete list)
 
-delete a stale `runtime/harness.lock.d` **after** verifying the PID is dead; remove stale `runtime/tick.json` / `sprint-*.json` / `worker-result.json`; flip an orphaned `[~]` back to `[ ]` (never to `[x]`); `git checkout -- <path>` / `git clean` **only** for paths inside the last sprint contract's `allow_list`; restart the dashboard; write `LOOP_CLEANUP.md` / `NEEDS_HUMAN.md`; send a desktop notification.
+delete a stale `runtime/harness.json` **after** verifying its PID is dead by §3 (the file is the lock; a leftover 2.0.x `harness.lock.d/` dir may go with it); remove stale `runtime/tick.json` / `sprint-*.json` / `worker-result.json`; flip an orphaned `[~]` back to `[ ]` (never to `[x]`); `git checkout -- <path>` / `git clean` **only** for paths inside the last sprint contract's `allow_list`; restart the dashboard; write `LOOP_CLEANUP.md` / `NEEDS_HUMAN.md`; send a desktop notification.
 
 "Restart the dashboard" means `python3 "<plugin-root>/web/serve.py" --detach --loop-dir "$LOOP_DIR"` in the foreground (it reuses a live dashboard or launches a detached one and returns), and only when `runtime/dashboard.json` names a dead pid.
 
@@ -89,7 +89,7 @@ delete a stale `runtime/harness.lock.d` **after** verifying the PID is dead; rem
 - editing `LOOP_CONFIG.md`
 - touching `LOOP_PLAN.md` beyond the `[~]`→`[ ]` flip
 - killing the harness pid, the tick pid, or any process you did not start (the dashboard you restarted is the exception)
-- deleting `runtime/harness.lock.d` while its PID is alive by §3
+- deleting `runtime/harness.json` while its PID is alive by §3
 
 If the fix you want is on this list, the outcome is `escalated` and the fix goes in `human_next_step`.
 

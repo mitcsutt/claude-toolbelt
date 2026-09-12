@@ -50,7 +50,7 @@ legacy_harness_live() {
 
 # migrate_1_to_2 <loop_dir> <runtime_dir> -> prints comma-joined action tokens, or "none".
 #   1.x -> 2.0: the tick prompt no longer writes runtime/LOCK and nothing reads it; the
-#   harness owns the mutex (runtime/harness.lock.d). LOOP_CONFIG is left alone — the
+#   harness owns the mutex (runtime/harness.json, link-atomic). LOOP_CONFIG is left alone — the
 #   harness already defaults an absent `Dashboard:`/`Medic:` line to `auto`.
 migrate_1_to_2() {
   local rt="$2" actions=""

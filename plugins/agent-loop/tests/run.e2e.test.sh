@@ -100,7 +100,7 @@ assert_eq "0" "$(tail -1 "$WT/$LD/events.jsonl" | jq -r .exit_code)" "loop_end c
 assert_eq "ok" "$(jq -r 'select(.type=="tick_end") | .cause' "$WT/$LD/events.jsonl" | head -1)" "tick_end carries cause=ok"
 assert_eq "number" "$(jq -r 'select(.type=="tick_start") | .pid|type' "$WT/$LD/events.jsonl" | head -1)" "tick_start carries the tick pid"
 assert_eq "between-ticks" "$(jq -r 'select(.type=="sleep") | .reason' "$WT/$LD/events.jsonl" | head -1)" "between-tick sleep is narrated"
-isdir "$WT/$LD/runtime/harness.lock.d"; assert_false $? "lock dir is released on exit"
+isfile "$WT/$LD/runtime/harness.json"; assert_false $? "lock (harness.json) is released on exit"
 isfile "$WT/$LD/runtime/harness.json"; assert_false $? "harness.json is removed on exit"
 isfile "$WT/$LD/runtime/tick.json"; assert_false $? "tick.json is removed after the tick"
 isint "$(cat "$WT/$LD/runtime/HEARTBEAT" 2>/dev/null)"; assert_true $? "HEARTBEAT holds an epoch"
@@ -129,7 +129,7 @@ EOF
 first=$!
 tries=0
 while (( tries < 100 )); do
-  [[ -d "$WT/$LD/runtime/harness.lock.d" ]] && break
+  [[ -f "$WT/$LD/runtime/harness.json" ]] && break
   sleep 0.1; tries=$(( tries + 1 ))
 done
 ( cd "$WT" && AGENT_LOOP_SKIP_POSTMORTEM=1 bash "$RUN" >/dev/null 2>&1 )
@@ -155,7 +155,7 @@ cat > "$WT/script" <<'EOF'
 {"type":"result","subtype":"success","is_error":false,"result":"recovered <<LOOP_DONE>>","usage":{"input_tokens":1,"output_tokens":1},"total_cost_usd":0}
 EOF
 sleep 0.01 & deadpid=$!; wait $deadpid
-mkdir -p "$WT/$LD/runtime/harness.lock.d"
+mkdir -p "$WT/$LD/runtime/harness.lock.d"   # a 2.0.x leftover: must not block takeover
 printf '{"pid":%s,"start_epoch":1,"host":"x","loop_dir":"x","plugin_version":"1.0.0"}' "$deadpid" \
   > "$WT/$LD/runtime/harness.json"
 ( cd "$WT" && AGENT_LOOP_SKIP_POSTMORTEM=1 PAUSE_BETWEEN=0 NP_MAX=99 bash "$RUN" >/dev/null 2>&1 )
@@ -443,7 +443,6 @@ assert_eq "0" "$rc" "oversize plan does not halt the loop"
 setup_case off
 export MOCK_CLAUDE_SCRIPT="$WT/script"
 echo '{"type":"result","subtype":"success","is_error":false,"result":"x <<LOOP_DONE>>","usage":{"input_tokens":0,"output_tokens":0},"total_cost_usd":0}' > "$WT/script"
-mkdir -p "$WT/$LD/runtime/harness.lock.d"
 sleep 0.01 & _dead=$!; wait "$_dead"
 printf '{"pid":%s,"start_epoch":1,"host":"x","loop_dir":"%s","plugin_version":"2.0.0"}' "$_dead" "$LD" > "$WT/$LD/runtime/harness.json"
 ( cd "$WT" && AGENT_LOOP_SKIP_POSTMORTEM=1 PAUSE_BETWEEN=0 NP_MAX=99 bash "$RUN" >/dev/null 2>&1 )
@@ -489,7 +488,7 @@ grep -q "PAUSE" "$WT/$LD/runtime/NEEDS_HUMAN.md"; assert_true $? "live 1.x evide
 ls "$WT/$LD/runtime/LOCK" >/dev/null 2>&1; assert_true $? "live 1.x evidence: legacy LOCK untouched"
 ls "$WT/$LD/runtime/schema" >/dev/null 2>&1; assert_false $? "live 1.x evidence: no stamp written"
 assert_eq "0" "$(jq -r 'select(.type=="tick_start") | .tick' "$WT/$LD/events.jsonl" | wc -l | tr -d ' ')" "live 1.x evidence: no tick ran"
-ls "$WT/$LD/runtime/harness.lock.d" >/dev/null 2>&1; assert_false $? "live 1.x evidence: our lock released on exit"
+ls "$WT/$LD/runtime/harness.json" >/dev/null 2>&1; assert_false $? "live 1.x evidence: our lock released on exit"
 
 # --- schema migration: LOOP_MIGRATE_FORCE=1 overrides the live-1.x guard ---
 ( cd "$WT" && LOOP_MIGRATE_FORCE=1 AGENT_LOOP_SKIP_POSTMORTEM=1 PAUSE_BETWEEN=0 NP_MAX=99 bash "$RUN" >/dev/null 2>&1 )

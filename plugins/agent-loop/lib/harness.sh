@@ -41,66 +41,72 @@ dashboard_adoptable() {
   printf '%s' "$url"
 }
 
-# _harness_write_json <runtime_dir> <pid> <loop_dir> <version>
+# _harness_write_json <path> <pid> <loop_dir> <version>
 #   The lock's payload: who owns this LOOP_DIR, since when, and on which host.
+#   Written to a PRIVATE path first; harness_lock_acquire links it into place.
 _harness_write_json() {
-  local rt="$1" pid="$2" loop_dir="$3" ver="$4" host
+  local path="$1" pid="$2" loop_dir="$3" ver="$4" host
   host="$(hostname 2>/dev/null || echo unknown)"
   jq -cn --argjson pid "$pid" --argjson start_epoch "$(date +%s)" \
      --arg host "$host" --arg loop_dir "$loop_dir" --arg plugin_version "$ver" \
      '{pid:$pid,start_epoch:$start_epoch,host:$host,loop_dir:$loop_dir,plugin_version:$plugin_version}' \
-     > "$rt/harness.json" 2>/dev/null || true
+     > "$path" 2>/dev/null || true
 }
 
 # harness_lock_acquire <runtime_dir> <pid> <loop_dir> <version>
-#   prints "acquired" | "takeover:<oldpid>" | "held:<pid>:<start_epoch>"
-#   exit 0 for acquired/takeover, 1 for held.
-#   `mkdir` is the atomic primitive (no flock on macOS): the winner of the mkdir
-#   race owns the dir. A LOSER still has to decide whether the recorded owner is
-#   really alive — a harness killed by the OOM killer leaves the dir behind.
-#
-#   Clearing a stale dir is itself a race: two harnesses starting against the same
-#   dead owner would both delete it and both call themselves the new owner. So a
-#   clear is never an acquisition — it only re-opens the mkdir race, and the loser
-#   of that second race reports `held` by whoever won it. A dir we have already
-#   cleared once is never cleared again: if its payload has not appeared yet we
-#   wait for it, because a lock cleared twice is two harnesses, which is the exact
-#   bug this whole mechanism exists to prevent.
+#   The lock IS runtime/harness.json. It is created with link(2) (`ln`) from a fully
+#   written private file, so the lock can never exist without its owner payload:
+#   there is no instant at which a racer can read a stale pid out of a fresh lock.
+#   (The previous scheme — `mkdir harness.lock.d`, then write harness.json — had exactly
+#   that window, and two starters could both "take over" one dead harness.)
+#   A dead owner is cleared by rename, which only one racer can win; after a successful
+#   link the owner re-reads the file once to confirm the microsecond read→rename race
+#   did not go against it.
+#   Prints one of:  acquired | takeover:<oldpid> | held:<pid>:<start_epoch>   (rc 0/0/1)
 harness_lock_acquire() {
   local rt="$1" pid="$2" loop_dir="$3" ver="$4"
-  local lock="$rt/harness.lock.d"
-  local oldpid="" curpid curstart cleared=0 attempt=0
+  local lock="$rt/harness.json" tmp="$rt/.harness.$pid.tmp"
+  local oldpid="" curpid="" curstart=0 cleared=0 attempt=0
   mkdir -p "$rt" 2>/dev/null || true
-  while (( attempt < 6 )); do
+  _harness_write_json "$tmp" "$pid" "$loop_dir" "$ver"
+  [[ -s "$tmp" ]] || { printf 'held:?:0'; return 1; }
+  while (( attempt < 10 )); do
     attempt=$(( attempt + 1 ))
-    if mkdir "$lock" 2>/dev/null; then
-      _harness_write_json "$rt" "$pid" "$loop_dir" "$ver"
+    if ln "$tmp" "$lock" 2>/dev/null; then
+      rm -f "$tmp" 2>/dev/null || true
+      # Settle, then confirm: a racer that read the dead pid a microsecond before our
+      # link could have renamed our fresh lock away and linked its own.
+      sleep 0.2
+      curpid="$(jq -r '.pid // empty' "$lock" 2>/dev/null)"
+      if [[ "$curpid" != "$pid" ]]; then
+        curstart="$(jq -r '.start_epoch // 0' "$lock" 2>/dev/null)"
+        [[ "$curstart" =~ ^[0-9]+$ ]] || curstart=0
+        printf 'held:%s:%s' "${curpid:-?}" "$curstart"
+        return 1
+      fi
       if (( cleared > 0 )); then printf 'takeover:%s' "${oldpid:-none}"; else printf 'acquired'; fi
       return 0
     fi
-    # Someone holds the dir. Give the winner of a race we started a moment to
-    # publish its payload before judging it.
-    (( cleared > 0 )) && sleep 0.2
-    curpid="$(jq -r '.pid // empty' "$rt/harness.json" 2>/dev/null)"
-    curstart="$(jq -r '.start_epoch // 0' "$rt/harness.json" 2>/dev/null)"
+    curpid="$(jq -r '.pid // empty' "$lock" 2>/dev/null)"
+    curstart="$(jq -r '.start_epoch // 0' "$lock" 2>/dev/null)"
     [[ "$curstart" =~ ^[0-9]+$ ]] || curstart=0
     if harness_alive "$curpid"; then
+      rm -f "$tmp" 2>/dev/null || true
       printf 'held:%s:%s' "$curpid" "$curstart"
       return 1
     fi
-    if (( cleared > 0 )) && [[ "$curpid" == "$oldpid" ]]; then
-      continue    # our own race winner has not written harness.json yet — wait, do not clear
+    # Dead or unreadable owner. Clear by rename: exactly one racer wins this; the
+    # others see ENOENT, pause, and retry the link against whatever is there now.
+    [[ -n "$curpid" ]] && oldpid="$curpid"
+    if mv "$lock" "$rt/.harness.stale.$pid" 2>/dev/null; then
+      rm -f "$rt/.harness.stale.$pid" 2>/dev/null || true
+      cleared=$(( cleared + 1 ))
+    else
+      sleep 0.1
     fi
-    oldpid="$curpid"
-    rmdir "$lock" 2>/dev/null || rm -rf "$lock" 2>/dev/null || true
-    cleared=$(( cleared + 1 ))
   done
-  # Gave up waiting for a payload that never arrived: report the dir as held rather
-  # than seizing it. The next run.sh invocation finds a genuinely stale lock.
-  curpid="$(jq -r '.pid // empty' "$rt/harness.json" 2>/dev/null)"
-  curstart="$(jq -r '.start_epoch // 0' "$rt/harness.json" 2>/dev/null)"
-  [[ "$curstart" =~ ^[0-9]+$ ]] || curstart=0
-  printf 'held:%s:%s' "$curpid" "$curstart"
+  rm -f "$tmp" 2>/dev/null || true
+  printf 'held:%s:%s' "${curpid:-?}" "$curstart"
   return 1
 }
 
@@ -115,6 +121,9 @@ harness_lock_release() {
     return 0
   fi
   rm -f "$rt/harness.json" 2>/dev/null || true
+  # 2.0.x left a harness.lock.d dir next to the json; nothing reads it now. Tidy it
+  # here (owner only) rather than on acquire, so a 2.0 harness still starting against
+  # this dir keeps failing its mkdir and falls through to the pid check.
   rmdir "$rt/harness.lock.d" 2>/dev/null || rm -rf "$rt/harness.lock.d" 2>/dev/null || true
   return 0
 }

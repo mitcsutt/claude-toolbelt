@@ -37,12 +37,13 @@ mh="$(mem_headroom)"
 two_ints() { [[ "$1" =~ ^[0-9]+\ [0-9]+$ ]]; }
 two_ints "$mh"; assert_true $? "mem_headroom prints two ints ($mh)"
 
-# --- lock: mkdir-atomic acquire, PID-verified takeover, owner-only release ---
+# --- lock: link(2)-atomic acquire (payload IS the lock), PID-verified takeover, owner-only release ---
 TMP="$(mktemp -d)"; RT="$TMP/runtime"; mkdir -p "$RT"
 assert_eq "acquired" "$(harness_lock_acquire "$RT" $$ "$TMP" 2.0.0)" "first acquire"
 assert_eq "$$" "$(jq -r .pid "$RT/harness.json")" "harness.json records pid"
 assert_eq "2.0.0" "$(jq -r .plugin_version "$RT/harness.json")" "harness.json records version"
-isdir "$RT/harness.lock.d"; assert_true $? "acquire creates the lock dir"
+isfile "$RT/harness.json"; assert_true $? "acquire creates the lock (harness.json)"
+ls "$RT"/.harness.* >/dev/null 2>&1; assert_false $? "acquire leaves no private temp file behind"
 # a live owner must LOOK like run.sh to `ps -o command=`: fake one with exec -a
 bash -c 'exec -a run.sh sleep 30' & fake=$!
 sleep 0.2
@@ -60,7 +61,11 @@ out="$(harness_lock_acquire "$RT" $$ "$TMP" 2.0.0)"
 assert_eq "takeover:$dead" "$out" "dead owner -> takeover"
 assert_eq "$$" "$(jq -r .pid "$RT/harness.json")" "takeover rewrites harness.json to the new owner"
 harness_lock_release "$RT" $$
-isdir "$RT/harness.lock.d"; assert_false $? "release removes lock dir"
+isfile "$RT/harness.json"; assert_false $? "release removes the lock"
+# a pre-2.1 lock dir left by an older harness is tidied by the owner's release
+mkdir -p "$RT/harness.lock.d"; assert_eq "acquired" "$(harness_lock_acquire "$RT" $$ "$TMP" 2.1.0)" "acquire ignores a leftover 2.0 lock dir"
+harness_lock_release "$RT" $$
+isdir "$RT/harness.lock.d"; assert_false $? "release tidies the leftover 2.0 lock dir"
 harness_lock_release "$RT" 12345; assert_true $? "release by non-owner is a no-op that exits 0"
 # harness_alive: this test shell is not run.sh
 harness_alive $$; assert_false $? "a live pid whose command lacks run.sh is not a harness"
@@ -70,7 +75,7 @@ harness_alive ""; assert_false $? "empty pid -> not alive"
 # --- two harnesses racing for ONE stale lock: exactly one wins ---
 # Clearing a stale lock must not be an acquisition, or a crashed harness's leftover
 # dir lets every starter declare itself the owner at once.
-RT2="$TMP/rt2"; mkdir -p "$RT2/harness.lock.d"
+RT2="$TMP/rt2"; mkdir -p "$RT2"
 sleep 0.01 & dead2=$!; wait $dead2
 printf '{"pid":%s,"start_epoch":1,"host":"x","loop_dir":"%s","plugin_version":"2.0.0"}' "$dead2" "$TMP" > "$RT2/harness.json"
 # both contenders must LOOK like run.sh, so whichever wins is a live harness to the loser

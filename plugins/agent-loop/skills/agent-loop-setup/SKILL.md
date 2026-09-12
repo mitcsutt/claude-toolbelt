@@ -42,7 +42,7 @@ The harness refuses to run anywhere except the worktree recorded in `LOOP_CONFIG
 All loop artefacts live under a single per-run directory: `.claude/loop/<run-id>/`, where `<run-id>` is `<YYYY-MM-DD>-<topic>`. `<topic>` is the branch suffix (the part after `agent-loop-`); `<date>` is today (`date -u +%F`). The postmortem is written inside this dir as `$LOOP_DIR/POSTMORTEM.md`.
 
 - Compute `RUN_ID="$(date -u +%F)-<topic>"` and `LOOP_DIR=".claude/loop/$RUN_ID"` (relative to the worktree root).
-- `mkdir -p "$LOOP_DIR/runtime"`. Durable artefacts (config, plan, learnings, cleanup) live directly under `$LOOP_DIR/`; ephemeral runtime files (PAUSE, `harness.json` + `harness.lock.d/` + `HEARTBEAT` — the harness's lock and liveness, `tick.json`, sprint-*, worker-result, incident-*/medic-*, `NEEDS_HUMAN.md`, ratelimit, plan-usage) live under `$LOOP_DIR/runtime/`.
+- `mkdir -p "$LOOP_DIR/runtime"`. Durable artefacts (config, plan, learnings, cleanup) live directly under `$LOOP_DIR/`; ephemeral runtime files (PAUSE, `harness.json` (the harness lock) + `HEARTBEAT` — the harness's lock and liveness, `tick.json`, sprint-*, worker-result, incident-*/medic-*, `NEEDS_HUMAN.md`, ratelimit, plan-usage) live under `$LOOP_DIR/runtime/`.
 - **Track the durable artefacts; ignore `runtime/` AND the machine-generated logs.** Write `$LOOP_DIR/.gitignore` with:
 
   ```gitignore
