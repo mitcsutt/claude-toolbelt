@@ -41,7 +41,8 @@ has 'MEDIC_TIMEOUT'
 has 'outside the allowlist'
 
 # Allowlist (spec §6.4) and forbidden list
-has 'harness.lock.d'
+has 'runtime/harness.json'
+hasnt 'delete a stale `runtime/harness.lock.d`'
 has 'never to `[x]`'
 has 'allow_list'
 has 'NEEDS_HUMAN.md'
