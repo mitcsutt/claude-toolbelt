@@ -39,3 +39,15 @@ Worker tier: standard
 # If you set a tier here it becomes the ceiling for `| complex` Evaluator
 # work only — it does NOT force most-capable onto default/mechanical tasks.
 Evaluator tier:
+
+## Render recipe (optional). Uncomment and fill to turn on the render gate.
+# Without it nothing in the loop ever looks at the product: lint, tsc, build and jsdom
+# all pass on a page that renders a blank screen. `ui_globs` is what makes the gate
+# mandatory — a task touching those paths must carry a render_gate unless its plan row
+# is tagged `| no-ui`. `{route}` and `{screenshot}` are substituted per task by the Scout.
+# Render:
+#   start: pnpm --filter @repo/internal dev --port 5273
+#   ready: http://127.0.0.1:5273/
+#   command: pnpm --filter @repo/integration cypress run --spec {route}
+#   ui_globs: apps/*/src/**/*.tsx packages/ui/**/*.tsx
+#   reference: rise-customers=docs/reference/rise-customers.png

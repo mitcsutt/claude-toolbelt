@@ -48,6 +48,12 @@ All loop artefacts live under a single per-run directory: `.claude/loop/<run-id>
   ```gitignore
   runtime/
 
+  # Screenshots from the render gate. Durable (the postmortem reads them from
+  # disk) but binary and bulky, so not on the branch — and, because they live
+  # inside the worktree, gitignoring them is also what keeps the SANDBOX stray
+  # check from reverting them between phases.
+  artifacts/
+
   # Machine-generated logs — bulky, noisy, and not needed on the branch
   # (a forensic review found these were ~74% of one run's branch diff;
   # run.log alone was ~22k lines). The postmortem reads them from disk, not git.
@@ -96,6 +102,72 @@ Write `$LOOP_DIR/LOOP_CONFIG.md` from `templates/LOOP_CONFIG.md`. Use the AskUse
     - `off` — no notification, no medic; error incidents still stop the loop with `NEEDS_HUMAN.md`.
 
     Then ask **Medic model** (free text, blank inherits the Claude default; a standard tier is plenty — the medic reads a few files and makes one decision). Write `Medic: auto` and `Medic model: <alias or blank>`.
+
+12. **Render recipe** — how a headless tick can *see* the product. Ask this with one
+    `AskUserQuestion` whose question text explains what a recipe is and shows both shapes,
+    with options `Browser test runner (Cypress/Playwright spec per route)`, `Standalone
+    screenshot script`, and `No recipe — I accept UI tasks ship unseen`.
+
+    Explain, in the question: without a recipe the loop's only proof that a page works is
+    lint/tsc/build/jsdom, and those all pass on a page that renders nothing. In one
+    observed run the loop shipped a broken app shell and a human found it 30 hours and 88
+    ticks later, because no tick ever opened a browser.
+
+    Then collect the four parts as free text and write them under `Render:` in
+    `$LOOP_DIR/LOOP_CONFIG.md`. Sub-keys are indented two spaces:
+
+    - `start:` (optional) — the command that starts the app. The harness runs it **once**,
+      in the background, records the pid in `runtime/render-app.pid`, and kills it when the
+      loop exits. Leave blank if the render command starts its own server.
+    - `ready:` (optional) — a URL the harness polls until it returns HTTP 200 (max 120 s)
+      before the first render. Leave blank if `start:` is blank.
+    - `command:` — the render command template, with `{route}` and `{screenshot}`
+      placeholders the Scout substitutes per task.
+    - `ui_globs:` — space-separated globs for the repo's UI source. **This is the field
+      that makes the gate mandatory:** a task whose `allow_list` touches one of these globs
+      must carry a `render_gate` or the contract is rejected (unless its plan row is tagged
+      `| no-ui`).
+    - `reference:` (optional) — space-separated `name=path` pairs pointing at screenshots
+      of what the result should look like (e.g. the existing app a rebuild is copying).
+      The harness hands these to the Evaluator alongside the new screenshots.
+
+    A Cypress repo:
+
+    ```
+    Render:
+      start: pnpm --filter @repo/internal dev --port 5273
+      ready: http://127.0.0.1:5273/
+      command: pnpm --filter @repo/integration cypress run --spec {route}
+      ui_globs: apps/*/src/**/*.tsx packages/ui/**/*.tsx
+      reference: rise-customers=docs/reference/rise-customers.png
+    ```
+
+    Cypress writes to `cypress/screenshots/<spec>/<title>.png`; tell the user the Scout
+    will declare that path, so their specs must call `cy.screenshot()`.
+
+    A standalone Playwright script (`scripts/shot.mjs` taking a URL and an output path):
+
+    ```
+    Render:
+      start: pnpm dev --port 5273
+      ready: http://127.0.0.1:5273/
+      command: node scripts/shot.mjs http://127.0.0.1:5273{route} {screenshot}
+      ui_globs: src/**/*.tsx src/**/*.css
+    ```
+
+    **Warn when the repo has UI files but no recipe was given.** Check:
+
+    ```bash
+    git ls-files '*.tsx' '*.jsx' '*.vue' '*.svelte' '*.html' | head -n 1
+    ```
+
+    If that prints anything and the user chose "No recipe", say plainly: **this repo has
+    UI source but no render recipe, so no tick will ever look at the product** — the gate
+    is skipped, `evaluator_must_view` will be empty, and a page that renders a blank screen
+    will pass lint, tsc, build and jsdom tests. Offer to leave `Render:` out and continue
+    (spec §11 decision 6: a missing recipe is a warning, not a refusal), and record the
+    warning in `$LOOP_DIR/LOOP_LEARNINGS.md` `## Patterns` as "no render recipe — UI tasks
+    are verified by code presence only."
 
 **Model tiers.** The template ships `Orchestrator model: sonnet` — the orchestrator (the per-tick spine) now defaults to a **standard** model (Sonnet) rather than inheriting the user's Claude default. Rationale: the spine only coordinates, runs the verification gate, and dispatches role subagents; all heavy reasoning (plan decomposition, quality/workaround judgement) is delegated to the most-capable Planner/Evaluator subagents, so running the spine on a top-tier model every tick is pure cost (it was ~90% of observed spend). Leave the line as-is for cheap-by-default; blank it to inherit the Claude default, or name any alias to override. The per-role `Planner/Scout/Worker/Evaluator tier:` lines are unaffected — they still pick a tier per role (see `tick-prompt.md` §16). The `Evaluator tier:` line now ships **blank**: the Evaluator's tier is governed per-task by `tick-prompt.md` §10 (mechanical→skip, complex→most-capable, default→standard). Setting a tier here is a ceiling for `| complex` reviews only — it will NOT force the most-capable tier onto every task (a flat pin previously did exactly that, costing ~30 most-capable Evaluator runs in one observed loop). Leave it blank unless you have a reason to cap complex-review spend.
 
@@ -209,6 +281,7 @@ Verification: <pipeline>
 Limits:       tick_timeout (per-tick rabbit-hole cap; usage window is the real ceiling — loop auto-waits on it)
 Dashboard:    auto | off   (auto: a terminal launch spawns a sidecar when no dashboard is alive; /agent-loop's detached dashboard is adopted either way)
 Medic:        auto | notify | off  (model: <alias or inherited>; auto = headless /agent-loop-medic, max 3/run, then NEEDS_HUMAN.md + exit 2)
+Render:       <recipe | none>   (none = no tick ever opens the product; UI tasks are code-presence checks only)
 
 To start:   /agent-loop   → it asks: start from there, or a terminal command (▶ Start in the dashboard also works)
             (terminal alternative: cd <Worktree> && LOOP_DIR=.claude/loop/<run-id> bash "<plugin-root>/run.sh" — in its own terminal; it adopts a live dashboard)
