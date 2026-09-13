@@ -1,4 +1,5 @@
 import _path  # noqa: F401
+import importlib.util
 import os
 import tempfile
 import unittest
@@ -8,9 +9,10 @@ from typing import Optional
 from runner import task_state, util
 from runner.task_state import TaskState
 
-try:                                        # claude_proc lands in task 12
-    from runner.claude_proc import PhaseResult
-except ImportError:                         # pragma: no cover - pre-task-12
+# Gate on the module's absence, not on any ImportError: once claude_proc exists,
+# an import error raised from inside it must reach us, not be swallowed into a
+# green run against the stand-in.
+if importlib.util.find_spec("runner.claude_proc") is None:  # pragma: no cover
     @dataclass
     class PhaseResult:                      # type: ignore[no-redef]
         """The subset of task 12's PhaseResult that task_state duck-types."""
@@ -21,6 +23,8 @@ except ImportError:                         # pragma: no cover - pre-task-12
         session_id: Optional[str] = None
         started: int = 0
         ended: int = 0
+else:
+    from runner.claude_proc import PhaseResult
 
 
 class Base(unittest.TestCase):
@@ -154,6 +158,100 @@ class TestAttempts(Base):
         state.end_phase(self.result(phase="worker", session="sess-2"))
         state.end_phase(self.result(phase="scout", session="sess-s"))
         self.assertEqual({"worker": "sess-2", "scout": "sess-s"}, state.session_ids)
+
+
+class TestHostileFiles(Base):
+    """Well-formed JSON carrying the wrong types, i.e. what `load` exists for."""
+
+    HOSTILE = (
+        {"attempt": "abc"}, {"attempt": "2.5"}, {"attempt": [1]},
+        {"updated": "soon"}, {"attempts": 5}, {"artifacts": 4},
+        {"session_ids": [1, 2]}, {"session_ids": "x"},
+        {"phase": 3}, {"phase": ["WORK"]}, {"phase": True},
+        {"attempts": "abc"}, {"attempts": {"a": 1}}, {"artifacts": "a/b.png"},
+        {"contract": 9}, {"attempts": ["junk", 5]},
+    )
+
+    def test_wrong_types_load_empty_rather_than_raising(self):
+        for doc in self.HOSTILE:
+            util.write_json(task_state.state_path(self.rt, "T60"), doc)
+            state = TaskState.load(self.rt, "T60")          # must not raise
+            self.assertEqual([], state.attempts, doc)
+            self.assertEqual([], state.artifacts, doc)
+            self.assertEqual({}, state.session_ids, doc)
+            self.assertEqual("", state.contract, doc)
+            self.assertIsInstance(state.attempt, int, doc)
+            self.assertIsInstance(state.updated, int, doc)
+
+    def test_wrong_types_never_reach_boot_resume_as_a_non_string(self):
+        for doc in self.HOSTILE:
+            util.write_json(task_state.state_path(self.rt, "T60"), doc)
+            state = TaskState.load(self.rt, "T60")
+            self.assertEqual("scout", task_state.boot_resume(state), doc)
+
+    def test_a_mutator_on_a_hostile_file_still_works(self):
+        util.write_json(task_state.state_path(self.rt, "T60"),
+                        {"attempts": ["junk"], "session_ids": {"worker": 5}})
+        state = TaskState.load(self.rt, "T60")
+        self.assertEqual({"worker": ""}, state.session_ids)
+        state.end_attempt("pass")                            # must not raise
+        state.begin_attempt("standard")
+        state.begin_phase("WORK")
+        state.end_phase(self.result())                       # must not raise
+        self.assertEqual(1, state.attempt)
+        self.assertEqual(1, len(state.attempts[0]["phase_results"]))
+
+    def test_a_numeric_attempt_still_floors(self):
+        util.write_json(task_state.state_path(self.rt, "T60"), {"attempt": 2.9})
+        self.assertEqual(2, TaskState.load(self.rt, "T60").attempt)
+
+    def test_the_requested_task_id_wins_over_the_one_in_the_file(self):
+        util.write_json(task_state.state_path(self.rt, "T60"),
+                        {"task": "T59", "phase": "WORK:done"})
+        state = TaskState.load(self.rt, "T60")
+        self.assertEqual("T60", state.task)
+        self.assertEqual(task_state.state_path(self.rt, "T60"), state.path)
+        state.begin_phase("GATE")
+        self.assertFalse(os.path.exists(task_state.state_path(self.rt, "T59")))
+        self.assertEqual(["task-T60.json"], os.listdir(self.rt))
+
+    def test_a_non_string_task_field_cannot_redirect_the_write(self):
+        util.write_json(task_state.state_path(self.rt, "T60"), {"task": 7})
+        state = TaskState.load(self.rt, "T60")
+        state.begin_phase("GATE")
+        self.assertEqual(["task-T60.json"], os.listdir(self.rt))
+
+
+class TestDurability(Base):
+    def test_saving_goes_through_the_atomic_writer(self):
+        calls = []
+        real = util.atomic_write
+
+        def spy(path, text):
+            calls.append(path)
+            real(path, text)
+
+        util.atomic_write = spy
+        try:
+            TaskState.load(self.rt, "T60").save()
+        finally:
+            util.atomic_write = real
+        self.assertEqual([task_state.state_path(self.rt, "T60")], calls)
+
+    def test_add_artifact_dedups_and_ignores_the_empty_path(self):
+        state = TaskState.load(self.rt, "T60")
+        state.add_artifact("artifacts/T60/a.png")
+        state.add_artifact("artifacts/T60/a.png")
+        state.add_artifact("")
+        self.assertEqual(["artifacts/T60/a.png"], state.artifacts)
+        self.assertEqual(["artifacts/T60/a.png"], self.raw()["artifacts"])
+
+    def test_set_contract_persists_without_waiting_for_another_mutator(self):
+        state = TaskState.load(self.rt, "T60")
+        state.set_contract("runtime/sprint-T60.json")
+        self.assertEqual("runtime/sprint-T60.json", self.raw()["contract"])
+        self.assertEqual("runtime/sprint-T60.json",
+                         TaskState.load(self.rt, "T60").contract)
 
 
 class TestBootResume(Base):
