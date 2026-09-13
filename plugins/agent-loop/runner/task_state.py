@@ -130,17 +130,27 @@ class TaskState:
         """How many times the CURRENT attempt has already re-run its Worker.
 
         Derived, not stored: spec §14 fixes this document's keys and the shape
-        of an attempt record, so the count is read back out of the WORK entries
+        of an attempt record, so the count is read back out of the Worker entries
         already in `phase_results` -- the first is the original dispatch, every
         one after it is a resume. A resume continues an attempt whose budget was
         partly spent, so it is bounded by `worker_resume_max` rather than by
         `max_attempts`; without that bound the two limits together bound
         nothing, because a crash loop resumes forever inside one attempt.
+
+        Two names match, and one deliberately does not. `end_phase(result)`
+        records the PhaseResult's phase -- `worker` in production -- while the
+        state machine's own name for the step is `WORK`; matching only the
+        latter made this return 0 for every real dispatch, so `worker_resume_max`
+        bounded nothing. `worker-wrapup` is NOT counted: spec §6 step 1 makes the
+        wrap-up an automatic continuation the harness runs at the deadline, and
+        step 2 bounds the Judge's *resume decisions*. Counting the wrap-up would
+        spend the only resume at the default `worker_resume_max=1` and leave §6
+        step 2's resume path unreachable.
         """
         record = self.last_attempt() or {}
         works = [pr for pr in record.get("phase_results", [])
                  if isinstance(pr, dict)
-                 and str(pr.get("phase", "")).upper().startswith("WORK")]
+                 and str(pr.get("phase", "")).upper() in ("WORK", "WORKER")]
         return max(0, len(works) - 1)
 
     def begin_attempt(self, tier: str) -> Dict[str, Any]:

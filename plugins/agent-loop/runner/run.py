@@ -558,6 +558,56 @@ def run_worker_attempt(h: Harness, ctx, contract, attempt: int = 1,
     return results, data
 
 
+def worker_complete(payload) -> bool:
+    """The Worker's own claim, from `worker-result.json`. Absent is not complete."""
+    return bool(payload) and payload.get("status") == "complete"
+
+
+def resumable(ctx) -> bool:
+    """Is a `--resume` still affordable?
+
+    The same predicate `judge.validate_decision` applies to a `resume` decision,
+    so the Judge can never be told yes here and no there. `ctx.resume_count` is
+    kept in step with `TaskState.resumes_spent()` by `run_worker_attempt`, which
+    re-reads it from the state file after every dispatch -- two counters that
+    drifted would make `worker_resume_max` bound nothing, which is the failure
+    it exists to prevent.
+    """
+    return bool(ctx.last_session) and ctx.resume_count < int(
+        ctx.cfg.limits.get("worker_resume_max",
+                           config.DEFAULT_LIMITS["worker_resume_max"]))
+
+
+def next_worker_action(ctx, payload, results) -> str:
+    """`gate` | `judge` — what happens after a Worker attempt (spec §6 step 2).
+
+    A partial Worker is never resumed automatically. The Judge reads the
+    checkpoint and decides resume / escalate / split; the harness only keeps the
+    session id so a `resume` decision has something to resume. Automatic resumes
+    are how the 2026-09-11 run re-dispatched the same model six times in a row.
+    """
+    if worker_complete(payload):
+        return "gate"
+    ctx.last_session = ctx.last_session or (
+        results[0].session_id if results else None)
+    return "judge"
+
+
+def start_resume(ctx, results) -> None:
+    """Arm the next attempt as a `--resume` of the same session.
+
+    Called only when the Judge decided `resume`. The count is bumped here so
+    `resumable()` is already correct for the attempt about to run; the dispatch
+    then re-syncs it from the state file, which is the record of what was
+    actually spent.
+    """
+    session = ctx.last_session or (results[0].session_id if results else None)
+    ctx.resume_session = session
+    ctx.resume_count += 1
+    ctx.events.emit("resume", tick=ctx.tick, task=ctx.task.id,
+                    attempt=ctx.attempt, kind="resume", session=session)
+
+
 def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
     """SELECT -> SCOUT -> VALIDATE -> WORK -> SANDBOX -> GATE -> EVALUATE ->
     COMMIT -> LEARN, with one same-tier re-dispatch on failure.

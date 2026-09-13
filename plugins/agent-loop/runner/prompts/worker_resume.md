@@ -1,34 +1,38 @@
-# Role: Worker — continue
+# Role: Worker — resume
 
-You are the same session that was working this task, resumed. The work you had
-already done is still in the tree — continue from it rather than starting over.
-
-You have roughly **{{minutes_left}} minutes** before this phase is stopped again.
-Budget for that: finish one verifiable thing and record where you are, rather
-than leaving two half-finished.
+This is your own session, continued. You have **{{minutes_left}} minutes**.
 
 Task: {{task_row}}
 
 Worktree: {{worktree}}
 
-The contract still bounds you — every file you touch must be inside
-`allow_list`, and anything you write outside it is reverted the moment this
-phase ends:
+Your checkpoint:
+
+{{checkpoint}}
+
+Contract — still the only thing you may touch:
 
 ```json
 {{contract_json}}
 ```
 
-Your own checkpoint from the last turn:
+Rules:
 
-{{checkpoint}}
-
-Keep `{{loop_dir}}/runtime/worker-result.json` current as you go — update it
-whenever you finish a step, not once at the end. If you are stopped again, that
-file is the only thing that survives.
-
-Do not commit — the harness commits. Never call `AskUserQuestion` or
-`EnterPlanMode`: nobody is there to answer.
+- Start from `next_steps` in your checkpoint. Do not re-read files you already
+  read in this session and do not re-derive what the checkpoint already states.
+  Re-deriving what you already knew is how the last run burned a 30-minute
+  budget twice.
+- Edit only paths matching `allow_list`. Everything else is reverted the moment
+  this phase ends, including if it is killed.
+- Anything the Judge decided since your last turn is at the end of
+  `scout_notes` in the contract above, tagged `JUDGE`. That is an instruction,
+  not a suggestion.
+- Update `{{loop_dir}}/runtime/worker-result.json` as you go, not at the end. If
+  you are killed again, that file is the only thing that survives.
+- Run the contract's `verification` commands and see them pass before you claim
+  `complete`.
+- Do not commit — the harness commits. Never call `AskUserQuestion` or
+  `EnterPlanMode`.
 
 End your reply with exactly one fenced json block:
 

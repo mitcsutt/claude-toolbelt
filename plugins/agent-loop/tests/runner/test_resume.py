@@ -118,14 +118,20 @@ class TestWrapup(_StubBase):
         self.assertEqual(evs[0]["kind"], "wrapup")
         self.assertEqual(evs[0]["task"], "T60")
 
-    def test_the_wrapup_is_a_worker_turn_and_spends_a_resume(self):
-        """Row 12 of the pre-flight scan: §14's PHASES has no WRAPUP, so the
-        wrap-up is recorded as a WORK phase and `worker_resume_max` counts it."""
+    def test_the_wrapup_is_recorded_as_work_but_spends_no_resume(self):
+        """§14's PHASES has no WRAPUP, so the wrap-up is bracketed as WORK and a
+        kill during it still boots to the wrap-up path. It is not a resume
+        though: §6 step 1 makes it automatic, and `worker_resume_max` bounds the
+        Judge's step-2 resumes, which must still be affordable after it."""
         from runner.task_state import TaskState
         state = TaskState.load(self.runtime, "T60")
         state.begin_attempt("standard")
         runner_run.run_worker_attempt(self.h, self.ctx, self.contract, state=state)
-        self.assertEqual(state.resumes_spent(), 1)
+        phases_seen = [p["phase"] for p in state.attempts[-1]["phase_results"]]
+        self.assertEqual(phases_seen, ["worker", "worker-wrapup"])
+        self.assertEqual(state.resumes_spent(), 0)
+        self.assertEqual(self.ctx.resume_count, 0,
+                         "a resume is still affordable after the wrap-up")
 
     def test_sandbox_reverts_strays_after_a_killed_worker(self):
         stray = os.path.join(self.cfg.worktree, "apps", "frontend")
@@ -164,6 +170,90 @@ class TestNoTimeout(_StubBase):
         # so "no wrap-up ran" is "no invocation was given a session to resume".
         self.assertEqual(self.log_text().split(), ["001", "none"])
 
+
+
+class TestNextWorkerAction(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.cfg, self.plan, self.loop_dir, self.runtime = cfixtures.make_loop(self.tmp)
+        self.ctx = cfixtures.make_ctx(self.cfg, self.plan, self.loop_dir, self.runtime)
+
+    def _result(self, session_id="sid-1"):
+        from runner.claude_proc import PhaseResult
+        return PhaseResult(phase="worker", model="sonnet", rc=None, killed=True,
+                           timed_out=True, session_id=session_id,
+                           transcript_path=None, started=1, ended=2,
+                           result_text="", usage_by_model={}, tool_calls=1,
+                           last_activity=2)
+
+    def test_complete_goes_to_the_gate(self):
+        self.assertEqual(
+            runner_run.next_worker_action(self.ctx, {"status": "complete"},
+                                          [self._result()]), "gate")
+
+    def test_partial_always_goes_to_the_judge_never_straight_to_a_resume(self):
+        self.assertEqual(self.ctx.resume_count, 0)
+        self.assertEqual(
+            runner_run.next_worker_action(self.ctx, {"status": "partial"},
+                                          [self._result()]), "judge")
+        self.assertEqual(self.ctx.last_session, "sid-1",
+                         "the session is remembered so the Judge may resume it")
+
+    def test_resumable_is_the_budget_predicate_the_judge_is_held_to(self):
+        self.ctx.last_session = "sid-1"
+        self.assertTrue(runner_run.resumable(self.ctx))
+        self.ctx.resume_count = 1        # worker_resume_max is 1
+        self.assertFalse(runner_run.resumable(self.ctx))
+        self.ctx.resume_count = 0
+        self.ctx.last_session = None
+        self.assertFalse(runner_run.resumable(self.ctx))
+
+    def test_missing_payload_is_not_complete(self):
+        self.assertFalse(runner_run.worker_complete({}))
+        self.assertFalse(runner_run.worker_complete(None))
+        self.assertFalse(runner_run.worker_complete({"status": "partial"}))
+        self.assertTrue(runner_run.worker_complete({"status": "complete"}))
+
+    def test_start_resume_arms_the_next_attempt(self):
+        results = [self._result("sid-9")]
+        self.ctx.last_session = "sid-9"
+        runner_run.start_resume(self.ctx, results)
+        self.assertEqual(self.ctx.resume_session, "sid-9")
+        self.assertEqual(self.ctx.resume_count, 1)
+        evs = [e for e in cfixtures.read_events(self.loop_dir)
+               if e["type"] == "resume" and e.get("kind") == "resume"]
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["attempt"], 1)
+
+
+class TestResumeAttempt(_StubBase):
+    def script(self):
+        return {"001.jsonl": cfixtures.stub_result(
+            {"status": "complete", "summary": "finished from the checkpoint"},
+            model="opus")}
+
+    def test_resume_passes_the_session_and_runs_at_the_armed_tier(self):
+        seed_worker_result(self.runtime)
+        self.ctx.attempt = 2
+        self.ctx.tier = "most-capable"        # what the Judge armed in apply()
+        self.ctx.resume_session = "sid-prev"
+        results, payload = runner_run.run_worker_attempt(self.h, self.ctx,
+                                                         self.contract, attempt=2)
+
+        self.assertEqual(len(results), 1)
+        self.assertIn("sid-prev", self.log_text())
+        self.assertEqual(payload["status"], "partial",
+                         "the stub cannot write worker-result.json; the file is "
+                         "still the seeded one")
+
+        starts = [e for e in cfixtures.read_events(self.loop_dir)
+                  if e["type"] == "role_start" and e["role"] == "Worker"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["model"], "opus",
+                         "the tier the Judge armed, not a function of the "
+                         "attempt number (spec §6 step 2)")
+        self.assertEqual(results[0].model, "opus")
 
 if __name__ == "__main__":
     unittest.main()
