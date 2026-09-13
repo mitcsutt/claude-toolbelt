@@ -337,10 +337,14 @@ class TestResumesSpentCountsRealWorkerPhases(unittest.TestCase):
     """Regression: the count must match what the harness actually records.
 
     `end_phase(result)` stores `result.phase` — the PhaseResult's name, which is
-    `worker` (and `worker-wrapup`), not the state-machine's `WORK`. Matching on
-    equality made `resumes_spent()` return 0 for every real dispatch, so
-    `worker_resume_max` bounded nothing in production while the unit tests
-    passed on a hand-built `phase="WORK"` no production path ever produces.
+    `worker`, not the state-machine's `WORK`. Matching only `WORK` made
+    `resumes_spent()` return 0 for every real dispatch, so `worker_resume_max`
+    bounded nothing in production while the unit tests passed on a hand-built
+    `phase="WORK"` no production path ever produces.
+
+    `worker-wrapup` is excluded on purpose: spec §6 step 1's wrap-up is an
+    automatic continuation, and step 2's `worker_resume_max` bounds the Judge's
+    resume decisions.
     """
 
     def setUp(self):
@@ -356,12 +360,20 @@ class TestResumesSpentCountsRealWorkerPhases(unittest.TestCase):
         state.begin_attempt("standard")
         self.dispatch(state, "worker")
         self.assertEqual(0, state.resumes_spent(), "the first dispatch is not a resume")
-        self.dispatch(state, "worker-wrapup")
-        self.assertEqual(1, state.resumes_spent(),
-                         "a wrap-up is a Worker turn on the same budget (§14 has "
-                         "no WRAPUP phase, so it is recorded and counted as work)")
         self.dispatch(state, "worker")
-        self.assertEqual(2, state.resumes_spent())
+        self.assertEqual(1, state.resumes_spent())
+
+    def test_the_automatic_wrapup_does_not_spend_a_resume(self):
+        """Spec §6: step 1's wrap-up is automatic; step 2's resume is the Judge's
+        decision, and `worker_resume_max` bounds that. Counting the wrap-up
+        would leave the resume path unreachable at the default of 1."""
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        self.dispatch(state, "worker")
+        self.dispatch(state, "worker-wrapup")
+        self.assertEqual(0, state.resumes_spent())
+        self.dispatch(state, "worker")
+        self.assertEqual(1, state.resumes_spent())
 
     def test_other_phases_are_not_counted(self):
         state = TaskState.load(self.rt, "T60")
