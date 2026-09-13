@@ -8,13 +8,16 @@ file acts on it.
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
-from . import (config, contract as contract_mod, gate, git_ops, harness,
-               incidents, phases, plan as plan_mod, task_state, util)
+from . import (config, contract as contract_mod, events as events_mod, gate,
+               git_ops, harness, incidents, migrate, phases, plan as plan_mod,
+               sidecar, status, task_state, util)
 
 EXIT_OK = 0
 EXIT_HALT = 1
@@ -752,3 +755,541 @@ def review_tick(h: Harness, tick: int, segment: str) -> TickOutcome:
                    {"Loop-Status": "reviewed"})
     h.log("reviewed %s: %d follow-up row(s)" % (segment, len(rows)))
     return out
+
+
+class Stopped(Exception):
+    """A signal asked the harness to stop."""
+
+
+def parse_args(argv: List[str]) -> dict:
+    """`--shim <path>` records the bash entry point. Everything else is ignored.
+
+    The shim passes its own path so that `ps -o command= -p <pid>` still contains
+    `run.sh` after the exec — which is the liveness test serve.py and all four
+    skills use. Without it every live harness reads as dead.
+    """
+    shim = ""
+    rest: List[str] = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--shim" and i + 1 < len(argv):
+            shim = argv[i + 1]
+            i += 2
+            continue
+        rest.append(argv[i])
+        i += 1
+    return {"shim": shim, "rest": rest}
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def plugin_version(plugin_root: str) -> str:
+    record = util.read_json(os.path.join(plugin_root, ".claude-plugin", "plugin.json"))
+    if isinstance(record, dict) and record.get("version"):
+        return str(record["version"])
+    return "0.0.0"
+
+
+def resolve_paths() -> dict:
+    loop_dir = os.environ.get("LOOP_DIR") or os.path.join(".claude", "loop", "run")
+    return {"loop_dir": loop_dir,
+            "runtime_dir": os.path.join(loop_dir, "runtime"),
+            "config": os.environ.get("CONFIG_PATH") or os.path.join(loop_dir, "LOOP_CONFIG.md"),
+            "plan": os.environ.get("PLAN_PATH") or os.path.join(loop_dir, "LOOP_PLAN.md"),
+            "events": os.environ.get("EVENTS") or os.path.join(loop_dir, "events.jsonl"),
+            "usage": os.path.join(loop_dir, "LOOP_USAGE.jsonl"),
+            "status": os.environ.get("STATUS_FILE") or os.path.join(loop_dir, "LOOP_STATUS.md")}
+
+
+def write_checkpoint(h: Harness, tick: int, reason: str) -> None:
+    eligible = h.plan.eligible() if h.plan else []
+    segments = h.plan.segments() if h.plan else []
+    util.write_json(os.path.join(h.runtime_dir, "CHECKPOINT.json"),
+                    {"t": int(time.time()), "stopped_after_tick": tick,
+                     "next_task": eligible[0].id if eligible else "?",
+                     "segment": segments[-1].name if segments else "?",
+                     "note": "%s requested; resume by re-running the launch command "
+                             "or clicking Resume" % reason})
+
+
+def memory_guard(h: Harness, tick: int) -> None:
+    """Advisory: wait for headroom, then start the tick anyway.
+
+    Refusing to work is worse than risking a retry, and the memory_pressure +
+    sleep events make the wait legible instead of looking like a stall.
+    """
+    min_mb = env_int("MEM_MIN_MB", 1024)
+    max_swap = env_int("SWAP_MAX_PCT", 90)
+    backoff = env_int("MEM_BACKOFF", 60)
+    max_delays = env_int("MEM_MAX_DELAYS", 5)
+    delays = 0
+    while True:
+        free_mb, swap_pct = harness.mem_headroom()
+        if harness.mem_guard_action(free_mb, swap_pct, min_mb, max_swap) == "proceed":
+            return
+        if delays >= max_delays:
+            h.events.emit("memory_pressure", free_mb=free_mb, swap_used_pct=swap_pct,
+                          action="proceed")
+            h.log.feed("⚠ low memory headroom (%dMB free, swap %d%%) — starting tick "
+                       "%d anyway after %d delays" % (free_mb, swap_pct, tick, delays))
+            return
+        h.events.emit("memory_pressure", free_mb=free_mb, swap_used_pct=swap_pct,
+                      action="delay")
+        h.events.emit("sleep", tick=tick, until=int(time.time()) + backoff,
+                      reason="memory")
+        h.log.feed("◌ waiting for memory headroom (%dMB free, swap %d%%) — retry in %ds"
+                   % (free_mb, swap_pct, backoff))
+        delays += 1
+        time.sleep(backoff)
+
+
+def sum_usage(results: List[Any]):
+    total = {}
+    for result in results:
+        total = phases._merge_usage(total, getattr(result, "usage_by_model", {}) or {})
+    return total
+
+
+def usage_payload(by_model) -> dict:
+    return dict((model, {"cost_usd": u.cost_usd, "input_tokens": u.input_tokens,
+                         "output_tokens": u.output_tokens,
+                         "cache_read_tokens": u.cache_read_tokens,
+                         "cache_creation_tokens": u.cache_creation_tokens})
+                for model, u in (by_model or {}).items())
+
+
+def render_status(h: Harness, tick: int, mode: str, outcome: TickOutcome,
+                  dur: int) -> None:
+    """The session header plus one permanent line per tick, into LOOP_STATUS.md."""
+    tasks = h.plan.tasks()
+    done = len([t for t in tasks if t.state == "done"])
+    total = len(tasks)
+    segments = h.plan.segments()
+    seg_done = len([s for s in segments
+                    if s.tasks and all(t.state in plan_mod.DONE_STATES for t in s.tasks)])
+    unplanned = len([s for s in segments if not s.tasks])
+    display = outcome.verdict
+    if display == "continue" and mode in ("plan", "review"):
+        display = mode
+    plan_usage = ""
+    rl = util.read_json(os.path.join(h.runtime_dir, "ratelimit.json"))
+    if isinstance(rl, dict) and rl.get("utilization") is not None:
+        util.write_json(os.path.join(h.runtime_dir, "plan-usage.json"), rl)
+    header = status.session_header(
+        done, total, int(time.time()) - h.loop_start_epoch, 0, plan_usage,
+        seg_done if unplanned else 0, len(segments) if unplanned else 0)
+    line = status.tick_line(display, tick, outcome.task_id, dur, outcome.gates,
+                            outcome.sha[:7], done, total, outcome.cause)
+    h.tick_lines.append(line)
+    h.log.feed(header)
+    h.log.feed(line)
+    status.write_status(resolve_paths()["status"], header, h.tick_lines)
+
+
+def flush_plan(h: Harness) -> None:
+    """Commit any plan edit still sitting in the tree (the last `done(+sha)` row)."""
+    changed = git_ops.changed_paths(h.worktree)
+    rel = os.path.relpath(os.path.abspath(h.plan_path), h.worktree)
+    if rel in changed:
+        git_ops.commit(h.worktree, [h.plan_path], "loop: checkpoint plan",
+                       {"Loop-Status": "progress"})
+
+
+def dispatch_postmortem(h: Harness) -> None:
+    if os.environ.get("AGENT_LOOP_SKIP_POSTMORTEM") == "1":
+        return
+    try:
+        subprocess.run(["claude", "--print", "--dangerously-skip-permissions",
+                        "/agent-loop-postmortem"], cwd=h.worktree,
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=env_int("POSTMORTEM_TIMEOUT", 900))
+    except (OSError, subprocess.SubprocessError):
+        h.log("the postmortem dispatch failed; the loop artefacts are all on disk")
+
+
+def setup_dashboard(h: Harness):
+    """(supervisor, adopted). Adoption ignores the setting — it governs spawning only.
+
+    `LOOP_DASHBOARD` overrides `Dashboard:`, because serve.py spawns the harness
+    with `LOOP_DASHBOARD=off` when it is already the dashboard (`w10` §4).
+    """
+    url = sidecar.adoptable(h.runtime_dir)
+    if url:
+        h.dashboard_url = url
+        h.log.feed("◉ dashboard %s (adopted)" % url)
+        return None, True
+    mode = os.environ.get("LOOP_DASHBOARD") or h.cfg.dashboard
+    if mode != "auto":
+        return None, False
+    url = sidecar.start(h.plugin_root, h.loop_dir, h.runtime_dir)
+    if url:
+        h.dashboard_url = url
+        h.log.feed("◉ dashboard %s" % url)
+    else:
+        h.log("dashboard sidecar did not announce a URL — see %s/dashboard.out"
+              % h.runtime_dir)
+    supervisor = sidecar.Supervisor(
+        h.runtime_dir, h.plugin_root, h.loop_dir,
+        lambda n: incidents.incident_new(h.runtime_dir, h.events, "dashboard-crashloop",
+                                         "warn", "sidecar died %d times — not "
+                                         "restarting" % n, 0),
+        interval=env_int("HB_INTERVAL", 10),
+        max_restarts=env_int("DASH_MAX_RESTARTS", 5))
+    supervisor.start()
+    return supervisor, False
+
+
+def run_loop(h: Harness) -> int:
+    """Tick until the plan is finished, a human is needed, or someone says stop."""
+    h.loop_start_epoch = int(time.time())
+    tickseq = os.path.join(h.runtime_dir, "tickseq")
+    pause_between = env_int("PAUSE_BETWEEN", 5)
+    np_max = env_int("NP_MAX", 3)
+    fail_streak = 0
+    rl_streak = 0
+    no_progress = 0
+    remaining_prev = None
+
+    # Spec §14: settle any [~] task BEFORE the first mode() call, or a dir
+    # stopped mid-task reads as `stuck` and exits 1 without touching the work.
+    h.plan = plan_mod.Plan.load(h.plan_path)
+    boot_reconcile(h)
+
+    while True:
+        requested = pause_state(h)
+        h.plan = plan_mod.Plan.load(h.plan_path)
+        if requested:
+            tick = util.read_int(tickseq)
+            write_checkpoint(h, tick, requested)
+            h.events.emit("paused", tick=tick)
+            h.log("%s present; checkpoint written, exiting cleanly" % requested.upper())
+            h.exit_reason = "paused"
+            return EXIT_OK
+
+        mode = h.plan.mode()
+        if mode == "done":
+            flush_plan(h)
+            h.log("every task is done or skipped after %d ticks" % util.read_int(tickseq))
+            h.exit_reason = "done"
+            dispatch_postmortem(h)
+            return EXIT_OK
+        if mode == "stuck":
+            flush_plan(h)
+            h.exit_detail = ("work remains but nothing is eligible, plannable or "
+                             "reviewable — see LOOP_CLEANUP.md")
+            h.exit_reason = "halt"
+            h.log("HALT: %s" % h.exit_detail)
+            return EXIT_HALT
+
+        tick = util.read_int(tickseq) + 1
+        util.atomic_write(tickseq, str(tick))
+        memory_guard(h, tick)
+
+        started = int(time.time())
+        tick_timeout = config.phase_limit(h.cfg, "tick_timeout")
+        harness.write_tick_json(h.runtime_dir, tick, os.getpid(), started, tick_timeout)
+        h.events.emit("tick_start", tick=tick, pid=os.getpid(),
+                      timeout_at=started + tick_timeout)
+        h.log("tick %d starting (%s)" % (tick, mode))
+        try:
+            if mode == "review":
+                outcome = review_tick(h, tick, h.plan.next_review_segment().name)
+            elif mode == "plan":
+                outcome = plan_tick(h, tick, h.plan.next_plan_segment().name)
+            else:
+                outcome = execute_tick(h, tick, h.plan.eligible()[0])
+        finally:
+            harness.clear_tick_json(h.runtime_dir)
+
+        dur = int(time.time()) - started
+        by_model = sum_usage(outcome.results)
+        rcs = [r.rc for r in outcome.results if getattr(r, "rc", None)]
+        h.usage.write_tick(tick, mode, dur, by_model)
+        h.events.emit("tick_end", tick=tick, verdict=outcome.verdict,
+                      cause=outcome.cause, rc=max(rcs) if rcs else 0, dur=dur,
+                      by_model=usage_payload(by_model))
+        h.plan = plan_mod.Plan.load(h.plan_path)
+        render_status(h, tick, mode, outcome, dur)
+
+        for result in outcome.results:
+            if result.stalled:
+                incidents.handle_incident(h.runtime_dir, h.events, h.cfg,
+                                          "tick-stalled", "warn",
+                                          "the %s phase emitted nothing for %ds with no "
+                                          "tool call outstanding"
+                                          % (result.phase, env_int("STALL_S", 300)),
+                                          tick, h.medic, h.log)
+        timed_out = [r for r in outcome.results if r.timed_out]
+        if timed_out:
+            detail = "the %s phase exceeded its budget" % timed_out[0].phase
+            if not incidents.handle_incident(h.runtime_dir, h.events, h.cfg,
+                                             "phase-timeout", "error", detail, tick,
+                                             h.medic, h.log):
+                incidents.escalate(h.runtime_dir, h.events, "phase-timeout", detail,
+                                   tick, h.worktree, h.loop_dir,
+                                   os.path.join(h.plugin_root, "run.sh"),
+                                   h.medic.last_id)
+                h.exit_reason = "needs-human"
+                h.exit_detail = detail
+                return EXIT_NEEDS_HUMAN
+
+        rate_limit = next((r.rate_limit for r in outcome.results if r.rate_limit), None)
+        action = harness.ratelimit_action(rate_limit, int(time.time()),
+                                          env_int("MAX_WAIT", 21600))
+        if action == "exit":
+            h.log("usage limit hit — state is saved on disk; re-run after your window "
+                  "resets to resume")
+            h.exit_reason = "rate-limit-exit"
+            return EXIT_OK
+        if action.startswith("wait "):
+            secs = int(action.split()[1])
+            h.events.emit("sleep", tick=tick, until=int(time.time()) + secs,
+                          reason="rate-limit")
+            h.log("usage limit hit — sleeping %ds until the window resets, then resuming"
+                  % secs)
+            time.sleep(secs)
+            h.log.feed("▶ resumed · running tick %d" % (tick + 1))
+            continue
+        if any(r.api_error_status == "429" for r in outcome.results):
+            rl_streak += 1
+            if rl_streak >= env_int("RL_MAX_STRIKES", 5):
+                h.log("rate-limited %dx with no reset info — state saved; re-run later"
+                      % rl_streak)
+                h.exit_reason = "rate-limit-exit"
+                return EXIT_OK
+            backoff = env_int("RL_BACKOFF", 60)
+            h.events.emit("sleep", tick=tick, until=int(time.time()) + backoff,
+                          reason="rate-limit")
+            time.sleep(backoff)
+            continue
+        rl_streak = 0
+
+        if outcome.verdict == "paused":
+            write_checkpoint(h, tick, "pause")
+            h.events.emit("paused", tick=tick)
+            h.exit_reason = "paused"
+            h.log("paused between phases; checkpoint written")
+            return EXIT_OK
+        if outcome.verdict == "halt":
+            flush_plan(h)
+            h.exit_reason = "halt"
+            h.exit_detail = outcome.cause or "the loop cannot continue"
+            h.log("HALT: %s" % h.exit_detail)
+            return EXIT_HALT
+
+        if outcome.cause in ("", "ok"):
+            fail_streak = 0
+        else:
+            fail_streak += 1
+            if fail_streak >= 3:
+                detail = "3 consecutive failed ticks (last cause: %s)" % outcome.cause
+                if not incidents.handle_incident(h.runtime_dir, h.events, h.cfg,
+                                                 "garbage-ticks", "error", detail, tick,
+                                                 h.medic, h.log):
+                    incidents.escalate(h.runtime_dir, h.events, "garbage-ticks", detail,
+                                       tick, h.worktree, h.loop_dir,
+                                       os.path.join(h.plugin_root, "run.sh"),
+                                       h.medic.last_id)
+                    h.exit_reason = "needs-human"
+                    h.exit_detail = detail
+                    return EXIT_NEEDS_HUMAN
+                fail_streak = 0
+
+        remaining = len([t for t in h.plan.tasks() if t.state == "pending"])
+        if mode != "execute" or remaining != remaining_prev:
+            no_progress = 0
+        else:
+            no_progress += 1
+            if no_progress >= np_max:
+                detail = ("no progress in %d consecutive execute ticks (remaining stuck "
+                          "at %d)" % (np_max, remaining))
+                if not incidents.handle_incident(h.runtime_dir, h.events, h.cfg,
+                                                 "no-progress", "error", detail, tick,
+                                                 h.medic, h.log):
+                    incidents.escalate(h.runtime_dir, h.events, "no-progress", detail,
+                                       tick, h.worktree, h.loop_dir,
+                                       os.path.join(h.plugin_root, "run.sh"),
+                                       h.medic.last_id)
+                    h.exit_reason = "needs-human"
+                    h.exit_detail = detail
+                    return EXIT_NEEDS_HUMAN
+                no_progress = 0
+        remaining_prev = remaining
+
+        h.events.emit("sleep", tick=tick, until=int(time.time()) + pause_between,
+                      reason="between-ticks")
+        if pause_between:
+            time.sleep(pause_between)
+
+
+def teardown(h: Harness, hb, supervisor, adopted: bool, code: int) -> None:
+    """One exit path: stop what we spawned, narrate why, drop the lock.
+
+    loop_end is the only thing that makes a state terminal for an observer, so it
+    is emitted on every exit — including a signal. An ADOPTED dashboard is left
+    running; it outlives any one harness.
+    """
+    def _quietly(what: str, fn) -> None:
+        """Run one teardown step; a failure in it must not skip the rest.
+
+        Every step below is independent, and the last two are the ones that
+        matter to anybody else: without `loop_end` every observer renders a
+        finished loop as still running, and without `lock_release` the next
+        harness has to reap a lock instead of taking it. An exception in
+        stopping a dashboard is not a reason to lose either.
+        """
+        try:
+            fn()
+        except Exception as exc:                      # noqa: BLE001 - see above
+            try:
+                h.log("teardown: %s failed (%s); continuing" % (what, exc))
+            except Exception:
+                pass
+
+    if supervisor is not None:
+        _quietly("stopping the dashboard supervisor", supervisor.stop)
+    elif not adopted:
+        _quietly("stopping the sidecar", lambda: sidecar.stop(h.runtime_dir))
+    _quietly("stopping the heartbeat", hb.stop)
+    _quietly("emitting loop_end",
+             lambda: h.events.emit("loop_end", reason=h.exit_reason or "error",
+                                   detail=h.exit_detail, exit_code=code))
+    _quietly("releasing the lock",
+             lambda: harness.lock_release(h.runtime_dir, os.getpid()))
+    _quietly("clearing tick.json", lambda: harness.clear_tick_json(h.runtime_dir))
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(list(sys.argv[1:] if argv is None else argv))
+    paths = resolve_paths()
+    loop_dir = paths["loop_dir"]
+    runtime_dir = paths["runtime_dir"]
+    os.makedirs(runtime_dir, exist_ok=True)
+    log = Log(os.path.join(loop_dir, "harness.log"))
+    # Read the 1.x liveness evidence BEFORE this process writes anything.
+    legacy_live = migrate.legacy_harness_live(loop_dir)
+
+    try:
+        cfg = config.load_config(paths["config"])
+    except ValueError as exc:
+        log("HALT: %s" % exc)
+        return EXIT_HALT
+
+    worktree = os.path.realpath(cfg.worktree) if cfg.worktree else ""
+    if worktree != os.path.realpath(os.getcwd()):
+        log("HALT: cwd %r is not the configured Worktree %r"
+            % (os.path.realpath(os.getcwd()), worktree))
+        return EXIT_HALT
+
+    plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    version = plugin_version(plugin_root)
+    events = events_mod.EventLog(paths["events"], os.path.join(runtime_dir, "eventseq"))
+
+    lock = harness.lock_acquire(runtime_dir, os.getpid(), loop_dir, version)
+    if lock.startswith("held:"):
+        _, owner, since = lock.split(":", 2)
+        log("another harness already owns %s: pid %s (since %s). Stop it with "
+            "'kill %s', or use a different LOOP_DIR." % (loop_dir, owner, since, owner))
+        incidents.incident_new(runtime_dir, events, "lock-conflict", "warn",
+                               "pid %s alive since %s; refused second harness"
+                               % (owner, since), 0)
+        return EXIT_LOCK
+    crashed_pid = lock.split(":", 1)[1] if lock.startswith("takeover:") else ""
+
+    os.environ["LOOP_DIR"] = loop_dir
+    os.environ["RUNTIME_DIR"] = runtime_dir
+    os.environ.setdefault("LOOP_KNOWLEDGE",
+                          os.path.join(os.path.dirname(os.path.abspath(loop_dir)),
+                                       "KNOWLEDGE.md"))
+
+    h = Harness(cfg=cfg, plugin_root=plugin_root, loop_dir=loop_dir,
+                runtime_dir=runtime_dir, worktree=worktree,
+                config_path=paths["config"], plan_path=paths["plan"], events=events,
+                usage=events_mod.UsageLog(paths["usage"]), log=log,
+                plan=plan_mod.Plan.load(paths["plan"]),
+                medic=incidents.MedicState(env_int("MEDIC_MAX_PER_RUN", 3)))
+    if args["shim"]:
+        h.log("launched via %s" % args["shim"])
+
+    def _signal(signum, frame):
+        raise Stopped()
+
+    signal.signal(signal.SIGINT, _signal)
+    signal.signal(signal.SIGTERM, _signal)
+
+    hb = harness.Heartbeat(runtime_dir, env_int("HB_INTERVAL", 10))
+    hb.start()
+    supervisor = None
+    adopted = False
+    code = EXIT_HALT
+    try:
+        supervisor, adopted = setup_dashboard(h)
+        resume = 1 if util.read_int(os.path.join(runtime_dir, "tickseq")) > 0 else 0
+        fields = {"pid": os.getpid(), "host": os.uname().nodename,
+                  "plugin_version": version, "resume": resume}
+        if h.dashboard_url:
+            fields["dashboard_url"] = h.dashboard_url
+        events.emit("loop_start", **fields)
+
+        outcome = migrate.migrate_loop_dir(
+            loop_dir, runtime_dir, events, migrate.LOOP_SCHEMA, legacy_live,
+            os.environ.get("LOOP_MIGRATE_FORCE") == "1", version)
+        if outcome.startswith("blocked:") or outcome.startswith("newer:"):
+            if outcome.startswith("newer:"):
+                kind = "schema-newer"
+                detail = ("this loop dir is schema %s but plugin v%s only knows schema "
+                          "%d — update the plugin on this machine, then re-run"
+                          % (outcome.split(":", 1)[1], version, migrate.LOOP_SCHEMA))
+            else:
+                kind = "migration-blocked"
+                detail = outcome.split(":", 1)[1]
+            incidents.escalate(runtime_dir, events, kind, detail, 0, worktree, loop_dir,
+                               os.path.join(plugin_root, "run.sh"))
+            h.exit_reason = "needs-human"
+            h.exit_detail = detail
+            code = EXIT_NEEDS_HUMAN
+            return code
+        if outcome.startswith("migrated:"):
+            steps = outcome.split(":")
+            h.log("loop dir migrated: schema %s -> %s (%s)"
+                  % (steps[1], steps[2], steps[3]))
+            h.log.feed("⇡ schema %s → %s · %s" % (steps[1], steps[2], steps[3]))
+
+        if crashed_pid:
+            detail = "previous harness pid %s died without cleanup" % crashed_pid
+            h.log("stale harness lock (pid %s dead) — taking over" % crashed_pid)
+            if cfg.medic == "auto":
+                if not incidents.handle_incident(runtime_dir, events, cfg,
+                                                 "harness-crash", "error", detail, 0,
+                                                 h.medic, h.log):
+                    incidents.escalate(runtime_dir, events, "harness-crash", detail, 0,
+                                       worktree, loop_dir,
+                                       os.path.join(plugin_root, "run.sh"),
+                                       h.medic.last_id)
+                    h.exit_reason = "needs-human"
+                    h.exit_detail = detail
+                    code = EXIT_NEEDS_HUMAN
+                    return code
+            else:
+                incidents.handle_incident(runtime_dir, events, cfg, "harness-crash",
+                                          "warn", detail + "; the next tick "
+                                          "re-evaluates any in-progress task", 0,
+                                          h.medic, h.log)
+
+        code = run_loop(h)
+        return code
+    except Stopped:
+        h.exit_reason = "signal"
+        code = EXIT_SIGNAL
+        return code
+    finally:
+        teardown(h, hb, supervisor, adopted, code)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
