@@ -97,6 +97,20 @@ EOF
 
 ev() { jq -r "select(.type==\"$1\") | ${2:-.type}" "$WT/$LD/events.jsonl"; }
 
+# limits <Limits: line>  — rewrite the whole config so there is exactly one
+# `Limits:` line and the judge's own keys are present.
+limits() {
+  cat > "$WT/$LD/LOOP_CONFIG.md" <<EOF
+Worktree: $WT
+Verification pipeline: lint
+Tiers: cheap=tier-cheap standard=tier-standard most-capable=tier-big
+Dashboard: off
+Medic: off
+Decision policy: ${2:-autonomous}
+Limits: $1
+EOF
+}
+
 # ---------------------------------------------------------------- happy path
 setup_case
 contract_for 001 T1
@@ -319,5 +333,102 @@ kill -0 "$dashfake" 2>/dev/null; assert_true $? "the standalone dashboard outliv
 assert_eq "$dashfake" "$(jq -r .pid "$WT/$LD/runtime/dashboard.json")" "dashboard.json is untouched"
 kill "$dashfake" 2>/dev/null
 wait "$dashfake" 2>/dev/null
+
+# ------------------------------------------------------------------
+# A scout-sourced constraint blocks the gate; the Judge widens it and the retry
+# passes. This is the 2026-09-11 T60 halt, decided without waking anyone.
+# ------------------------------------------------------------------
+setup_case "- [ ] T1: Create both source files"
+limits "tick_timeout=120 scout_timeout=30 worker_timeout=30 wrapup_timeout=20 eval_timeout=30 judge_timeout=30 learner_timeout=30 gate_cmd_timeout=30 worker_resume_max=0 max_attempts=3"
+# 001 scout: a contract whose own gate needs a file its own `forbidden` blocks.
+# The contract is VALID -- every path it names is inside `allow_list`. What
+# blocks it is the Scout's own `forbidden` entry, which no plan or spec line
+# supports, so the Worker obeys it and the gate then fails for exactly that.
+side 001 "cat > \"\$RUNTIME_DIR/sprint-T1.json\" <<'JSON'
+{\"task\":\"T1\",\"success_criteria\":[\"src/a.ts exists\",\"src/b.ts exists\"],
+ \"allow_list\":[\"src/**\"],
+ \"forbidden\":[{\"path\":\"src/b.ts\",\"source\":\"scout\"}],
+ \"verification\":[\"test -f src/b.ts\"],
+ \"evaluator_must_read\":[],\"evaluator_must_view\":[],
+ \"estimated_diff_lines\":10,\"scout_notes\":\"\",\"relevant_learnings\":[]}
+JSON"
+reply 001 '{"contract_path":"sprint-T1.json","notes":"ok"}'
+side 002 "printf 'export const a = 1\n' > \"$WT/src/a.ts\""
+reply 002 '{"status":"complete","summary":"a only; b is forbidden"}'
+reply 003 '{"decision":"widen","classification":"self-imposed","rationale":"the forbidden entry for src/b.ts is scout-sourced and no plan line supports it","instruction":"create src/b.ts as well","alternatives":["defer to a human, as the 2026-09-11 run did"],"reversal":"re-add the forbidden entry to runtime/sprint-T1.json","changes":{"allow_list_add":["src/b.ts"],"forbidden_remove":["src/b.ts"],"default_choice":"","blocks":[],"sub_rows":[],"tier":"","extend_cap_s":0}}'
+side 004 "printf 'export const b = 2\n' > \"$WT/src/b.ts\""
+reply 004 '{"status":"complete","summary":"both files now"}'
+reply 005 '{"verdict":"PASS","findings":[{"criterion":"src/b.ts exists","met":true,"evidence":"gate"}],"views":[],"summary":"ok"}'
+reply 006 '{"patterns":[],"log":"widened once","invariants":[]}'
+( cd "$WT" && bash "$RUN" >/dev/null 2>&1 )
+assert_eq "0" "$?" "judge-widen scenario exits 0"
+grep -q '— widen (self-imposed)' "$WT/$LD/LOOP_DECISIONS.md"; assert_true $? \
+  "LOOP_DECISIONS.md records the widen with its classification"
+grep -q '"src/b.ts"' "$WT/$LD/runtime/sprint-T1.json"; assert_true $? \
+  "the contract's allow_list was widened on disk"
+grep -q '^- \[x\] T1' "$WT/$LD/LOOP_PLAN.md"; assert_true $? \
+  "T1 completed after the widen"
+grep -q '\[!\]' "$WT/$LD/LOOP_PLAN.md"; assert_false $? \
+  "nothing was marked [!] — the loop answered a question its own files answered"
+assert_eq "widen" "$(ev decision .decision | head -1)" "the decision event names the widen"
+assert_eq "self-imposed" "$(ev decision .classification | head -1)" \
+  "and carries the Judge's §7 classification"
+isfile "$WT/$LD/runtime/NEEDS_HUMAN.md"; assert_false $? "no human was needed"
+
+# ------------------------------------------------------------------
+# The Worker overruns, the wrap-up checkpoints, the resume budget is zero, and
+# the Judge splits the task into two numeric sub-tasks that both complete.
+# ------------------------------------------------------------------
+setup_case "- [ ] T1: Build both halves"
+limits "tick_timeout=180 scout_timeout=30 worker_timeout=2 wrapup_timeout=20 eval_timeout=30 judge_timeout=30 learner_timeout=30 gate_cmd_timeout=30 worker_resume_max=0 max_attempts=3"
+split_contract() {   # $1 = script number, $2 = task id, $3 = file its gate wants
+  side "$1" "cat > \"\$RUNTIME_DIR/sprint-$2.json\" <<'JSON'
+{\"task\":\"$2\",\"success_criteria\":[\"$3 exists\"],\"allow_list\":[\"src/**\"],
+ \"forbidden\":[],\"verification\":[\"test -f $3\"],
+ \"evaluator_must_read\":[],\"evaluator_must_view\":[],
+ \"estimated_diff_lines\":10,\"scout_notes\":\"\",\"relevant_learnings\":[]}
+JSON"
+  reply "$1" "{\"contract_path\":\"sprint-$2.json\",\"notes\":\"ok\"}"
+}
+finish_task() {      # $1 = scout script number, $2 = task id, $3 = file to create
+  split_contract "$1" "$2" "$3"
+  n2=$(printf '%03d' $((10#$1 + 1)))
+  n3=$(printf '%03d' $((10#$1 + 2)))
+  n4=$(printf '%03d' $((10#$1 + 3)))
+  side "$n2" "printf 'done\n' > \"$WT/$3\""
+  reply "$n2" '{"status":"complete","summary":"ok"}'
+  reply "$n3" '{"verdict":"PASS","findings":[],"views":[],"summary":"ok"}'
+  reply "$n4" '{"patterns":[],"log":"ok","invariants":[]}'
+}
+split_contract 001 T1 src/both
+printf '20\n' > "$STUB/002.sleep"                       # the Worker overruns
+side 003 "printf '{\"task\":\"T1\",\"status\":\"partial\",\"files_touched\":[],\"summary\":\"half\",\"checkpoint\":\"src/a then src/b\",\"next_steps\":[\"src/a\",\"src/b\"]}' > \"\$RUNTIME_DIR/worker-result.json\""
+reply 003 '{"status":"partial","summary":"out of time"}'
+reply 004 '{"decision":"split","classification":"capability","rationale":"the wrap-up checkpoint shows two independently verifiable halves and the resume budget is spent","instruction":"","alternatives":["escalate to the next tier"],"reversal":"revert the split commit and restore T1","changes":{"allow_list_add":[],"forbidden_remove":[],"default_choice":"","blocks":[],"sub_rows":["- [ ] Build the first half","- [ ] Build the second half"],"tier":"","extend_cap_s":0}}'
+# The harness allocates the ids: T1 is the only row, so the halves are T2 and T3.
+finish_task 005 T2 src/a
+finish_task 009 T3 src/b
+( cd "$WT" && bash "$RUN" >/dev/null 2>&1 )
+assert_eq "0" "$?" "judge-split scenario exits 0"
+grep -q 'split→T2,T3' "$WT/$LD/LOOP_PLAN.md"; assert_true $? \
+  "the parent row records the split into numeric ids"
+grep -q '| split_of: T1' "$WT/$LD/LOOP_PLAN.md"; assert_true $? \
+  "each sub row carries | split_of: T1"
+grep -q 'T1a' "$WT/$LD/LOOP_PLAN.md"; assert_false $? \
+  "no lettered ids anywhere: serve.py matches \\bT\\d+\\b"
+grep -q '^- \[-\] T1' "$WT/$LD/LOOP_PLAN.md"; assert_true $? \
+  "the parent task carries the [-] glyph"
+git -C "$WT" log --pretty=%B > "$STUB/log.txt"
+grep -q 'loop: split T1 → T2,T3' "$STUB/log.txt"; assert_true $? \
+  "the split commit subject is exact"
+grep -q 'Loop-Status: skipped' "$STUB/log.txt"; assert_true $? \
+  "the split commit carries Loop-Status: skipped"
+assert_eq "T1" "$(ev split .task | head -1)" "a split event was emitted for T1"
+assert_eq "T2 T3" "$(jq -r 'select(.type=="split") | (.into | join(" "))' "$WT/$LD/events.jsonl")" \
+  "and it names both new ids"
+assert_eq "wrapup" "$(jq -r 'select(.type=="resume") | .kind' "$WT/$LD/events.jsonl" | head -1)" \
+  "the overrun produced a wrap-up, not an incident"
+grep -q '^- \[x\] T2' "$WT/$LD/LOOP_PLAN.md"; assert_true $? "the first half completed"
+grep -q '^- \[x\] T3' "$WT/$LD/LOOP_PLAN.md"; assert_true $? "the second half completed"
 
 assert_summary
