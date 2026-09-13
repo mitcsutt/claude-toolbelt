@@ -133,7 +133,8 @@ rm -f "$tmp/runtime/harness.json"
 code="$(curl -s -o "$tmp/stop-dead.json" -w '%{http_code}' -X POST "$url/api/stop")"
 okdead=0; [[ "$code" == "409" ]] || okdead=1
 assert_true "$okdead" "POST /api/stop with no live harness => 409 (got $code)"
-[[ ! -f "$tmp/runtime/STOP" ]]; assert_true $? "a refused stop writes no STOP sentinel"
+nostop=0; [[ -f "$tmp/runtime/STOP" ]] && nostop=1
+assert_true "$nostop" "a refused stop writes no STOP sentinel"
 grep -q "no live harness" "$tmp/stop-dead.json"; assert_true $? "409 body says there is no harness to stop"
 
 bash -c 'exec -a run.sh sleep 30' &
@@ -153,7 +154,8 @@ printf '{"t":%s,"seq":1,"type":"loop_start"}\n{"t":%s,"seq":2,"type":"tick_start
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/api/stop")"
 oklive=0; [[ "$code" == "200" ]] || oklive=1
 assert_true "$oklive" "POST /api/stop over a live harness => 200 (got $code)"
-[[ -f "$tmp/runtime/STOP" ]]; assert_true $? "stop wrote runtime/STOP"
+wrote=0; [[ -f "$tmp/runtime/STOP" ]] || wrote=1
+assert_true "$wrote" "stop wrote runtime/STOP"
 curl -s "$url/api/state" -o "$tmp/stopping.json"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["status"]["state"]=="pausing" else 1)' \
   "$tmp/stopping.json"

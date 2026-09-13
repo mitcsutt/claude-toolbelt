@@ -31,8 +31,9 @@ Rules:
   you are killed again, that file is the only thing that survives.
 - Run the contract's `verification` commands and see them pass before you claim
   `complete`.
-- Do not commit — the harness commits. Never call `AskUserQuestion` or
-  `EnterPlanMode`.
+- Do not commit — the harness commits. Never call `AskUserQuestion`, never
+  call `EnterPlanMode`, and never invoke any tool that waits on a person — it
+  will hang this process forever.
 
 End your reply with exactly one fenced json block:
 
