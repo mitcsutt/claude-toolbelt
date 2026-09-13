@@ -1,0 +1,18 @@
+{"t":1000,"seq":1,"type":"tick_start","tick":1}
+{"t":1000,"seq":2,"type":"role_start","role":"Scout","model":"mid","desc":"Scout T1"}
+{"t":1100,"seq":3,"type":"role_end","role":"Scout"}
+{"t":1100,"seq":4,"type":"role_start","role":"Worker","model":"mid","desc":"Worker T1"}
+{"t":1500,"seq":5,"type":"role_end","role":"Worker"}
+{"t":1500,"seq":6,"type":"role_start","role":"Evaluator","model":"big","desc":"Evaluate T1"}
+{"t":1700,"seq":7,"type":"role_end","role":"Evaluator"}
+{"t":1700,"seq":8,"type":"tick_end","tick":1,"verdict":"continue"}
+{"t":2000,"seq":9,"type":"tick_start","tick":2}
+{"t":2000,"seq":10,"type":"role_start","role":"Scout","model":"mid","desc":"Scout T2"}
+{"t":2200,"seq":11,"type":"role_end","role":"Scout"}
+{"t":2200,"seq":12,"type":"role_start","role":"Worker","model":"mid","desc":"Worker T2"}
+{"t":3200,"seq":13,"type":"role_end","role":"Worker"}
+{"t":3200,"seq":14,"type":"tick_end","tick":2,"verdict":"continue"}
+{"t":4000,"seq":15,"type":"tick_start","tick":3}
+{"t":4000,"seq":16,"type":"role_start","role":"Worker","model":"mid","desc":"Worker T3"}
+{"t":9000,"seq":17,"type":"tick_start","tick":4}
+{"t":9000,"seq":18,"type":"loop_end","reason":"paused","exit_code":0}
