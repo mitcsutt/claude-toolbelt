@@ -103,6 +103,23 @@ class VisualChecksTest(unittest.TestCase):
         self.assertIn("FAIL", vis.failure_text)
         self.assertIn("src/dst.tsx", vis.failure_text)
         self.assertEqual(render_mod.failure_kind(vis), "fidelity")
+        self.assertEqual(vis.kind, "fidelity")
+
+    def test_render_wins_the_kind_when_both_checks_fail(self):
+        ctx = make_ctx(self.tmp)
+        os.makedirs(os.path.join(ctx.cfg.worktree, "src"))
+        with open(os.path.join(ctx.cfg.worktree, "src", "ref.tsx"), "w") as fh:
+            fh.write(SRC)
+        with open(os.path.join(ctx.cfg.worktree, "src", "dst.tsx"), "w") as fh:
+            fh.write("// copied from src/ref.tsx\n")
+        c = make_contract(
+            render_gate=contract_mod.RenderGate(
+                commands=["exit 3"], screenshots=[{"name": "a", "path": "shots/a.png"}]),
+            fidelity=[contract_mod.FidelitySource(
+                src="src/ref.tsx", dst="src/dst.tsx", min_similarity=0.6)])
+        vis = render_mod.run_visual_checks(ctx, c)
+        self.assertFalse(vis.ok)
+        self.assertEqual(render_mod.failure_kind(vis), "render")
 
     def test_a_render_app_that_never_becomes_ready_fails_without_running_commands(self):
         ctx = make_ctx(self.tmp, render={"start": "sleep 60",
