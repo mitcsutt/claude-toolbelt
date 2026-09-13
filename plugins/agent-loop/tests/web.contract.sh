@@ -64,10 +64,11 @@ curl -s -X POST "$url/api/resume" >/dev/null
 
 # 4) dashboard markup carries the contract element ids
 curl -s "$url/" -o "$tmp/page.html"
-for id in status why health timeline roadmap incidents usage log \
-          btnStart btnPause btnResume btnStop tickNo; do
+for id in status why health timeline roadmap incidents usage log artifacts \
+          decisions btnStart btnPause btnResume btnStop tickNo; do
   grep -q "id=\"$id\"" "$tmp/page.html"; assert_true $? "element id=\"$id\" present"
 done
+grep -q 'Stop now' "$tmp/page.html"; assert_true $? "the stop control is labelled 'Stop now'"
 
 # 5) the snapshot contract: honest status, health, segments, incidents, no narrative
 curl -s "$url/api/state" -o "$tmp/state.json"
@@ -89,6 +90,9 @@ checks = [
     ("progress.segments_done present", "segments_done" in d.get("progress", {})),
     ("progress.pct_basis present", "pct_basis" in d.get("progress", {})),
     ("incidents is a list", isinstance(d.get("incidents"), list)),
+    ("decisions is a list", isinstance(d.get("decisions"), list)),
+    ("current.artifacts is a list", isinstance(d.get("current", {}).get("artifacts"), list)),
+    ("log_file names the tailed log", d.get("log_file") in ("harness.log", "run.log")),
     ("ticks is a list", isinstance(d.get("ticks"), list)),
     ("config.dashboard parsed", d.get("config", {}).get("dashboard") == "auto"),
     ("config.medic parsed", d.get("config", {}).get("medic") == "notify"),
@@ -123,6 +127,45 @@ grep -q "is alive" "$tmp/start.json"; assert_true $? "409 body names the live ha
 kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null
 fake=""
 rm -f "$tmp/runtime/harness.json"
+
+# 7b) /api/stop writes runtime/STOP only while a harness is alive.
+# With no harness, a sentinel nobody reads would only kill the next launch.
+code="$(curl -s -o "$tmp/stop-dead.json" -w '%{http_code}' -X POST "$url/api/stop")"
+okdead=0; [[ "$code" == "409" ]] || okdead=1
+assert_true "$okdead" "POST /api/stop with no live harness => 409 (got $code)"
+[[ ! -f "$tmp/runtime/STOP" ]]; assert_true $? "a refused stop writes no STOP sentinel"
+grep -q "no live harness" "$tmp/stop-dead.json"; assert_true $? "409 body says there is no harness to stop"
+
+bash -c 'exec -a run.sh sleep 30' &
+fake=$!
+sleep 0.3
+printf '{"pid":%s,"start_epoch":1,"host":"t","loop_dir":"%s","plugin_version":"3.0.0"}\n' \
+  "$fake" "$tmp" > "$tmp/runtime/harness.json"
+# "Over a live harness" has to mean live, and derive_status has two earlier
+# branches that would otherwise answer first whatever the sentinels say:
+# branch 1 (`not store.count` -> idle) and branch 4 (`hb is None` -> the
+# harness is gone). So give it a heartbeat and a tick in flight. Check 6
+# above has already asserted the no-events case, and nothing below reads
+# the derived state again.
+date +%s > "$tmp/runtime/HEARTBEAT"
+printf '{"t":%s,"seq":1,"type":"loop_start"}\n{"t":%s,"seq":2,"type":"tick_start","tick":7}\n' \
+  "$(date +%s)" "$(date +%s)" > "$tmp/events.jsonl"
+code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/api/stop")"
+oklive=0; [[ "$code" == "200" ]] || oklive=1
+assert_true "$oklive" "POST /api/stop over a live harness => 200 (got $code)"
+[[ -f "$tmp/runtime/STOP" ]]; assert_true $? "stop wrote runtime/STOP"
+curl -s "$url/api/state" -o "$tmp/stopping.json"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["status"]["state"]=="pausing" else 1)' \
+  "$tmp/stopping.json"
+assert_true $? "a STOP sentinel over a live harness reads as pausing"
+kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null
+fake=""
+rm -f "$tmp/runtime/harness.json" "$tmp/runtime/STOP" "$tmp/runtime/HEARTBEAT"
+
+# an unreachable /api/artifact key is a 404, never a 500
+code="$(curl -s -o /dev/null -w '%{http_code}' "$url/api/artifact?tick=1&name=nope")"
+ok404=0; [[ "$code" == "404" ]] || ok404=1
+assert_true "$ok404" "GET /api/artifact for an unknown key => 404 (got $code)"
 
 # 8) the live server reports itself alive, on the STALL_S it was started with
 python3 - "$tmp/state.json" <<'PY'

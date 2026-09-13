@@ -89,6 +89,13 @@ button:hover:not(:disabled) { background: var(--surface-3); }
 button:disabled { opacity: .38; cursor: not-allowed; }
 #btnStart:not(:disabled), #btnResume:not(:disabled) { color: var(--ok); border-color: var(--ok-edge); }
 #btnStop:not(:disabled) { color: var(--bad); border-color: var(--bad-edge); }
+#artifacts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+#artifacts figure { margin: 0; max-width: 220px; }
+#artifacts img { display: block; width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 4px; }
+#artifacts figcaption { font-size: 11px; opacity: .75; margin-top: 4px; word-break: break-all; }
+.dec { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 12px; }
+.dec time { margin-left: auto; opacity: .6; }
+.dec .cls { opacity: .7; }
 #btnBell { padding: 6px 8px; }
 #btnBell[aria-pressed="true"] { color: var(--info); border-color: var(--info-edge); }
 #ctrlErr {
@@ -326,9 +333,9 @@ footer > .wrap { padding-block: 14px 26px; display: flex; flex-wrap: wrap; gap: 
     <div class="ctrls">
       <span id="ctrlErr" hidden></span>
       <button id="btnStart" type="button">Start</button>
-      <button id="btnPause" type="button">Pause</button>
+      <button id="btnPause" type="button" title="Finish the phase in flight, then stop">Pause</button>
+      <button id="btnStop" type="button" title="Stop at the next phase boundary — minutes, not the rest of the tick">Stop now</button>
       <button id="btnResume" type="button">Resume</button>
-      <button id="btnStop" type="button">Stop</button>
       <button id="btnBell" type="button" aria-pressed="false" title="Notify me when the loop stalls or needs a human">Notify me</button>
     </div>
   </div>
@@ -352,6 +359,7 @@ footer > .wrap { padding-block: 14px 26px; display: flex; flex-wrap: wrap; gap: 
     <div class="hd"><h2>This tick</h2><span class="grow"></span><span class="note" id="tickNote"></span></div>
     <div id="timeline"></div>
     <div id="activity"></div>
+    <div id="artifacts" hidden></div>
   </div>
 </section>
 
@@ -369,6 +377,13 @@ footer > .wrap { padding-block: 14px 26px; display: flex; flex-wrap: wrap; gap: 
   </div>
 </section>
 
+<section class="band" aria-label="Decisions">
+  <div class="wrap">
+    <div class="hd"><h2>Decisions</h2><span class="grow"></span><span class="note" id="decNote"></span></div>
+    <div id="decisions"></div>
+  </div>
+</section>
+
 <section class="band" aria-label="Effort">
   <div class="wrap">
     <div class="hd"><h2>Effort</h2><span class="grow"></span><span class="note" id="quotaNote"></span></div>
@@ -379,7 +394,7 @@ footer > .wrap { padding-block: 14px 26px; display: flex; flex-wrap: wrap; gap: 
 <section class="band" aria-label="Log">
   <div class="wrap">
     <details class="logbox" data-key="log">
-      <summary>run.log, last lines</summary>
+      <summary id="logName">harness.log, last lines</summary>
       <pre id="log"></pre>
     </details>
   </div>
@@ -436,6 +451,7 @@ const MOCK = {
     }
   },
   "current": {
+    "artifacts": [],
     "tick": 12,
     "role": "Worker",
     "model": "claude-sonnet-4-6",
@@ -802,6 +818,13 @@ const MOCK = {
         "summary": "1.1 GB free with swap at 94%. Cleared the orphaned sprint-T13.json, flipped T13 back to [ ], tree clean. Retrying with the memory guard armed."
       }
     }
+  ],
+  "log_file": "harness.log",
+  "decisions": [
+    {"t": 1757640100, "type": "decision", "task": "T60", "decision": "widen",
+     "classification": "self-imposed", "attempt": null, "into": null},
+    {"t": 1757640460, "type": "resume", "task": "T60", "decision": "resume",
+     "classification": null, "attempt": 2, "into": null}
   ],
   "usage": {
     "by_model": {
@@ -1337,7 +1360,44 @@ function fig(k, v, s) {
 
 function renderLog(d) {
   const lines = Array.isArray(d.log) ? d.log : [];
-  setText($("log"), lines.length ? lines.join("\n") : "run.log is empty");
+  const name = d.log_file || "harness.log";
+  setText($("logName"), name + ", last lines");
+  setText($("log"), lines.length ? lines.join("\n") : name + " is empty");
+}
+
+function renderArtifacts(d) {
+  const cur = d.current || {};
+  const items = Array.isArray(cur.artifacts) ? cur.artifacts : [];
+  const el = $("artifacts");
+  if (!items.length) { el.innerHTML = ""; el.hidden = true; return; }
+  el.hidden = false;
+  const q = a => "/api/artifact?tick=" + encodeURIComponent(cur.tick) +
+                 "&name=" + encodeURIComponent(a.name);
+  el.innerHTML = items.map(a =>
+    '<figure><a href="' + esc(q(a)) + '" target="_blank" rel="noreferrer">' +
+    '<img loading="lazy" alt="' + esc(a.name) + '" src="' + esc(q(a)) + '"></a>' +
+    '<figcaption>' + esc(a.name) + '</figcaption></figure>').join("");
+}
+
+function renderDecisions(d) {
+  const all = Array.isArray(d.decisions) ? d.decisions : [];
+  const rows = all.slice(-8).reverse();
+  setText($("decNote"), all.length ? all.length + " logged" : "");
+  const el = $("decisions");
+  if (!rows.length) {
+    el.innerHTML = '<p class="note">Nothing decided autonomously yet. ' +
+                   'Every entry here is also in LOOP_DECISIONS.md, for a human to ratify or reverse.</p>';
+    return;
+  }
+  el.innerHTML = rows.map(r => {
+    const into = Array.isArray(r.into) ? r.into.join(", ") : (r.into || "");
+    return '<div class="dec"><b>' + esc(r.task || "—") + '</b>' +
+           '<span>' + esc(r.decision || r.type || "") + '</span>' +
+           (r.classification ? '<span class="cls">' + esc(r.classification) + '</span>' : "") +
+           (r.attempt ? '<span class="cls">attempt ' + esc(r.attempt) + '</span>' : "") +
+           (into ? '<span class="cls">→ ' + esc(into) + '</span>' : "") +
+           '<time>' + esc(clock(r.t)) + '</time></div>';
+  }).join("");
 }
 
 function renderFooter(d) {
@@ -1368,10 +1428,12 @@ function paint(d) {
     if (changed("health", h)) renderHealth(d);
     if (changed("timeline", [d.pipeline, d.ticks, h.tick, d.current, d.config && d.config.orchestrator_model, d.elapsed_s])) renderTimeline(d);
     if (changed("activity", d.activity)) renderActivity(d);
+    if (changed("artifacts", [d.current && d.current.artifacts, d.current && d.current.tick])) renderArtifacts(d);
     if (changed("roadmap", [d.roadmap, d.progress, d.plan])) renderRoadmap(d);
     if (changed("incidents", [d.incidents, d.elapsed_s])) renderIncidents(d);
+    if (changed("decisions", d.decisions)) renderDecisions(d);
     if (changed("usage", [d.usage, d.quota])) renderUsage(d);
-    if (changed("log", d.log)) renderLog(d);
+    if (changed("log", [d.log, d.log_file])) renderLog(d);
     if (changed("footer", [d.loop, h.dashboard, d.elapsed_s])) renderFooter(d);
     notify(d);
   } catch (e) {
