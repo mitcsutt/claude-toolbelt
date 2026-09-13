@@ -106,7 +106,14 @@ def run_render_gate(ctx, contract) -> Tuple[List, List[Dict]]:
         dst = os.path.join(dest_dir, "%s.png" % name)
         _copy_atomic(src, dst)
         shots.append({"name": name, "path": dst})
-        ctx.events.emit("artifact", tick=ctx.tick, task=ctx.task.id, name=name, path=dst)
+        # The event records a LOOP-DIR-relative path, not `dst`. `ctx.loop_dir`
+        # is whatever $LOOP_DIR was, and the documented launch is relative
+        # (`LOOP_DIR=.claude/loop/<run-id> bash run.sh`), so `dst` would encode
+        # this process's cwd into a durable record that another process reads:
+        # serve.py abspaths its own loop_dir, joins the two, and 404s on every
+        # screenshot. `shots` keeps `dst` -- that one is used in-process.
+        ctx.events.emit("artifact", tick=ctx.tick, task=ctx.task.id, name=name,
+                        path=os.path.relpath(dst, ctx.loop_dir))
 
     if not gate_mod.all_ok(results):
         return results, []
