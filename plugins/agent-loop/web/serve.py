@@ -679,6 +679,8 @@ _MAX_LIFECYCLE = 4000
 _MAX_CURRENT = 5000
 _MAX_TICKS = 400
 _MAX_INCIDENTS = 200
+_MAX_ARTIFACTS = 400
+_MAX_DECISIONS = 200
 
 
 def _cap(lst, limit):
@@ -717,6 +719,9 @@ class EventStore:
         self._tick_tools = 0
         self._tick_roles = []
         self._incident_ix = {}
+        self.artifacts = []          # the tick in flight only
+        self.artifact_ix = {}        # (tick, name) -> path, across ticks
+        self.decisions = []          # run-level audit trail (LOOP_DECISIONS.md)
 
     def refresh(self):
         """Consume everything appended since the last call."""
@@ -766,6 +771,7 @@ class EventStore:
             self.cur_tick = ev.get("tick")
             self.cur_task = None
             self.cur_sha = None
+            self.artifacts = []
         else:
             self.current.append(ev)
             _cap(self.current, _MAX_CURRENT)
@@ -778,6 +784,24 @@ class EventStore:
         elif typ == "task_status":
             self.cur_task = ev.get("id") or self.cur_task
             self.cur_sha = ev.get("sha") or self.cur_sha
+        elif typ == "artifact":
+            name, path = ev.get("name"), ev.get("path")
+            if name and path:
+                self.artifacts.append({"name": name, "path": path})
+                _cap(self.artifacts, _MAX_ARTIFACTS)
+                # Addressable after the tick rolls over: a browser tab still
+                # showing tick 4 must keep loading tick 4's screenshots.
+                self.artifact_ix[(ev.get("tick"), name)] = path
+                if len(self.artifact_ix) > _MAX_ARTIFACTS:
+                    self.artifact_ix.pop(next(iter(self.artifact_ix)))
+        elif typ in ("decision", "resume", "split"):
+            self.decisions.append({
+                "t": ev.get("t"), "type": typ, "task": ev.get("task"),
+                "decision": ev.get("decision") or typ,
+                "classification": ev.get("classification"),
+                "attempt": ev.get("attempt"), "into": ev.get("into"),
+            })
+            _cap(self.decisions, _MAX_DECISIONS)
         elif typ == "tick_end":
             self._fold_tick(ev)
         elif typ == "incident":
@@ -1018,7 +1042,7 @@ def build_snapshot(loop_dir, store, live, status, now, stall_s=300):
     plan = parse_plan(plan_text)
     config = parse_config(config_text)
     current = dict(derive_current(store.current), tick=store.cur_tick,
-                   task=store.cur_task)
+                   task=store.cur_task, artifacts=list(store.artifacts))
     pipeline = derive_pipeline(store.current)
     activity = derive_activity(store.current)
     usage = usage_effort(usage_text, tasks_done=plan["progress"]["done"],
@@ -1073,6 +1097,7 @@ def build_snapshot(loop_dir, store, live, status, now, stall_s=300):
         "plan": plan["tasks"],
         "ticks": _merge_tick_costs(store.ticks[-30:], usage.get("ticks") or []),
         "incidents": list(store.incidents),
+        "decisions": list(store.decisions[-20:]),
         "usage": usage,
         "quota": parse_quota(quota_obj, now),
         "config": config,
