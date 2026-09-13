@@ -18,7 +18,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import claude_proc, config, contract as contract_mod, util
 from .claude_proc import PhaseResult, Usage
@@ -230,7 +230,8 @@ def _dispatch(ctx: TickContext, *, phase: str, role: str, prompt_name: str,
               tier: str, variables: Dict[str, Any], desc: str,
               max_turns: int = 0, max_budget_usd: Optional[float] = None,
               timeout_s: Optional[int] = None,
-              resume_session: Optional[str] = None
+              resume_session: Optional[str] = None,
+              correction: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None
               ) -> Tuple[PhaseResult, Optional[Dict[str, Any]]]:
     """Render, run, parse. One re-ask on a parse failure; none after a kill.
 
@@ -238,6 +239,13 @@ def _dispatch(ctx: TickContext, *, phase: str, role: str, prompt_name: str,
     it: the Worker's cap carries the Judge's one extension, and `worker-wrapup`
     is not a `Limits:` key at all (its budget is `wrapup_timeout`), so deriving
     it would silently hand the wrap-up the gate's default instead.
+
+    `correction` inspects a *parsed* reply and returns the text to re-ask with,
+    or None to accept it. It shares the ONE re-ask above rather than adding a
+    second subprocess: a malformed block and an unusable-but-parseable reply are
+    both "ask again, once". Callers never re-implement this loop — a hand-rolled
+    second dispatch silently drops `stop_check`, the rate-limit capture and the
+    stall watchdog that only live in these kwargs.
     """
     model = config.model_for(ctx.cfg, tier)
     if timeout_s is None:
@@ -255,8 +263,9 @@ def _dispatch(ctx: TickContext, *, phase: str, role: str, prompt_name: str,
                   stop_check=lambda: os.path.exists(
                       os.path.join(ctx.runtime_dir, "STOP")))
     res = claude_proc.run_phase(prompt=prompt, **kwargs)
+    first = None
     try:
-        return res, parse_json_block(res.result_text, phase=phase)
+        first = parse_json_block(res.result_text, phase=phase)
     except JsonBlockError as exc:
         # A killed phase is never re-asked: the second dispatch would run into the
         # same wall. `stopped` implies `killed` today; naming it keeps the rule
@@ -265,13 +274,22 @@ def _dispatch(ctx: TickContext, *, phase: str, role: str, prompt_name: str,
             return res, None
         # Python 3 unbinds the `as` name at the end of the except block, so the
         # message has to be carried out of it by hand.
-        parse_error = str(exc)
-    again = claude_proc.run_phase(prompt=prompt + (_REASK % parse_error), **kwargs)
+        note = _REASK % str(exc)
+    else:
+        note = correction(first) if correction is not None else None
+        if not note:
+            return res, first
+        if res.killed or res.stopped:
+            return res, first
+    again = claude_proc.run_phase(prompt=prompt + note, **kwargs)
     merged = _result_with(res, again)
     try:
         return merged, parse_json_block(again.result_text, phase=phase)
     except JsonBlockError:
-        return merged, None
+        # The re-ask lost the thread. The first reply parsed, so it is still the
+        # better answer of the two — the caller decides what to do with a reply
+        # its correction rejected.
+        return merged, first
 
 
 # Spec §6 step 1: the wrap-up gets 8 turns. It is the load-bearing number --
@@ -429,10 +447,84 @@ def worker_payload(ctx) -> Dict[str, Any]:
     return doc if isinstance(doc, dict) else {}
 
 
+# Spec §5.2. The Evaluator is handed its evidence instead of being trusted to
+# fetch it: the 2026-09-11 run's T8 Evaluator made twelve Reads and none of them
+# were in the reference tree, and the R3 one cited a `TODO(copied from …)`
+# comment as proof a file had been copied.
+MUST_READ_MAX_LINES = 400
+
+_VIEW_REASK = ("\n\n---\n\nYour verdict was rejected: it reports no `views` entry "
+               "for %s. Use the `Read` tool on the screenshot path(s) above, then "
+               "reply again with the SAME verdict shape, one `views` entry per "
+               "required view, each describing what you actually saw. Add no "
+               "commentary after the JSON block.")
+
+
+def _must_read_blocks(worktree: str, paths) -> str:
+    """The reference files the Scout named, inlined, each capped and labelled."""
+    out = []  # type: List[str]
+    for rel in (paths or []):
+        path = rel if os.path.isabs(rel) else os.path.join(worktree, rel)
+        if not os.path.isfile(path):
+            out.append("### %s\n\n(missing — no file at %s)" % (rel, path))
+            continue
+        lines = util.read_text(path).splitlines()
+        body = "\n".join(lines[:MUST_READ_MAX_LINES])
+        if len(lines) > MUST_READ_MAX_LINES:
+            body += "\n[truncated] %d of %d lines shown" % (MUST_READ_MAX_LINES, len(lines))
+        out.append("### %s\n\n```\n%s\n```" % (rel, body))
+    return "\n\n".join(out) or "(none)"
+
+
+def _screenshots_block(screenshots) -> str:
+    """The archived images, by name and absolute path, with what to do with them."""
+    shots = list(screenshots or [])
+    if not shots:
+        return "(none)"
+    lines = []  # type: List[str]
+    for shot in shots:
+        # `render.evaluator_screenshots` hands over dicts; a bare path string is
+        # accepted too, so a caller with nothing but paths cannot crash the
+        # phase that is supposed to be looking at the images.
+        if not isinstance(shot, dict):
+            shot = {"name": os.path.splitext(os.path.basename(str(shot)))[0],
+                    "path": str(shot)}
+        kind = shot.get("kind", "new")
+        lines.append("- **%s** (%s): %s" % (shot.get("name", "?"), kind,
+                                            shot.get("path", "?")))
+    lines.append("")
+    lines.append("Read every path above with the `Read` tool before you judge, and "
+                 "report one views[] entry per image describing what you actually "
+                 "saw. A `reference` image is what the result is supposed to look "
+                 "like; compare it to the new one.")
+    return "\n".join(lines)
+
+
+def _missing_views(data, required) -> List[str]:
+    """Required view names the verdict did not report on."""
+    seen = set()
+    for view in (data or {}).get("views") or []:
+        if isinstance(view, dict) and view.get("name"):
+            seen.add(str(view["name"]))
+    return [name for name in (required or []) if name not in seen]
+
+
 def run_evaluator(ctx: TickContext, contract, diff_text: str, gate_outputs: str,
                   screenshots) -> Tuple[PhaseResult, Dict[str, Any]]:
-    """Grade the diff against the contract. Plan B fills must_read/screenshots."""
-    shots = "\n".join("- %s" % s for s in (screenshots or [])) or "(none)"
+    """Grade the diff against the contract, holding the evidence in its hands.
+
+    The reference files the Scout marked `evaluator_must_read` are inlined and
+    the archived screenshots are listed by path; a verdict that skips a required
+    view is re-asked once and then fails the tick. The re-ask is `_dispatch`'s
+    one budget (R4), shared with the malformed-JSON case — not a second
+    subprocess per phase.
+    """
+    required = [str(v) for v in (contract.evaluator_must_view or [])]
+
+    def correction(data):
+        missing = _missing_views(data, required)
+        return (_VIEW_REASK % ", ".join(missing)) if missing else None
+
     res, data = _dispatch(
         ctx, phase="evaluator", role="Evaluator", prompt_name="evaluator",
         tier=evaluator_tier(ctx.cfg, ctx.task),
@@ -441,16 +533,29 @@ def run_evaluator(ctx: TickContext, contract, diff_text: str, gate_outputs: str,
                    "contract_json": json.dumps(contract_mod.to_dict(contract), indent=2),
                    "diff": diff_text or "(empty diff)",
                    "gate_outputs": gate_outputs or "(none)",
-                   "must_read_blocks": "(none)",
-                   "screenshots": shots})
+                   "must_read_blocks": _must_read_blocks(
+                       ctx.cfg.worktree, contract.evaluator_must_read),
+                   "screenshots": _screenshots_block(screenshots)},
+        correction=correction if required else None)
     if data is None:
         return res, {"verdict": "NEEDS_WORK", "findings": [], "views": [],
+                     "reason": "malformed-output",
                      "summary": "the Evaluator returned malformed output twice"}
     if data.get("verdict") not in _VERDICTS:
         data["verdict"] = "NEEDS_WORK"
     data.setdefault("findings", [])
     data.setdefault("views", [])
     data.setdefault("summary", "")
+    missing = _missing_views(data, required)
+    if missing:
+        # Spec §5.2: an unseen view is not a pass. This takes the ordinary
+        # failure path, so the Judge sees it like any other NEEDS_WORK.
+        data["verdict"] = "NEEDS_WORK"
+        data["reason"] = "missing-views"
+        data["summary"] = (
+            "the Evaluator reported no view for %s even after being asked again; "
+            "its verdict cannot be trusted on what it did not look at. %s"
+            % (", ".join(missing), data.get("summary", ""))).strip()
     return res, data
 
 
