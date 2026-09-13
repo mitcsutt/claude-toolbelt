@@ -227,12 +227,13 @@ def sandbox(h: Harness, contract) -> List[str]:
 def checkpoint_note(h: Harness, task) -> str:
     """The killed Worker's own checkpoint, rendered for the next Worker's prompt.
 
-    # plan C: this is the wrap-up/resume path of spec §6 — SIGTERM, a bounded
-    # `--resume <session>` wrap-up turn, then `claude -p --resume` with the
-    # minutes left. Plan A cannot resume a session, so it does the next best
-    # thing: a fresh Worker with the checkpoint in front of it, over a tree that
-    # still holds the partial work. The checkpoint finally has a consumer either
-    # way, which is the point of writing it first thing.
+    Used on the BOOT path only. Inside a live tick the wrap-up turn resumes the
+    killed session directly (`phases.run_worker(wrapup=True)`, spec §6 step 1)
+    and the Judge decides what follows. At boot no session survives the dead
+    harness, so the best available continuation is a fresh Worker with this
+    checkpoint in front of it, over a tree that still holds the partial work —
+    which is what the Judge's `resume` decision means at boot, and why
+    `boot_task` maps it onto the `wrapup` branch.
     """
     doc = util.read_json(os.path.join(h.runtime_dir, "worker-result.json")) or {}
     if not isinstance(doc, dict):
@@ -579,7 +580,8 @@ def handle_failure(h: Harness, ctx, contract, kind: str, detail: str,
              decision.get("classification", "open"),
              judge.one_line(decision.get("rationale"))[:200]))
 
-    action = judge.apply(ctx, contract, decision, evidence=evidence)
+    action = judge.apply(ctx, contract, decision, evidence=evidence,
+                        persist=in_force is not None)
     if action in ("defer", "halt"):
         finish_deferral(h, ctx, in_force, decision)
     # The attempt's other phases were recorded as they ran (spec §14); this
