@@ -725,6 +725,16 @@ class TestEventStore(unittest.TestCase):
 
 
 class TestBuildSnapshot(unittest.TestCase):
+    def test_snapshot_names_the_log_file_it_tailed(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        with open(os.path.join(d, "harness.log"), "w") as f:
+            f.write("tick 3 phase evaluator rc=0\n")
+        store = mk([{"t": 1, "type": "loop_start"}], loop_dir=d)
+        snap = serve.build_snapshot(d, store, live(), {"state": "idle"}, NOW)
+        self.assertEqual(snap["log_file"], "harness.log")
+        self.assertEqual(snap["log"], ["tick 3 phase evaluator rc=0"])
+
     def _loop_dir(self, events=EVENTS_SAMPLE):
         d = tempfile.mkdtemp()
         os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
@@ -1240,6 +1250,31 @@ class TestCanonModel(unittest.TestCase):
         self.assertEqual(serve._canon_model("us.anthropic.claude-opus-4-8"), "claude-opus-4-8")
         self.assertEqual(serve._canon_model("claude-haiku-4-5-20251001"), "claude-haiku-4-5-20251001")
         self.assertEqual(serve._canon_model("us.anthropic.claude-haiku-4-5-20251001-v1:0"), "claude-haiku-4-5-20251001")
+
+
+class TestLogTail(unittest.TestCase):
+    """v3 writes harness.log; a v2 dir still has only run.log."""
+
+    def test_prefers_harness_log(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "harness.log"), "w") as f:
+            f.write("phase scout ok\n")
+        with open(os.path.join(d, "run.log"), "w") as f:
+            f.write("old v2 line\n")
+        lines, name = serve._log_tail(d)
+        self.assertEqual(lines, ["phase scout ok"])
+        self.assertEqual(name, "harness.log")
+
+    def test_falls_back_to_run_log(self):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "run.log"), "w") as f:
+            f.write("old v2 line\n")
+        lines, name = serve._log_tail(d)
+        self.assertEqual(lines, ["old v2 line"])
+        self.assertEqual(name, "run.log")
+
+    def test_neither_file_is_not_an_error(self):
+        self.assertEqual(serve._log_tail(tempfile.mkdtemp()), ([], "harness.log"))
 
 
 class TestTailLines(unittest.TestCase):
