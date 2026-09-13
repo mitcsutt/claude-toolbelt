@@ -408,16 +408,20 @@ footer > .wrap { padding-block: 14px 26px; display: flex; flex-wrap: wrap; gap: 
    contract omits something (the stall threshold) the default is a named constant
    below and is documented as an assumption, not fabricated into the payload. */
 
-// #mock renders this constant, kept byte-identical to tests/fixtures/snapshot-sample.json
+// #mock renders this constant. It is the same Snapshot document as
+// tests/fixtures/snapshot-sample.json, which exists only to be the thing this
+// matches -- serve.test.py's TestMockMatchesFixture parses both and asserts they
+// are equal (as documents, not as bytes: the fixture is indented JSON). Nothing
+// checked before, and the pair had silently drifted apart by 3.0.0.
 const MOCK = {
   "loop": {
     "name": "2026-09-11-internal-app",
     "worktree": "/Users/dev/work/internal-app.loop",
     "status": "running",
     "tick": 12,
-    "plugin_version": "2.1.0",
-    "schema": 2,
-    "migration": {"from": 1, "to": 2, "actions": "legacy-lock-removed", "at": 1757635200}
+    "plugin_version": "3.0.0",
+    "schema": 3,
+    "migration": {"from": 2, "to": 3, "actions": "artifacts-dir,decisions-file,harness-log,gitignore-artifacts", "at": 1757635200}
   },
   "now": 1757600004,
   "status": {

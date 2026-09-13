@@ -4,9 +4,11 @@
     "worktree": "/Users/dev/work/internal-app.loop",
     "status": "running",
     "tick": 12,
-    "plugin_version": "2.0.0",
-    "schema": 2,
-    "migration": null
+    "plugin_version": "3.0.0",
+    "schema": 3,
+    "migration": {"from": 2, "to": 3,
+                  "actions": "artifacts-dir,decisions-file,harness-log,gitignore-artifacts",
+                  "at": 1757635200}
   },
   "now": 1757600004,
   "status": {
