@@ -228,16 +228,25 @@ def _result_with(base: PhaseResult, extra: PhaseResult) -> PhaseResult:
 
 def _dispatch(ctx: TickContext, *, phase: str, role: str, prompt_name: str,
               tier: str, variables: Dict[str, Any], desc: str,
-              max_turns: int = 0, max_budget_usd: Optional[float] = None
+              max_turns: int = 0, max_budget_usd: Optional[float] = None,
+              timeout_s: Optional[int] = None,
+              resume_session: Optional[str] = None
               ) -> Tuple[PhaseResult, Optional[Dict[str, Any]]]:
-    """Render, run, parse. One re-ask on a parse failure; none after a kill."""
+    """Render, run, parse. One re-ask on a parse failure; none after a kill.
+
+    `timeout_s` is normally derived from the phase name, but a caller may name
+    it: the Worker's cap carries the Judge's one extension, and `worker-wrapup`
+    is not a `Limits:` key at all (its budget is `wrapup_timeout`), so deriving
+    it would silently hand the wrap-up the gate's default instead.
+    """
     model = config.model_for(ctx.cfg, tier)
-    timeout_s = config.phase_limit(ctx.cfg, phase)
+    if timeout_s is None:
+        timeout_s = config.phase_limit(ctx.cfg, phase)
     prompt = render_prompt(prompt_name, **variables)
     kwargs = dict(phase=phase, model=model, cwd=ctx.cfg.worktree,
                   timeout_s=timeout_s, max_turns=max_turns,
                   max_budget_usd=max_budget_usd, env=_env(), events=ctx.events,
-                  tick=ctx.tick, role=role,
+                  tick=ctx.tick, role=role, resume_session=resume_session,
                   activity_path=os.path.join(ctx.runtime_dir, "last-activity"),
                   ratelimit_path=os.path.join(ctx.runtime_dir, "ratelimit.json"),
                   stall_s=_stall_s(), desc=desc,
@@ -265,20 +274,49 @@ def _dispatch(ctx: TickContext, *, phase: str, role: str, prompt_name: str,
         return merged, None
 
 
-def worker_tier(cfg, tier: Optional[str] = None) -> str:
+# Spec §6 step 1: the wrap-up gets 8 turns. It is the load-bearing number --
+# enough to read the tree and rewrite the checkpoint, not enough to restart
+# the work the phase was just stopped for.
+_WRAPUP_MAX_TURNS = 8
+
+
+def worker_tier(ctx, tier: Optional[str] = None) -> str:
     """The tier to dispatch the Worker at. A lookup, not a ladder.
 
     Spec §11 item 4 (Mitch, parallel session): the tier of a re-attempt is judged
     from the Worker's checkpoint, not stepped up on a schedule. Most overruns are
     one extra iteration, and paying the top tier for them is how a cheap retry
-    becomes an expensive one. So the attempt number is not an input here: every
-    attempt runs at the configured tier unless a caller names a different one,
-    and in plan A nobody does. Plan C passes the Judge's `changes.tier`.
+    becomes an expensive one. So the attempt number is not an input here, and
+    there is no ladder anywhere in the runner.
+
+    Precedence: an explicit `tier` argument, then whatever the Judge armed on the
+    context (`changes.tier`, applied by `judge.apply`), then the configured
+    worker tier. Reading `ctx.tier` here is what makes the Judge's decision reach
+    the dispatch without every call site having to thread it through.
     """
-    chosen = tier or cfg.role_tiers.get("worker") or "standard"
+    chosen = (tier or getattr(ctx, "tier", None)
+              or ctx.cfg.role_tiers.get("worker") or "standard")
     if chosen not in config.TIER_ORDER:
         chosen = "standard"
     return chosen
+
+
+def worker_cap(ctx) -> int:
+    """The Worker's wall clock: `worker_timeout` plus the Judge's one extension.
+
+    `judge.validate_decision` has already bounded the extension at the phase
+    default and refused a second one, so this is a sum, not a policy.
+    """
+    return config.phase_limit(ctx.cfg, "worker") + max(
+        0, int(getattr(ctx, "extend_cap_s", 0) or 0))
+
+
+def worker_checkpoint(ctx) -> str:
+    """The Worker's own last checkpoint, for the `{{checkpoint}}` placeholder."""
+    doc = util.read_json(os.path.join(ctx.runtime_dir, "worker-result.json"))
+    if not isinstance(doc, dict):
+        return "(no checkpoint written)"
+    return doc.get("checkpoint") or "(no checkpoint written)"
 
 
 def evaluator_tier(cfg, task) -> str:
@@ -322,17 +360,58 @@ def run_scout(ctx: TickContext, validation_errors: Optional[List[str]] = None
 def run_worker(ctx: TickContext, contract, resume_session: Optional[str] = None,
                wrapup: bool = False, tier: Optional[str] = None,
                findings: str = "") -> Tuple[PhaseResult, Dict[str, Any]]:
-    """Dispatch the Worker. `tier` overrides the configured one; nothing in plan A
-    passes it, so a re-dispatch runs at the same tier with the findings injected."""
-    if wrapup or resume_session:
-        raise NotImplementedError(
-            "worker wrap-up and resume land in plan C (spec §6); plan A dispatches "
-            "a fresh Worker per attempt")
+    """Dispatch the Worker. Three shapes, one dispatch (spec §6).
+
+    - **fresh** — a new session against the contract, with the Evaluator's
+      findings (or the Judge's instruction, threaded through `findings`) in front
+      of it. This branch is plan A's and is unchanged.
+    - **wrap-up** — the phase was killed at its deadline; 8 turns on the SAME
+      session to write an honest `worker-result.json` and stop. The checkpoint
+      finally has a consumer.
+    - **resume** — the Judge read the checkpoint and said continue: the same
+      session again, with the minutes left, over a tree that still holds the
+      partial work.
+
+    Returns `(PhaseResult, payload)`. For the fresh branch the payload is the
+    phase's own JSON block; for the other two it is `worker-result.json` as the
+    Worker left it, because that file — not the reply — is what the next attempt
+    reads.
+    """
     tdd = _TDD_NOTE if ctx.cfg.tdd_mode not in ("", "none") else ""
+    if wrapup or resume_session:
+        name = "worker_wrapup" if wrapup else "worker_resume"
+        variables = {"loop_dir": ctx.loop_dir, "worktree": ctx.cfg.worktree,
+                     "task_row": ctx.task.raw.strip(),
+                     "contract_json": json.dumps(contract_mod.to_dict(contract),
+                                                 indent=2),
+                     "checkpoint": worker_checkpoint(ctx)}
+        if not wrapup:
+            variables["minutes_left"] = str(max(1, worker_cap(ctx) // 60))
+        res, _ = _dispatch(
+            ctx,
+            # A wrap-up is its own phase NAME so a reader can tell the two apart
+            # in events and in the attempt record -- but it is still a Worker
+            # turn against the same session and the same budget line, so
+            # `TaskState.resumes_spent` counts it (spec §14 has no WRAPUP phase).
+            phase="worker-wrapup" if wrapup else "worker",
+            role="worker-wrapup" if wrapup else "Worker",
+            prompt_name=name,
+            tier=worker_tier(ctx, tier),
+            desc=("Wrap up %s" % ctx.task.id if wrapup
+                  else "Resume %s attempt %d" % (ctx.task.id, ctx.attempt)),
+            timeout_s=(config.phase_limit(ctx.cfg, "wrapup") if wrapup
+                       else worker_cap(ctx)),
+            max_turns=_WRAPUP_MAX_TURNS if wrapup else 0,
+            max_budget_usd=float(ctx.cfg.limits.get("worker_budget_usd", 6)),
+            resume_session=resume_session,
+            variables=variables)
+        return res, worker_payload(ctx)
+
     res, data = _dispatch(
         ctx, phase="worker", role="Worker", prompt_name="worker",
-        tier=worker_tier(ctx.cfg, tier),
+        tier=worker_tier(ctx, tier),
         desc="Worker %s attempt %d" % (ctx.task.id, ctx.attempt),
+        timeout_s=worker_cap(ctx),
         max_budget_usd=float(ctx.cfg.limits.get("worker_budget_usd", 6)),
         variables={"loop_dir": ctx.loop_dir, "worktree": ctx.cfg.worktree,
                    "contract_json": json.dumps(contract_mod.to_dict(contract),
@@ -342,6 +421,12 @@ def run_worker(ctx: TickContext, contract, resume_session: Optional[str] = None,
     if data is None:
         data = {"status": "partial", "summary": "the Worker returned no usable JSON"}
     return res, data
+
+
+def worker_payload(ctx) -> Dict[str, Any]:
+    """`runtime/worker-result.json` as the Worker left it, `{}` if it wrote none."""
+    doc = util.read_json(os.path.join(ctx.runtime_dir, "worker-result.json"))
+    return doc if isinstance(doc, dict) else {}
 
 
 def run_evaluator(ctx: TickContext, contract, diff_text: str, gate_outputs: str,
