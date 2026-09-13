@@ -105,6 +105,57 @@ def _kv_tokens(value: Any) -> Dict[str, str]:
     return out
 
 
+# Spec §5.3. The `Render:` recipe is the one multi-line field in LOOP_CONFIG.md:
+# every other key is a flat `Key: value` line read by `_field_value`. Sub-keys
+# are indented, so the flat scan cannot see them and cannot be confused by them.
+_RENDER_KEYS = ("start", "ready", "command", "ui_globs", "reference")
+
+
+def _parse_render_block(lines: List[str], i: int) -> Any:
+    """Parse the `Render:` block whose header is lines[i].
+
+    Returns (render_dict, index_of_first_line_after_the_block). The block ends
+    at the first non-indented, non-blank line or EOF; blank lines and indented
+    `#` comments are skipped; unknown sub-keys are ignored. An inline value on
+    the header line is the `command`, except a `<placeholder>` from the
+    template, which means "no recipe".
+    """
+    render: Dict[str, Any] = {}
+    inline = lines[i].split(":", 1)[1].strip()
+    if inline and not inline.startswith("<"):
+        render["command"] = inline
+    j = i + 1
+    while j < len(lines):
+        line = lines[j].rstrip("\n")
+        if line.strip() == "":
+            j += 1
+            continue
+        if not (line.startswith(" ") or line.startswith("\t")):
+            break
+        body = line.strip()
+        if body.startswith("#"):
+            j += 1
+            continue
+        if ":" not in body:
+            break
+        key, _, val = body.partition(":")
+        key = key.strip()
+        val = val.strip()
+        if key in _RENDER_KEYS and val:
+            render[key] = val
+        j += 1
+    if "ui_globs" in render:
+        render["ui_globs"] = render["ui_globs"].split()
+    if "reference" in render:
+        refs = []
+        for token in render["reference"].split():
+            name, sep, path = token.partition("=")
+            if sep and name and path:
+                refs.append({"name": name, "path": path})
+        render["reference"] = refs
+    return render, j
+
+
 def load_config(path: str) -> LoopConfig:
     """Parse LOOP_CONFIG.md. Raises ValueError when the file is missing or empty."""
     text = util.read_text(path)
@@ -130,11 +181,11 @@ def load_config(path: str) -> LoopConfig:
             role_tiers[role] = v.strip()
 
     render: Dict[str, Any] = {}
-    render_line = _field_value(text, "Render")
-    if render_line:
-        globs = _kv_tokens(render_line).get("ui_globs", "")
-        render = {"raw": render_line,
-                  "ui_globs": [g for g in globs.split(",") if g]}
+    lines = text.splitlines()
+    for idx, line in enumerate(lines):
+        if line.startswith("Render:"):
+            render, _ = _parse_render_block(lines, idx)
+            break
 
     return LoopConfig(
         worktree=_field_value(text, "Worktree") or "",
