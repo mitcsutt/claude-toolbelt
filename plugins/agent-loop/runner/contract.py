@@ -16,9 +16,17 @@ from typing import Any, Dict, List, Optional
 
 from . import util
 
-# A whitespace-delimited token that looks like a repo path: at least one "/",
-# and only characters a path (or a glob) legitimately contains.
-PATH_TOKEN_RE = re.compile(r"^[\w.@#-]+(/[\w.@#\[\]{}*-]+)+$")
+# A whitespace-delimited token that looks like a repo path. Built from
+# characters a path (or a glob) legitimately contains, AND at least one of:
+# a glob metachar, a dot-extension on its final segment, or two-or-more "/".
+# A lone slash is not enough — "and/or", "24/7", "n/a" and "w/o" all have
+# exactly one "/" and no extension, so none of them qualify. The extension
+# check excludes an all-digit suffix ("0.6") so a bare decimal doesn't read
+# as a path; "package.json" and "README.md" still qualify since their
+# extensions aren't all-digit.
+PATH_TOKEN_RE = re.compile(
+    r"^(?=.*[*\[{]|(?:[^/]*/){2,}|.*\.(?!\d+$)\w+$)[\w.@#/\[\]{}*-]+$"
+)
 COPY_VERBS = ("copy", "port", "replicate")
 VALID_SOURCES = ("plan", "spec", "scout")
 READ_MARKER = "(read)"
@@ -63,6 +71,23 @@ class Contract:
     relevant_learnings: List[str] = field(default_factory=list)
 
 
+def _require_list(raw: Dict[str, Any], key: str) -> list:
+    """The value at `key` as a list, defaulting to [] when the key is absent.
+
+    A present-but-non-list value (a bare string, a number, a dict) must never
+    be silently coerced — `list("outside allow_list")` explodes a string into
+    single-character "criteria" and would let a lying contract pass
+    `validate` as an empty, harmless list. Raise instead.
+    """
+    value = raw.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ContractError(
+            "%s must be a list, got %s: %r" % (key, type(value).__name__, value))
+    return value
+
+
 def load_contract(path: str) -> Contract:
     raw = util.read_json(path)
     if not isinstance(raw, dict):
@@ -73,7 +98,7 @@ def load_contract(path: str) -> Contract:
         render_gate = RenderGate(commands=list(rg.get("commands") or []),
                                  screenshots=list(rg.get("screenshots") or []))
     fidelity = []
-    for item in raw.get("fidelity_source") or []:
+    for item in _require_list(raw, "fidelity_source"):
         if not isinstance(item, dict):
             continue
         fidelity.append(FidelitySource(
@@ -81,23 +106,23 @@ def load_contract(path: str) -> Contract:
             dst=item.get("to", item.get("dst", "")),
             min_similarity=float(item.get("min_similarity", 0.0))))
     forbidden = []
-    for item in raw.get("forbidden") or []:
+    for item in _require_list(raw, "forbidden"):
         if isinstance(item, dict):
             forbidden.append(Forbidden(path=item.get("path", ""),
                                        source=item.get("source", "")))
     return Contract(
         task=raw.get("task", ""),
-        success_criteria=list(raw.get("success_criteria") or []),
-        allow_list=list(raw.get("allow_list") or []),
+        success_criteria=list(_require_list(raw, "success_criteria")),
+        allow_list=list(_require_list(raw, "allow_list")),
         forbidden=forbidden,
-        verification=list(raw.get("verification") or []),
+        verification=list(_require_list(raw, "verification")),
         render_gate=render_gate,
         fidelity_source=fidelity,
-        evaluator_must_read=list(raw.get("evaluator_must_read") or []),
-        evaluator_must_view=list(raw.get("evaluator_must_view") or []),
+        evaluator_must_read=list(_require_list(raw, "evaluator_must_read")),
+        evaluator_must_view=list(_require_list(raw, "evaluator_must_view")),
         estimated_diff_lines=int(raw.get("estimated_diff_lines") or 0),
         scout_notes=raw.get("scout_notes", "") or "",
-        relevant_learnings=list(raw.get("relevant_learnings") or []),
+        relevant_learnings=list(_require_list(raw, "relevant_learnings")),
     )
 
 

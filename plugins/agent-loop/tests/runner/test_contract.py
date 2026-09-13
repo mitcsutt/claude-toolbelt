@@ -255,5 +255,79 @@ class TestRoundTrip(unittest.TestCase):
             cmod.load_contract(self.p)
 
 
+class TestLoadListValidation(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.p = os.path.join(self.d, "sprint-T60.json")
+
+    def _write(self, obj):
+        with open(self.p, "w") as f:
+            json.dump(obj, f)
+
+    def test_a_string_success_criteria_raises_contract_error(self):
+        self._write({"task": "T60", "success_criteria": "just do it",
+                     "allow_list": ["a/b"], "verification": ["true"]})
+        with self.assertRaises(cmod.ContractError):
+            cmod.load_contract(self.p)
+
+    def test_a_scalar_allow_list_raises_contract_error_not_type_error(self):
+        self._write({"task": "T60", "success_criteria": ["x"],
+                     "allow_list": 5, "verification": ["true"]})
+        with self.assertRaises(cmod.ContractError):
+            cmod.load_contract(self.p)
+
+    def test_a_dict_verification_raises_contract_error(self):
+        self._write({"task": "T60", "success_criteria": ["x"],
+                     "allow_list": ["a/b"], "verification": {"cmd": "true"}})
+        with self.assertRaises(cmod.ContractError):
+            cmod.load_contract(self.p)
+
+    def test_a_non_list_forbidden_raises_contract_error(self):
+        self._write({"task": "T60", "success_criteria": ["x"],
+                     "allow_list": ["a/b"], "verification": ["true"],
+                     "forbidden": "apps/**"})
+        with self.assertRaises(cmod.ContractError):
+            cmod.load_contract(self.p)
+
+    def test_a_non_list_fidelity_source_raises_contract_error(self):
+        self._write({"task": "T60", "success_criteria": ["x"],
+                     "allow_list": ["a/b"], "verification": ["true"],
+                     "fidelity_source": {"from": "a", "to": "b"}})
+        with self.assertRaises(cmod.ContractError):
+            cmod.load_contract(self.p)
+
+    def test_missing_list_keys_default_to_empty(self):
+        self._write({"task": "T60", "success_criteria": ["x"],
+                     "allow_list": ["a/b"], "verification": ["true"]})
+        c = cmod.load_contract(self.p)
+        self.assertEqual([], c.forbidden)
+        self.assertEqual([], c.fidelity_source)
+        self.assertEqual([], c.evaluator_must_read)
+        self.assertEqual([], c.evaluator_must_view)
+        self.assertEqual([], c.relevant_learnings)
+
+
+class TestPathTokenIdioms(unittest.TestCase):
+    def test_english_slash_idioms_are_not_flagged(self):
+        c = contract(success_criteria=[
+            "works 24/7 and/or as needed, n/a or w/o extra config"])
+        self.assertEqual([], cmod.validate(c, task(), CFG, "", UI_GLOBS))
+
+    def test_a_root_level_file_outside_allow_list_is_scanned(self):
+        c = contract(success_criteria=["package.json gains a new script"])
+        errs = cmod.validate(c, task(), CFG, "", UI_GLOBS)
+        self.assertEqual(1, len(errs))
+        self.assertIn("package.json", errs[0])
+        self.assertIn("allow_list", errs[0])
+
+    def test_a_root_level_file_inside_allow_list_is_fine(self):
+        c = contract(success_criteria=["package.json gains a new script"],
+                     allow_list=["package.json"])
+        self.assertEqual([], cmod.validate(c, task(), CFG, "", UI_GLOBS))
+
+    def test_bare_decimal_is_still_not_a_path_token(self):
+        self.assertFalse(cmod.PATH_TOKEN_RE.match("0.6"))
+
+
 if __name__ == "__main__":
     unittest.main()
