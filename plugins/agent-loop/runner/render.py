@@ -309,6 +309,10 @@ class VisualResult:
     references: List[Dict] = field(default_factory=list)
     fidelity: List[Dict] = field(default_factory=list)
     failure_text: str = ""
+    # "render" or "fidelity" when ok is False -- recorded where the failure
+    # happens rather than inferred later from failure_text, so a reworded
+    # heading can never silently change the kind the Judge is handed.
+    kind: str = ""
 
 
 def run_visual_checks(ctx, contract, ready_timeout_s: int = READY_TIMEOUT_S,
@@ -323,12 +327,14 @@ def run_visual_checks(ctx, contract, ready_timeout_s: int = READY_TIMEOUT_S,
                        ready_timeout_s=ready_timeout_s, poll_s=poll_s)
         except RenderAppError as exc:
             vis.ok = False
+            vis.kind = "render"
             vis.failure_text = "## Render app FAILED\n%s" % exc
             return vis
         vis.render_results, vis.screenshots = run_render_gate(ctx, contract)
         failed = [r for r in vis.render_results if r.rc != 0]
         if failed:
             vis.ok = False
+            vis.kind = "render"
             problems.append(
                 "## Render gate FAILED\n"
                 + "\n".join("%s (rc=%s%s) -> %s"
@@ -340,6 +346,9 @@ def run_visual_checks(ctx, contract, ready_timeout_s: int = READY_TIMEOUT_S,
     vis.fidelity = run_fidelity(ctx, contract)
     if any(not c["ok"] for c in vis.fidelity):
         vis.ok = False
+        # Render first when both failed: an app that would not render is why the
+        # copy could not be compared, not the other way round.
+        vis.kind = vis.kind or "fidelity"
         problems.append(fidelity_text(vis.fidelity))
 
     vis.failure_text = "\n\n".join(problems)
@@ -349,16 +358,11 @@ def run_visual_checks(ctx, contract, ready_timeout_s: int = READY_TIMEOUT_S,
 def failure_kind(vis: VisualResult) -> str:
     """Which first-class failure kind this result is, or "" when it passed.
 
-    Render before fidelity: an app that would not render is why the copy could
-    not be compared, not the other way round. The kind is half of
-    `run.failure_signature` and reaches the Judge verbatim, so the two stay
-    distinct — "it built and looks wrong" must not read as "it did not build".
+    The kind is half of `run.failure_signature` and reaches the Judge verbatim,
+    so `render` and `fidelity` stay distinct — "it built and looks wrong" must
+    not read as "it did not build" (spec §1 defect 1).
     """
-    if vis.ok:
-        return ""
-    if not vis.failure_text.startswith("## Fidelity"):
-        return "render"
-    return "fidelity"
+    return "" if vis.ok else (vis.kind or "render")
 
 
 def evaluator_screenshots(vis: VisualResult) -> List[Dict]:
