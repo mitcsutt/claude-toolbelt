@@ -527,6 +527,16 @@ def handle_failure(h: Harness, ctx, contract, kind: str, detail: str,
     else:
         in_force = contract
 
+    if judge.judge_decision_count(previous) >= 2:
+        # The Judge is still asked -- `validate_decision` forces it to defer or
+        # halt from here (spec §7) -- but a human now has an incident saying the
+        # loop is arguing with itself rather than a third quiet deferral.
+        incidents.raise_incident(
+            ctx, "judge-loop", "error",
+            "two Judge decisions on %s have already failed; the last failure "
+            "signature is %s" % (ctx.task.id, signature),
+            phase_results=phase_results)
+
     failure = judge.Failure(kind=kind, detail=detail, verdict=verdict or {},
                             signature=signature, repeat=repeat)
     inp = judge.build_input(ctx, contract, failure)
@@ -611,6 +621,22 @@ def run_worker_attempt(h: Harness, ctx, contract, attempt: int = 1,
         ctx.last_session = result.session_id
     if state is not None:
         ctx.resume_count = state.resumes_spent()
+
+    # Spec §8: a timeout the runner resolves by wrap-up/resume/split is an EVENT,
+    # not an incident -- that is most of why the v2 medic ran on nearly every
+    # overrun. It becomes an incident only once the resume budget is spent, and
+    # then only as `warn`: the runner has still done everything it can (the
+    # wrap-up ran, the checkpoint is kept) and the Judge decides next.
+    if result.timed_out and not result.stopped and ctx.resume_count >= int(
+            ctx.cfg.limits.get("worker_resume_max",
+                               config.DEFAULT_LIMITS["worker_resume_max"])):
+        incidents.raise_incident(
+            ctx, "phase-timeout", "warn",
+            "%s timed out after %ds on attempt %d; the resume budget is spent, "
+            "so the Judge decides next"
+            % (result.phase, max(0, int(result.ended) - int(result.started)),
+               ctx.attempt),
+            phase_results=results)
     return results, data
 
 
@@ -1312,7 +1338,12 @@ def run_loop(h: Harness) -> int:
                                           "tool call outstanding"
                                           % (result.phase, env_int("STALL_S", 300)),
                                           tick, h.medic, h.log)
-        timed_out = [r for r in outcome.results if r.timed_out]
+        # A Worker timeout is the runner's own business now (spec §8): the
+        # wrap-up preserved the checkpoint and the Judge chose the next attempt,
+        # so escalating it here would wake a human for a fault the loop handled.
+        # `run_worker_attempt` raises the `warn` incident if the budget is spent.
+        timed_out = [r for r in outcome.results
+                     if r.timed_out and not r.phase.startswith("worker")]
         if timed_out:
             detail = "the %s phase exceeded its budget" % timed_out[0].phase
             if not incidents.handle_incident(h.runtime_dir, h.events, h.cfg,

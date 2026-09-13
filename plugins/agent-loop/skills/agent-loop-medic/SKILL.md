@@ -18,13 +18,15 @@ Resolve, in this order, before judging anything:
 1. **`$LOOP_DIR`** — from the environment. If unset, use the newest `.claude/loop/*/` dir that contains `LOOP_CONFIG.md` (`ls -dt .claude/loop/*/ | head -1`).
 2. **Incident id** — the argument (`i-NNN`). If absent, the newest `$LOOP_DIR/runtime/incident-*.json`. If there is no incident file at all, triage from the last `loop_end` event (see §4, "No incident file").
 3. **Read these files** (all relative to `$LOOP_DIR`; a missing file is itself evidence — note it, do not fail):
-   - `runtime/incident-<id>.json` — `{id, kind, severity, detail, tick, t}`.
+   - `runtime/incident-<id>.json` — `{id, kind, severity, detail, tick, t, task, phases}`. `phases` is the tick's phase timeline: `[{phase, model, started, ended, rc, session}]`.
    - The last 200 lines of `events.jsonl`, filtered to lifecycle types: `tail -n 200 events.jsonl | grep -E '"type":"(loop_start|loop_end|tick_start|tick_end|sleep|memory_pressure|incident|medic_start|medic_end|paused|task_status)"'`.
    - `runtime/harness.json` (`{pid, start_epoch, host, loop_dir, plugin_version}`), `runtime/HEARTBEAT` (epoch), `runtime/tick.json` (`{tick, pid, started_at, timeout_s}` — present only while a tick runs).
    - Every other `runtime/incident-*.json` and `runtime/medic-*.json` in this run — you need them for the repeat-signature rule (§5).
    - `git status --porcelain` and `git log --oneline -5` in the worktree named by `LOOP_CONFIG.md`'s `Worktree:` line.
    - The last sprint contract: the newest `runtime/sprint-*.json` (its `allow_list` bounds every git action you may take).
    - `LOOP_PLAN.md` — look only for `[~]` rows.
+   - `LOOP_DECISIONS.md` — what the Judge already decided for this task. If the Judge has acted twice on the same task, the loop is arguing with itself and that is the finding, not the timeout.
+   - `runtime/task-<TASK>.json` — the task's state machine and attempt history: the phase it stopped in, and per attempt the tier that ran, the phase results, the outcome signature and the Judge's decision. An attempt with no `outcome` is one the harness never closed, i.e. it died mid-flight. This is the harness's control state: read it, never write it.
    - Host memory, one-liners only: darwin `vm_stat` and `sysctl vm.swapusage`; linux `head -5 /proc/meminfo`.
 
 Read; do not tail `-f`, do not loop, do not sleep waiting for something to change.
@@ -45,6 +47,8 @@ Harness alive = both true. Apply the same `kill -0` + `ps -o command=` test to t
 
 ## 4. Decision table
 
+**Read `phases` and name the phase that consumed the budget before diagnosing.** The incident's `phases` array is the tick's timeline. Say which phase ran longest, on which model, and whether it was killed (`rc` null with an `ended`), and put that sentence in `summary` before you choose a row. A diagnosis that does not name a phase is a guess — the 2026-09-11 run produced three medic reports that blamed "task size" while the actual timeline showed one extra Evaluator→Worker iteration each time.
+
 Find the row for the incident's `kind`. Apply the action. Return the outcome. Do not invent a row.
 
 | kind | raised by | action | outcome |
@@ -53,6 +57,8 @@ Find the row for the incident's `kind`. Apply the action. Return the outcome. Do
 | `tick-killed` | rc=137 | check the memory snapshot; **1st** in the run: `resumed`, with a `sleep reason=memory` hint in `summary`; **2nd consecutive**: environment problem | `resumed` (1st) / `paused` (2nd) |
 | `tick-timeout` | rc=124 | **1st**: `resumed`; **2nd on the same task**: `paused`, with the task id named in `summary` and `human_next_step` | `resumed` (1st) / `paused` (2nd same task) |
 | `tick-stalled` | harness stall detector | warn only; no action — `tick_timeout` owns it | `noop` |
+| `phase-timeout` | a phase hit its own budget and the runner's resume budget is spent | warn only; no action — the runner already ran the wrap-up, kept the checkpoint, and handed the task to the Judge. Name the phase and its model in `summary` | `noop` |
+| `judge-loop` | two Judge decisions on the same task have already failed | a human decision by definition: summarise both `LOOP_DECISIONS.md` entries for the task and what each tried, attempt no repair | `escalated` |
 | `garbage-ticks` | 3 consecutive no-sentinel/crash | inspect the last result and stderr in `run.log`; an auth/CLI error (login expired, `claude` not found, bad flag) is not yours to fix | `escalated` (auth/CLI) / `paused` (anything else) |
 | `no-progress` | NP_MAX guard | inspect `LOOP_PLAN.md` for a task flipping `[~]`↔`[ ]` across ticks; name it | `escalated` |
 | `halt-sentinel` | tick printed `<<LOOP_HALT:…>>` | a human decision by definition; summarise the halt text and the `LOOP_CLEANUP.md` entry, attempt no repair | `escalated` |
@@ -68,7 +74,7 @@ Find the row for the incident's `kind`. Apply the action. Return the outcome. Do
 
 ## 5. Budget and stop rules (HARD)
 
-- **Same `kind`+`detail` signature twice in a run → `escalated`.** Before acting, compare this incident's `kind` and `detail` against every earlier `runtime/incident-*.json`. A match means your last fix did not hold; do not apply it again.
+- **Same `kind` + `phase` + `task` signature twice in a run → `escalated`.** Before acting, build this incident's signature from its `kind`, the phase named in its `phases` timeline, and its `task`, and compare it against every earlier `runtime/incident-*.json`. A match means your last fix did not hold; do not apply it again. Keying on `kind` alone is what stopped the 2026-09-11 run: three unrelated causes all presented as `rc=124 after 1800s`.
 - **`MEDIC_MAX_PER_RUN` (default 3) reached → the harness stops calling you.** You do not get to argue for a fourth run. Write the best `human_next_step` you can each time, as if it were the last.
 - **Any action outside the allowlist (§6) → `escalated`,** with the proposed action written into `NEEDS_HUMAN.md` under `## Proposed (not run)` for the human to run. You propose; you do not perform.
 - **Wall clock `MEDIC_TIMEOUT` (default 600 s) → the harness treats you as `escalated`.** Budget your reads: the §2 list is the whole investigation. If you are still reading at five minutes, stop reading and write the file.
