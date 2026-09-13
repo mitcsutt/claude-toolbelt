@@ -126,6 +126,22 @@ class TaskState:
     def last_attempt(self) -> Optional[Dict[str, Any]]:
         return self.attempts[-1] if self.attempts else None
 
+    def resumes_spent(self) -> int:
+        """How many times the CURRENT attempt has already re-run its Worker.
+
+        Derived, not stored: spec §14 fixes this document's keys and the shape
+        of an attempt record, so the count is read back out of the WORK entries
+        already in `phase_results` -- the first is the original dispatch, every
+        one after it is a resume. A resume continues an attempt whose budget was
+        partly spent, so it is bounded by `worker_resume_max` rather than by
+        `max_attempts`; without that bound the two limits together bound
+        nothing, because a crash loop resumes forever inside one attempt.
+        """
+        record = self.last_attempt() or {}
+        works = [pr for pr in record.get("phase_results", [])
+                 if isinstance(pr, dict) and str(pr.get("phase", "")).upper() == "WORK"]
+        return max(0, len(works) - 1)
+
     def begin_attempt(self, tier: str) -> Dict[str, Any]:
         """Open attempt n+1 at `tier`. The tier is recorded, never derived.
 
