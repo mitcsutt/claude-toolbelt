@@ -178,6 +178,27 @@ def _revert_reporting(h: Harness, paths: List[str], label: str) -> List[str]:
     return survived
 
 
+def _whole_renames(h: Harness, stray: List[str]) -> List[str]:
+    """Pull in the other side of any rename that is partly a stray.
+
+    A rename is one operation, but the allow_list judges each name separately.
+    Renaming a sanctioned file to an unsanctioned name makes only the
+    destination a stray, and reverting that alone leaves the tree with NEITHER
+    name -- the destination deleted and the source still renamed away. Undoing
+    both sides restores the source from HEAD and removes the destination, which
+    is the state before the Worker touched it.
+    """
+    if not stray:
+        return stray
+    out = list(stray)
+    for src, dst in git_ops.rename_pairs(h.worktree):
+        if dst in out and src not in out:
+            out.append(src)
+        elif src in out and dst not in out:
+            out.append(dst)
+    return out
+
+
 def _minus_preexisting(h: Harness, stray: List[str],
                        label: str) -> Tuple[List[str], List[str]]:
     """Drop paths that were already dirty before this run started.
@@ -213,6 +234,7 @@ def sandbox(h: Harness, contract) -> List[str]:
     """
     changed = git_ops.changed_paths(h.worktree)
     stray = git_ops.strays(changed, list(contract.allow_list) + _protected(h))
+    stray = _whole_renames(h, stray)
     stray, spared = _minus_preexisting(h, stray, "sandbox")
     _revert_reporting(h, stray, "sandbox")
     return stray
@@ -472,15 +494,28 @@ def handle_failure(h: Harness, task, reason: str, evidence: str, contract=None) 
 
 
 def run_worker_attempt(h: Harness, ctx, contract, attempt: int, findings: str = "",
-                       tier: Optional[str] = None):
+                       tier: Optional[str] = None, state=None):
     """One Worker dispatch plus the sandbox that always follows it.
 
     `tier` is the seam plan C's Judge writes through (`changes.tier`); plan A
     never passes it, so every attempt runs at the configured tier.
+
+    `state` is optional only so the brief's signature still holds; pass it. The
+    Worker and the sandbox are separate phases in spec §14's PHASES list, and
+    recording the boundary is what stops a kill DURING the sandbox reading as a
+    kill inside WORK -- which would send the boot rule to `wrapup` and spend a
+    second Worker budget on top of a half-reverted tree.
     """
     ctx.attempt = attempt
+    if state is not None:
+        state.begin_phase("WORK")
     result, data = phases.run_worker(ctx, contract, tier=tier, findings=findings)
+    if state is not None:
+        state.end_phase(result)
+        state.begin_phase("SANDBOX")
     sandbox(h, contract)
+    if state is not None:
+        state.end_phase()
     return result, data
 
 
@@ -576,13 +611,18 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             # already in the tree. Re-running it would spend a whole Worker budget
             # reproducing what is on disk.
             skip_worker = False
+            # The sandbox is local, idempotent and costs no model, and the kill
+            # may have landed in the middle of the previous one -- so re-run it
+            # rather than gate a tree whose containment never finished.
+            state.begin_phase("SANDBOX")
+            sandbox(h, contract)
+            state.end_phase()
             h.log("%s: resuming at GATE — the recorded Worker had already returned"
                   % task.id)
         else:
-            state.begin_phase("WORK")
-            wres, _ = run_worker_attempt(h, ctx, contract, attempt, findings=findings)
+            wres, _ = run_worker_attempt(h, ctx, contract, attempt,
+                                         findings=findings, state=state)
             out.results.append(wres)
-            state.end_phase(wres)
             if wres.stopped:
                 # STOP, not a timeout: the operator asked for the loop to stop,
                 # so the tick ends where it stands. The sandbox has already run,

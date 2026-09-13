@@ -79,3 +79,29 @@ class TestProcessAlive(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestReadTextSurvivesBinary(unittest.TestCase):
+    """`read_text` is read by a dozen callers on paths another process wrote.
+
+    Its contract is "returns a string, never raises"; a bare `open()` broke
+    that on a single undecodable byte, which is exactly what a truncated write
+    leaves behind -- and the first place it surfaced was the crash-recovery
+    path, before the harness could do anything about it.
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def test_invalid_utf8_reads_back_instead_of_raising(self):
+        path = os.path.join(self.d, "run.log")
+        with open(path, "wb") as f:
+            f.write(b"2026-09-13T00:00:00Z started\n\xff\xfe not text\nlast line\n")
+        body = util.read_text(path)
+        self.assertIn("started", body)
+        self.assertIn("last line", body,
+                      "one bad byte cost every line after it")
+
+    def test_a_missing_file_still_returns_the_default(self):
+        self.assertEqual("fallback", util.read_text(
+            os.path.join(self.d, "nope"), "fallback"))
