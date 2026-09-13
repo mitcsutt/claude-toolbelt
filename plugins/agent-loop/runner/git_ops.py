@@ -37,10 +37,17 @@ def _git(cwd: str, args: List[str], check: bool = True):
 
 
 def _unquote(path: str) -> str:
-    """Undo git's C-style quoting of paths containing spaces or specials."""
+    """Undo git's C-style quoting of paths containing spaces or specials.
+
+    Git escapes non-ASCII bytes as octal (`\\NNN`), one escape per raw UTF-8
+    byte. `str.decode("unicode_escape")` turns each `\\NNN` into a single
+    Latin-1 code point rather than a UTF-8 byte, so it must be re-encoded as
+    Latin-1 to recover the original bytes before decoding those as UTF-8.
+    """
     if len(path) >= 2 and path.startswith('"') and path.endswith('"'):
         try:
-            return path[1:-1].encode("utf-8").decode("unicode_escape")
+            return (path[1:-1].encode("utf-8").decode("unicode_escape")
+                    .encode("latin-1").decode("utf-8", "replace"))
         except (UnicodeDecodeError, UnicodeEncodeError):
             return path[1:-1]
     return path
@@ -75,13 +82,32 @@ def strays(changed: List[str], allow_list: List[str]) -> List[str]:
     return [p for p in changed if not _covered(p, allow_list)]
 
 
+def _unsafe(path: str) -> bool:
+    """An absolute path or a `..` component escapes `cwd`; never touch it."""
+    if os.path.isabs(path):
+        return True
+    return ".." in path.split("/")
+
+
 def revert(cwd: str, paths: List[str]) -> None:
-    """Restore tracked paths; delete untracked ones. Missing paths are fine."""
+    """Restore every path to its HEAD state; delete anything HEAD never had.
+
+    `git checkout -- <path>` resolves against the INDEX, not HEAD, so a
+    staged rename (the index already holds the new name) would silently
+    survive a revert. Checking each path against HEAD instead — and
+    unstaging + deleting whatever HEAD never had — undoes a rename
+    correctly: the old name is in HEAD and comes back, the new name is not
+    and is removed. An unborn branch (no HEAD yet) makes every path "not in
+    HEAD" automatically, since `cat-file -e HEAD:<path>` fails there too.
+    """
     for path in paths:
-        rc, _ = _git(cwd, ["ls-files", "--error-unmatch", "--", path], check=False)
-        if rc == 0:
-            _git(cwd, ["checkout", "--", path], check=False)
+        if _unsafe(path):
             continue
+        rc, _ = _git(cwd, ["cat-file", "-e", "HEAD:" + path], check=False)
+        if rc == 0:
+            _git(cwd, ["checkout", "HEAD", "--", path], check=False)
+            continue
+        _git(cwd, ["rm", "-f", "--cached", "--", path], check=False)
         full = os.path.join(cwd, path)
         try:
             os.remove(full)
