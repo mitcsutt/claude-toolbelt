@@ -4,6 +4,7 @@ import os
 import shlex
 import stat
 import tempfile
+import threading
 import time
 import unittest
 
@@ -34,6 +35,24 @@ def custom_claude(d, body, name="claude"):
         f.write(b"#!/usr/bin/env bash\ncat >/dev/null 2>&1 || true\n" + data)
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return path
+
+
+class BrokenEvents(object):
+    """An EventLog whose `emit` raises on one event type.
+
+    A consumer raising mid-stream is the realistic shape of the parse loop
+    blowing up: every field the loop itself touches is coerced or guarded, so
+    what is left is the callbacks it makes into someone else's code.
+    """
+
+    def __init__(self, inner, raise_on):
+        self.inner = inner
+        self.raise_on = raise_on
+
+    def emit(self, type, **fields):
+        if type == self.raise_on:
+            raise RuntimeError("boom")
+        self.inner.emit(type, **fields)
 
 
 INIT = json.dumps({"type": "system", "subtype": "init", "session_id": "sess-1"})
@@ -406,11 +425,21 @@ class TestStallReporting(Harnessed):
         self.assertFalse(res.stalled)
 
     def test_a_quiet_stretch_that_recovers_is_not_reported_as_a_stall(self):
-        """v2 called seven of these a stall and was wrong every time."""
+        """v2 called seven of these a stall and was wrong every time.
+
+        The quiet stretch has to outlast `stall_s` for a latching detector to
+        fire, and `stall_s` has to outlast the epilogue (`proc.wait`, two
+        `join(timeout=5)`s) for the verdict to be read off the stream rather
+        than off how loaded the machine was. 7 s of quiet against a 4 s window
+        gives the watchdog three ticks to latch and the epilogue 4 s of slack.
+        """
         body = "printf '%s\\n' " + shlex.quote(INIT) + "\n"
-        body += "sleep 2\n"
+        body += "sleep 7\n"
         body += "printf '%s\\n' " + shlex.quote(OK_RESULT) + "\n"
-        res = self.run_it(custom_claude(self.d, body), stall_s=1)
+        started = time.time()
+        res = self.run_it(custom_claude(self.d, body), stall_s=4)
+        quiet = time.time() - started
+        self.assertGreater(quiet, 4.0)          # the stretch really was a stall
         self.assertEqual(0, res.rc)
         self.assertFalse(res.stalled)
 
@@ -485,6 +514,103 @@ class TestStubDrivenPhase(Harnessed):
         self.write("001.jsonl", OK_RESULT + "\n")
         self.write("001.exit", "2")
         self.assertEqual(2, self.run_it(self.stub, env=self.env).rc)
+
+
+class TestStreamErrorPath(Harnessed):
+    """A parser that falls over must kill the child, not wait it out.
+
+    Without the guard the exception reaches a `finally` whose watchdog has
+    already been retired by `stop.set()`, so `proc.wait()` blocks on a live
+    `claude` forever. That is the hang-forever failure this module exists to
+    prevent, and it is reachable from one raising consumer.
+    """
+
+    def setUp(self):
+        Harnessed.setUp(self)
+        self.stub = os.path.join(FIXTURES, "claude")
+        self.script = tempfile.mkdtemp()
+        self.env = dict(os.environ)
+        self.env["STUB_SCRIPT"] = self.script
+        with open(os.path.join(self.script, "001.jsonl"), "w") as f:
+            f.write(ASSISTANT + "\n")
+        with open(os.path.join(self.script, "001.sleep"), "w") as f:
+            f.write("20")          # the phase hangs AFTER its usage is on the wire
+
+    def test_a_raising_consumer_kills_the_phase_instead_of_hanging_on_it(self):
+        broken = BrokenEvents(self.events, "tool")
+        started = time.time()
+        res = self.run_it(self.stub, env=self.env, events=broken, timeout_s=120)
+        elapsed = time.time() - started
+        # The stub sleeps 20 s and the wall-clock budget is 120 s, so anything
+        # under 10 s can only be the parse-error kill path.
+        self.assertLess(elapsed, 10)
+        self.assertTrue(res.stream_error)
+        self.assertTrue(res.killed)
+        self.assertFalse(res.timed_out)
+        self.assertEqual(143, res.rc)
+
+    def test_the_usage_and_session_survive_a_parse_error(self):
+        broken = BrokenEvents(self.events, "tool")
+        res = self.run_it(self.stub, env=self.env, events=broken, timeout_s=120)
+        self.assertEqual(10, res.usage_by_model["model-a"].input_tokens)
+        self.assertEqual("stub-001", res.session_id)
+        self.assertEqual(1, len(self.emitted("phase_end")))
+        self.assertEqual(1, len(self.emitted("role_end")))
+
+
+class TestKiller(unittest.TestCase):
+    """`_Killer` is the only thing between the harness and a recycled pid.
+
+    `_terminate` signals a process *group* derived from the child's pid; the
+    moment the child is reaped that pid can name something else entirely, so
+    the main thread closes the killer before it waits. Neither half of the
+    guard shows up in a PhaseResult, so it is asserted directly.
+    """
+
+    def setUp(self):
+        self.real = claude_proc._terminate
+        self.calls = []
+
+    def tearDown(self):
+        claude_proc._terminate = self.real
+
+    def test_a_kill_after_close_signals_nothing(self):
+        claude_proc._terminate = lambda proc: self.calls.append(proc)
+        killer = claude_proc._Killer("proc")
+        killer.kill()
+        self.assertEqual(1, len(self.calls))
+        killer.close()
+        killer.kill()
+        killer.kill()
+        self.assertEqual(1, len(self.calls))
+
+    def test_close_waits_out_a_kill_that_is_already_in_flight(self):
+        """Otherwise `close()` could return while a SIGTERM is still landing,
+        and the reap would race the signal it was meant to order behind."""
+        order = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow(proc):
+            order.append("in")
+            entered.set()
+            release.wait(5)
+            order.append("out")
+
+        claude_proc._terminate = slow
+        killer = claude_proc._Killer("proc")
+        t = threading.Thread(target=killer.kill)
+        t.daemon = True
+        t.start()
+        self.assertTrue(entered.wait(5))
+        threading.Timer(0.25, release.set).start()
+        began = time.monotonic()
+        killer.close()
+        waited = time.monotonic() - began
+        order.append("closed")
+        t.join(5)
+        self.assertEqual(["in", "out", "closed"], order)
+        self.assertGreaterEqual(waited, 0.2)
 
 
 class TestStubFixture(unittest.TestCase):
