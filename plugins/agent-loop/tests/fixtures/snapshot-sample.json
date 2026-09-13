@@ -40,6 +40,7 @@
     }
   },
   "current": {
+    "artifacts": [],
     "tick": 12,
     "role": "Worker",
     "model": "claude-sonnet-4-6",
@@ -406,6 +407,13 @@
         "summary": "1.1 GB free with swap at 94%. Cleared the orphaned sprint-T13.json, flipped T13 back to [ ], tree clean. Retrying with the memory guard armed."
       }
     }
+  ],
+  "log_file": "harness.log",
+  "decisions": [
+    {"t": 1757640100, "type": "decision", "task": "T60", "decision": "widen",
+     "classification": "self-imposed", "attempt": null, "into": null},
+    {"t": 1757640460, "type": "resume", "task": "T60", "decision": "resume",
+     "classification": null, "attempt": 2, "into": null}
   ],
   "usage": {
     "by_model": {
