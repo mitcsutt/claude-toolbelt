@@ -138,8 +138,7 @@ def pause_state(h: Harness) -> str:
 
 def _protected(h: Harness) -> List[str]:
     """Paths the sandbox must never revert: the loop's own dir, inside the worktree."""
-    rel = os.path.relpath(os.path.abspath(h.loop_dir), h.worktree)
-    return [rel, os.path.join(rel, "**")]
+    return git_ops.protected_paths(h.loop_dir, h.worktree)
 
 
 def _revert_reporting(h: Harness, paths: List[str], label: str) -> List[str]:
@@ -176,22 +175,12 @@ def _revert_reporting(h: Harness, paths: List[str], label: str) -> List[str]:
 def _whole_renames(h: Harness, stray: List[str]) -> List[str]:
     """Pull in the other side of any rename that is partly a stray.
 
-    A rename is one operation, but the allow_list judges each name separately.
-    Renaming a sanctioned file to an unsanctioned name makes only the
-    destination a stray, and reverting that alone leaves the tree with NEITHER
-    name -- the destination deleted and the source still renamed away. Undoing
-    both sides restores the source from HEAD and removes the destination, which
-    is the state before the Worker touched it.
+    Harness-shaped wrapper over `git_ops.whole_renames`, which is the single
+    implementation — `judge.apply`'s boot revert needs the same rule and has
+    only a TickContext, and two copies of a containment rule is how the two
+    paths end up disagreeing about what a rename is.
     """
-    if not stray:
-        return stray
-    out = list(stray)
-    for src, dst in git_ops.rename_pairs(h.worktree):
-        if dst in out and src not in out:
-            out.append(src)
-        elif src in out and dst not in out:
-            out.append(dst)
-    return out
+    return git_ops.whole_renames(h.worktree, stray)
 
 
 def _minus_preexisting(h: Harness, stray: List[str],
@@ -301,32 +290,49 @@ def boot_reconcile(h: Harness) -> None:
         h.events.emit("decision", task=task.id, decision="resume",
                       classification=UNJUDGED, cause="boot-reconcile")
     else:
-        # No state file: a 2.x dir, or a crash before the first write.
-        # plan C: hand this to the Judge with failure="boot-reconcile" and the
-        # evidence the 2.x medic used to read by hand (the dirty tree against
-        # allow_list, worker-result.json, the commit trailers, sprint-<T>.json);
-        # it answers resume | retry | revert-and-retry | defer. Plan A takes the
-        # mechanical branch: keep what the contract sanctioned, revert the rest,
-        # and re-run the task from SCOUT.
-        allow: List[str] = []
+        # No state file: a 2.x dir, or a crash before the first write. Nothing
+        # records how far the task got, so this is the ambiguous step spec §14's
+        # decision 13 hands to an agent rather than to a mechanical rule.
+        #
+        # Note what does NOT happen before the Judge is asked: no revert. Plan A
+        # reverted the strays here and then returned, which would have left the
+        # Judge judging a tree the harness had already cleaned -- and its
+        # `revert-and-retry` a no-op recorded as a decision.
         try:
-            allow = list(contract_mod.load_contract(
-                os.path.join(h.runtime_dir, "sprint-%s.json" % task.id)).allow_list)
+            contract = contract_mod.load_contract(
+                os.path.join(h.runtime_dir, "sprint-%s.json" % task.id))
         except contract_mod.ContractError:
-            pass
-        changed = git_ops.changed_paths(h.worktree)
-        stray = git_ops.strays(changed, allow + _protected(h))
-        stray, _spared = _minus_preexisting(h, stray, "boot-reconcile")
-        kept = [p for p in changed if p not in stray]
-        survived = _revert_reporting(h, stray, "boot-reconcile")
-        h.resume_phase = "scout"
-        h.log("boot-reconcile WARNING: %s is [~] but runtime/task-%s.json does not "
-              "exist, so nothing records how far it got. Kept %d change(s) inside "
-              "allow_list, reverted %d stray path(s) (%d could not be reverted and "
-              "are named above), and re-running the task from SCOUT."
-              % (task.id, task.id, len(kept), len(stray) - len(survived), len(survived)))
-        h.events.emit("decision", task=task.id, decision="retry",
-                      classification=UNJUDGED, cause="boot-reconcile")
+            # No readable contract either: nothing bounds the tree, so there is
+            # nothing for the Judge to split it against. Re-scout from the top
+            # and leave every uncommitted change where it is.
+            h.resume_phase = "scout"
+            h.log("boot-reconcile WARNING: %s is [~] with neither "
+                  "runtime/task-%s.json nor a readable contract; re-running the "
+                  "task from SCOUT and leaving the tree untouched."
+                  % (task.id, task.id))
+            h.events.emit("decision", task=task.id, decision="retry",
+                          classification=UNJUDGED, cause="boot-reconcile")
+            h.resume_task = task.id
+            h.plan.set_state(task.id, "pending")
+            h.plan.save()
+            return
+
+        ctx = phases.TickContext(cfg=h.cfg, plan=h.plan, task=task,
+                                 loop_dir=h.loop_dir, runtime_dir=h.runtime_dir,
+                                 events=h.events, tick=0, attempt=1)
+        h.log("boot-reconcile: %s is [~] but runtime/task-%s.json does not exist, "
+              "so nothing records how far it got; asking the Judge"
+              % (task.id, task.id))
+        where = boot_task(h, ctx, contract)
+        h.plan = ctx.plan
+        if where == "defer":
+            # `boot_task` has already marked it `[!]` and written the cleanup
+            # entry. Leave the glyph alone: setting it back to pending below
+            # would undo the deferral on the next line.
+            h.log("boot-reconcile: %s is deferred; the loop moves on to "
+                  "independent work" % task.id)
+            return
+        h.resume_phase = "wrapup" if where == "work" else "scout"
 
     h.resume_task = task.id
     h.plan.set_state(task.id, "pending")
@@ -465,6 +471,30 @@ def finish_deferral(h: Harness, ctx, contract, decision: dict) -> None:
     h.log("blocked %s (%s: %s); %d downstream task(s) marked blocked-upstream"
           % (task.id, decision.get("decision", "defer"),
              decision.get("classification", "open"), len(downstream)))
+
+
+def boot_task(h: Harness, ctx, contract) -> str:
+    """Plan A's boot rule (spec §14) routes here when a `[~]` task has no
+    runtime/task-<T>.json. Returns where the tick restarts:
+
+      work   - keep the uncommitted tree and re-dispatch the Worker against the
+               existing contract. No session survives a boot, so this is not a
+               `--resume`; it is the Judge saying the checkpoint and the tree
+               agree, and plan A's `wrapup` branch is exactly that dispatch.
+      scout  - restart the task from SCOUT (the tree was kept, or thrown away by
+               the Judge's `revert-and-retry`).
+      defer  - the task is already `[!]` with a LOOP_CLEANUP entry.
+
+    A task WITH a state file never reaches here: plan A resumes it at the
+    recorded phase, and one killed inside WORK takes §6's wrap-up path with its
+    recorded session id.
+    """
+    action = judge.boot_reconcile(ctx, contract)
+    if action == "defer":
+        finish_deferral(h, ctx, None, {"decision": "defer",
+                                       "classification": "open"})
+        return "defer"
+    return "work" if action == "resume" else "scout"
 
 
 def tick_verdict(h: Harness, action: str) -> str:

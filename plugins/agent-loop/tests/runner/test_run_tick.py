@@ -577,26 +577,83 @@ class TestBootReconcile(Base):
         self.assertIn("renamed the export", workers[0]["prompt"])
         self.assertEqual([], [c for c in rec.calls if c["phase"] == "scout"])
 
-    def test_no_state_file_keeps_allow_list_work_reverts_strays_and_re_scouts(self):
+    def test_no_state_file_asks_the_judge_which_keeps_the_tree_on_a_retry(self):
+        """Spec §14 decision 13: nothing records how far the task got, so the
+        ambiguous step goes to an agent. `retry` keeps every uncommitted change
+        as a starting point and restarts from SCOUT."""
         self.mark_doing()
         self.contract_writer()()                 # allow_list = ["src/a.ts"]
-        self.worker_edit()()                     # inside it: kept
-        self.worker_edit("src/stray.ts", "stray\n")()   # outside it: reverted
+        self.worker_edit()()
+        self.worker_edit("src/stray.ts", "stray\n")()
+        self.patch({"judge": self.judge_says("retry", "capability")})
         run.boot_reconcile(self.h)
         self.assertEqual(("T1", "scout"), (self.h.resume_task, self.h.resume_phase))
-        self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "stray.ts")))
+        self.assertTrue(os.path.exists(os.path.join(self.wt, "src", "stray.ts")),
+                        "retry keeps the tree; only revert-and-retry throws it away")
         with open(os.path.join(self.wt, "src", "a.ts")) as f:
             self.assertIn("parse", f.read())
         self.assertIn("boot-reconcile",
                       util.read_text(os.path.join(self.loop_dir, "harness.log")))
-        self.assertEqual("boot-reconcile", self.emitted("decision")[0]["cause"])
+        ev = self.emitted("boot_reconcile")[0]
+        self.assertEqual("retry", ev["decision"])
+        self.assertEqual("T1", ev["task"])
 
-    def test_no_state_file_and_no_contract_reverts_everything_outside_the_loop_dir(self):
+    def test_the_judge_sees_the_dirty_tree_before_anything_is_reverted(self):
+        """The whole point of asking: plan A reverted the strays and THEN
+        returned, so a Judge in its place would have judged a cleaned tree."""
+        self.mark_doing()
+        self.contract_writer()()
+        self.worker_edit("src/stray.ts", "stray\n")()
+        rec = self.patch({"judge": self.judge_says("revert-and-retry", "open")})
+        run.boot_reconcile(self.h)
+        prompt = [c for c in rec.calls if c["phase"] == "judge"][0]["prompt"]
+        self.assertIn("src/stray.ts", prompt)
+        self.assertIn("outside allow_list", prompt)
+        self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "stray.ts")),
+                         "and the decision it made is then carried out")
+        self.assertEqual("scout", self.h.resume_phase)
+
+    def test_a_resume_decision_re_dispatches_the_worker_over_the_kept_tree(self):
+        self.mark_doing()
+        self.contract_writer()()
+        self.worker_edit()()
+        util.write_json(os.path.join(self.runtime, "worker-result.json"),
+                        {"task": "T1", "status": "partial",
+                         "checkpoint": "half of parse() is written"})
+        self.patch({"judge": self.judge_says("resume", "capability")})
+        run.boot_reconcile(self.h)
+        # `work` maps onto plan A's `wrapup` branch: a fresh Worker with the
+        # checkpoint in front of it, over a tree that still holds the work. No
+        # session survives a boot, so there is nothing to `--resume`.
+        self.assertEqual(("T1", "wrapup"), (self.h.resume_task, self.h.resume_phase))
+        self.assertTrue(os.path.exists(os.path.join(self.wt, "src", "a.ts")))
+
+    def test_a_defer_decision_leaves_the_task_blocked_rather_than_pending(self):
+        from runner import plan as pm
+        self.mark_doing()
+        self.contract_writer()()
+        self.patch({"judge": self.judge_says("defer", "open")})
+        run.boot_reconcile(self.h)
+        self.assertEqual("blocked", pm.Plan.load(self.plan_path).task("T1").state,
+                         "a deferred task must not be set back to pending")
+        self.assertEqual("", self.h.resume_task)
+        self.assertIn("## T1", util.read_text(
+            os.path.join(self.loop_dir, "LOOP_CLEANUP.md")))
+
+    def test_no_state_file_and_no_contract_re_scouts_and_keeps_the_tree(self):
+        """With no readable contract there is nothing to split the tree against,
+        so there is no question to put to the Judge — and no licence to delete
+        uncommitted work to recover from a missing file. Plan A reverted here,
+        but only ever in tests: in production the Harness captures its
+        pre-existing baseline AFTER the crash, so the dirty tree was already the
+        baseline and `_minus_preexisting` spared all of it anyway."""
         self.mark_doing()
         self.worker_edit("src/whatever.ts", "half a task\n")()
+        rec = self.patch({})
         run.boot_reconcile(self.h)
-        self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "whatever.ts")))
+        self.assertTrue(os.path.exists(os.path.join(self.wt, "src", "whatever.ts")))
         self.assertEqual("scout", self.h.resume_phase)
+        self.assertEqual([], [c for c in rec.calls if c["phase"] == "judge"])
 
     def test_a_second_in_flight_row_is_reset_to_pending(self):
         self.mark_doing("T1")
