@@ -102,6 +102,27 @@ def incident_new(runtime_dir: str, events, kind: str, severity: str, detail: str
     return ident
 
 
+def phase_timeline(phase_results) -> List[Dict[str, Any]]:
+    """Spec §8's timeline rows, from the tick's PhaseResults."""
+    return [{"phase": p.phase, "model": p.model, "started": p.started,
+             "ended": p.ended, "rc": p.rc, "session": p.session_id}
+            for p in (phase_results or [])]
+
+
+def raise_incident(ctx, kind: str, severity: str, detail: str,
+                   phase_results=None) -> str:
+    """Record an incident from a TickContext, with the tick's phase timeline.
+
+    A thin adapter over `incident_new`, not a second writer: it converts the
+    PhaseResults the caller already holds into §8's rows and unpacks the
+    context. Raising an incident is all it does -- no medic is dispatched and
+    nothing escalates, because the callers in plan C's failure path have already
+    decided what happens next and only want the human to have the record.
+    """
+    return incident_new(ctx.runtime_dir, ctx.events, kind, severity, detail,
+                        ctx.tick, phases=phase_timeline(phase_results))
+
+
 def run_medic(runtime_dir: str, events, cfg, incident_id: str, state: MedicState,
               log=None) -> str:
     """Dispatch one budgeted medic tick; return its outcome token.
