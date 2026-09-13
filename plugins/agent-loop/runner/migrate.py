@@ -15,11 +15,21 @@ from __future__ import annotations
 import glob
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from . import util
 
 LOOP_SCHEMA = 3
+
+# The same "pid alive AND heartbeat younger than 3x its interval" rule
+# runner/harness.py's Heartbeat and web/serve.py's derive_status already use
+# to decide a harness is gone (web/serve.py: `hb is None or hb > 3 *
+# hb_interval`); reused here rather than invented, so "the harness is alive"
+# has exactly one definition in this plugin. Not imported from runner.harness:
+# migrate must keep importing nothing but util, so it can run before anything
+# else is sane.
+_HEARTBEAT_INTERVAL_S = 10.0
+_HEARTBEAT_STALE_S = 3 * _HEARTBEAT_INTERVAL_S
 
 # The v3 shape of runtime/sprint-<T>.json (spec §5). A 2.x contract predates the
 # last five keys and wrote `forbidden` as bare strings; both make contract.validate
@@ -65,9 +75,10 @@ def legacy_harness_live(loop_dir: str, recent_s: int = 120) -> bool:
     Raw stream lines carry no leading timestamp and are ignored, so a subagent
     that merely mentions LOOP_DONE cannot make a live harness look stopped.
     Every ambiguous case (no timestamped line at all, an unreadable file with a
-    recent mtime) falls through to True: migrating under a live 2.x harness can
-    corrupt a running loop, so the guard must err toward blocking, never toward
-    proceeding. Must be evaluated before this process writes anything to run.log.
+    recent mtime, or one that fails to decode as text) falls through to True:
+    migrating under a live 2.x harness can corrupt a running loop, so the guard
+    must err toward blocking, never toward proceeding. Must be evaluated before
+    this process writes anything to run.log.
     """
     path = os.path.join(loop_dir, "run.log")
     try:
@@ -77,7 +88,16 @@ def legacy_harness_live(loop_dir: str, recent_s: int = 120) -> bool:
     if age >= recent_s:
         return False
     last = ""
-    for line in util.read_text(path).splitlines():
+    try:
+        body = util.read_text(path)
+    except UnicodeDecodeError:
+        # util.read_text only guards OSError; a binary/garbled run.log is not
+        # an error it degrades for us, and this function's whole job is never
+        # to raise on the boot path -- an undecodable file is exactly the kind
+        # of thing we cannot read a clean-exit marker out of, so it reads the
+        # same as "no timestamped line at all": live.
+        return True
+    for line in body.splitlines():
         if len(line) > _TIMESTAMP_LEN and line[4] == "-" and line[10] == "T" \
                 and line[_TIMESTAMP_LEN - 1] == " ":
             last = line
@@ -85,6 +105,46 @@ def legacy_harness_live(loop_dir: str, recent_s: int = 120) -> bool:
         if marker in last:
             return False
     return True
+
+
+def _heartbeat_age_s(runtime_dir: str, now: float) -> Optional[float]:
+    """Seconds since runtime/HEARTBEAT's epoch stamp; None when unreadable.
+
+    Mirrors web/serve.py's `_epoch_age` exactly (same one-line epoch file,
+    same parse), so a HEARTBEAT this plugin already writes is read the same
+    way everywhere it matters.
+    """
+    txt = util.read_text(os.path.join(runtime_dir, "HEARTBEAT")).strip()
+    if not txt:
+        return None
+    try:
+        stamp = int(float(txt.split()[0]))
+    except (ValueError, IndexError):
+        return None
+    return max(0.0, now - stamp)
+
+
+def v2_harness_live(runtime_dir: str) -> bool:
+    """True iff a 2.x-or-later harness currently holds this dir's lock.
+
+    Unlike 1.x, every 2.x+ harness writes `runtime/harness.json` (with its
+    pid) and keeps `runtime/HEARTBEAT` fresh for as long as it runs -- so,
+    unlike `legacy_harness_live`, this signal is proof, not inference, of the
+    same "alive" definition `runner/harness.py`'s `Heartbeat` and
+    `web/serve.py`'s `derive_status` already use: pid alive AND heartbeat no
+    older than 3x its interval. A dead pid or a missing/stale heartbeat means
+    the recorded lock is stale (the owner crashed without releasing it, which
+    `harness.lock_release` already treats as reapable) -- not "unknown,
+    therefore live"; run.log's mtime-based inference is the ambiguous one
+    that needs that conservative fallback, not this one.
+    """
+    lock = util.read_json(os.path.join(runtime_dir, "harness.json"))
+    if not isinstance(lock, dict):
+        return False
+    if not util.process_alive(lock.get("pid"), "run.sh"):
+        return False
+    age = _heartbeat_age_s(runtime_dir, time.time())
+    return age is not None and age <= _HEARTBEAT_STALE_S
 
 
 def migrate_1_to_2(loop_dir: str, runtime_dir: str) -> str:
@@ -199,6 +259,14 @@ def migrate_loop_dir(loop_dir: str, runtime_dir: str, events, target: int,
     happened. Emitting first means a kill between the event and the stamp
     instead produces, at worst, a re-run of an idempotent step and a harmless
     duplicate event -- detectable, unlike a silent gap.
+
+    The live-harness guard applies to BOTH the 1.x case (`legacy_live`, which
+    the caller must compute -- 1.x left no pid to check) and the 2.x+ case
+    (`v2_harness_live`, computed here from `runtime_dir` and never from the
+    caller): spec §14 requires refusing while a 2.x harness is live "exactly
+    as 1->2 did," and this signature cannot grow a second boolean parameter
+    (Task 18 already calls it), so the only way this guard cannot be forgotten
+    by a future caller is for migrate.py to check it itself.
     """
     start = schema_read(runtime_dir, target)
     if start > target:
@@ -208,12 +276,19 @@ def migrate_loop_dir(loop_dir: str, runtime_dir: str, events, target: int,
         if not os.path.exists(stamp):
             util.atomic_write(stamp, str(target))
         return "ok:%d" % target
-    if start == 1 and legacy_live and not force:
-        return ("blocked:run.log was written in the last 2 minutes and its last harness "
-                "line is not a 1.x exit line, so the pre-2.0 harness may still be "
-                "running. Pause it (touch %s/PAUSE and wait for its terminal to exit), "
-                "kill its dashboard, then re-run; or re-run with LOOP_MIGRATE_FORCE=1 if "
-                "you are certain it is dead" % runtime_dir)
+    if not force:
+        if start == 1 and legacy_live:
+            return ("blocked:run.log was written in the last 2 minutes and its last "
+                    "harness line is not a 1.x exit line, so the pre-2.0 harness may "
+                    "still be running. Pause it (touch %s/PAUSE and wait for its "
+                    "terminal to exit), kill its dashboard, then re-run; or re-run with "
+                    "LOOP_MIGRATE_FORCE=1 if you are certain it is dead" % runtime_dir)
+        if start >= 2 and v2_harness_live(runtime_dir):
+            return ("blocked:runtime/harness.json names a pid that is alive and "
+                    "runtime/HEARTBEAT is fresh, so a 2.x harness may still be running "
+                    "against this dir. Pause it (touch %s/PAUSE and wait for its "
+                    "terminal to exit), kill its dashboard, then re-run; or re-run with "
+                    "LOOP_MIGRATE_FORCE=1 if you are certain it is dead" % runtime_dir)
     current = start
     actions = "none"
     while current < target:

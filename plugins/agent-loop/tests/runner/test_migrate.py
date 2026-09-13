@@ -222,9 +222,71 @@ class TestGuards(Base):
         self.assertTrue(self.run_migrate(legacy_live=True, force=True)
                         .startswith("migrated:1:3:"))
 
-    def test_the_guard_only_applies_to_schema_one(self):
+    def test_the_1x_guard_does_not_fire_at_schema_two(self):
+        # legacy_live means "a 1.x harness looks live"; that signal is only
+        # meaningful when start == 1. At schema 2 with no runtime/harness.json
+        # at all, the (independent) 2.x guard also has nothing to find, so the
+        # migration proceeds.
         util.atomic_write(os.path.join(self.rt, "schema"), "2")
         self.assertTrue(self.run_migrate(legacy_live=True).startswith("migrated:2:3:"))
+
+    def test_a_live_two_x_harness_blocks_the_start_at_schema_two(self):
+        util.atomic_write(os.path.join(self.rt, "schema"), "2")
+        util.write_json(os.path.join(self.rt, "harness.json"), {"pid": 4242})
+        util.atomic_write(os.path.join(self.rt, "HEARTBEAT"), str(int(time.time())))
+        original = util.process_alive
+        self.addCleanup(setattr, util, "process_alive", original)
+        util.process_alive = lambda pid, must_contain=None: pid == 4242
+        out = self.run_migrate()
+        self.assertTrue(out.startswith("blocked:"), out)
+        self.assertIn("LOOP_MIGRATE_FORCE", out)
+        self.assertIn("PAUSE", out)
+        self.assertEqual(2, util.read_int(os.path.join(self.rt, "schema")))
+
+    def test_force_overrides_the_two_x_live_guard(self):
+        util.atomic_write(os.path.join(self.rt, "schema"), "2")
+        util.write_json(os.path.join(self.rt, "harness.json"), {"pid": 4242})
+        util.atomic_write(os.path.join(self.rt, "HEARTBEAT"), str(int(time.time())))
+        original = util.process_alive
+        self.addCleanup(setattr, util, "process_alive", original)
+        util.process_alive = lambda pid, must_contain=None: pid == 4242
+        self.assertTrue(self.run_migrate(force=True).startswith("migrated:2:3:"))
+
+
+class TestV2HarnessLive(Base):
+    def test_no_harness_json_means_not_live(self):
+        self.assertFalse(migrate.v2_harness_live(self.rt))
+
+    def test_a_dead_pid_means_not_live(self):
+        util.write_json(os.path.join(self.rt, "harness.json"), {"pid": 4242})
+        util.atomic_write(os.path.join(self.rt, "HEARTBEAT"), str(int(time.time())))
+        original = util.process_alive
+        self.addCleanup(setattr, util, "process_alive", original)
+        util.process_alive = lambda pid, must_contain=None: False
+        self.assertFalse(migrate.v2_harness_live(self.rt))
+
+    def test_a_live_pid_with_a_stale_heartbeat_means_not_live(self):
+        util.write_json(os.path.join(self.rt, "harness.json"), {"pid": 4242})
+        util.atomic_write(os.path.join(self.rt, "HEARTBEAT"), str(int(time.time()) - 3600))
+        original = util.process_alive
+        self.addCleanup(setattr, util, "process_alive", original)
+        util.process_alive = lambda pid, must_contain=None: True
+        self.assertFalse(migrate.v2_harness_live(self.rt))
+
+    def test_a_live_pid_with_no_heartbeat_file_means_not_live(self):
+        util.write_json(os.path.join(self.rt, "harness.json"), {"pid": 4242})
+        original = util.process_alive
+        self.addCleanup(setattr, util, "process_alive", original)
+        util.process_alive = lambda pid, must_contain=None: True
+        self.assertFalse(migrate.v2_harness_live(self.rt))
+
+    def test_a_live_pid_with_a_fresh_heartbeat_means_live(self):
+        util.write_json(os.path.join(self.rt, "harness.json"), {"pid": 4242})
+        util.atomic_write(os.path.join(self.rt, "HEARTBEAT"), str(int(time.time())))
+        original = util.process_alive
+        self.addCleanup(setattr, util, "process_alive", original)
+        util.process_alive = lambda pid, must_contain=None: True
+        self.assertTrue(migrate.v2_harness_live(self.rt))
 
 
 class TestLegacyLiveDetection(Base):
@@ -253,6 +315,15 @@ class TestLegacyLiveDetection(Base):
         util.atomic_write(os.path.join(self.ld, "run.log"),
                           "2026-01-01T00:00:00Z tick 41 starting\n"
                           '{"type":"assistant","text":"LOOP_DONE after"}\n')
+        self.assertTrue(migrate.legacy_harness_live(self.ld))
+
+    def test_invalid_utf8_in_a_fresh_log_reports_live_instead_of_raising(self):
+        # util.read_text only degrades OSError; a garbled/binary run.log must
+        # still fall through to the conservative "live" answer rather than
+        # raising UnicodeDecodeError into the boot path.
+        path = os.path.join(self.ld, "run.log")
+        with open(path, "wb") as f:
+            f.write(b"2026-01-01T00:00:00Z tick 41 starting\n\xff\xfe\x80not-utf8\n")
         self.assertTrue(migrate.legacy_harness_live(self.ld))
 
 
