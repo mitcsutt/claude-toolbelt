@@ -231,12 +231,19 @@ def _dispatch(ctx: TickContext, *, phase: str, role: str, prompt_name: str,
                   tick=ctx.tick, role=role,
                   activity_path=os.path.join(ctx.runtime_dir, "last-activity"),
                   ratelimit_path=os.path.join(ctx.runtime_dir, "ratelimit.json"),
-                  stall_s=_stall_s(), desc=desc)
+                  stall_s=_stall_s(), desc=desc,
+                  # Spec §4.4: STOP has to land "now", and the harness never holds
+                  # the child's pid. Polled once a second inside run_phase.
+                  stop_check=lambda: os.path.exists(
+                      os.path.join(ctx.runtime_dir, "STOP")))
     res = claude_proc.run_phase(prompt=prompt, **kwargs)
     try:
         return res, parse_json_block(res.result_text, phase=phase)
     except JsonBlockError as exc:
-        if res.killed:
+        # A killed phase is never re-asked: the second dispatch would run into the
+        # same wall. `stopped` implies `killed` today; naming it keeps the rule
+        # true if that ever stops being so, because a STOP must spend nothing.
+        if res.killed or res.stopped:
             return res, None
         # Python 3 unbinds the `as` name at the end of the except block, so the
         # message has to be carried out of it by hand.

@@ -56,6 +56,11 @@ class PhaseResult:
     api_error_status: str = ""
     rate_limit: Optional[Dict[str, Any]] = None
     stalled: bool = False
+    # Killed specifically because STOP was requested. `killed` alone cannot
+    # say why — it is also true for a timeout, an external SIGTERM and a
+    # stream error — and the caller's answer differs: a STOP ends the tick
+    # cleanly as a pause, a timeout is a failed attempt.
+    stopped: bool = False
     stream_error: bool = False
 
 
@@ -431,7 +436,8 @@ def run_phase(*, phase: str, model: str, prompt: str, cwd: str, timeout_s: int,
         rc = 128 - rc
     result.rc = rc
     result.timed_out = bool(state["timed_out"])
-    result.killed = (result.timed_out or state["stopped"] or result.stream_error
+    result.stopped = bool(state["stopped"])
+    result.killed = (result.timed_out or result.stopped or result.stream_error
                      or rc in (137, 143))
     result.ended = int(time.time())
     result.last_activity = int(state["last"])
