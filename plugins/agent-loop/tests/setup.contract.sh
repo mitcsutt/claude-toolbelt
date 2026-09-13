@@ -118,4 +118,24 @@ grep -q 'clone_of' "$HERE/../templates/LOOP_PLAN.md"; assert_true $? "plan templ
 # Plan 5 Task 4: setup warns on clone-heavy plans
 grep -qiE 'clone-heavy|clone famil|near-verbatim|sweet spot.*independent' "$F"; assert_true $? "setup must warn about clone-heavy plans"
 
+# Plan B Task 8: the wizard asks for a render recipe, writes the Render: block, and warns
+# when the repo has UI files but the user declined one.
+has 'render recipe'
+grep -qE '^1?[0-9]\. \*\*Render recipe\*\*' "$F"; assert_true $? "setup wizard has a numbered Render recipe question"
+has 'ui_globs'
+has 'screenshot'
+has '{route}'
+has 'cypress'
+has 'playwright'
+grep -qiE 'no render recipe|without a recipe' "$F"; assert_true $? "setup warns when a UI repo has no recipe"
+grep -qF 'artifacts/' "$F"; assert_true $? "setup gitignores the artifacts dir"
+
+# The template ships the block commented out, with every sub-key documented.
+grep -qE '^# Render:' "$TMPL"; assert_true $? "template ships a commented Render: block"
+for k in start ready command ui_globs reference; do
+  grep -qE "^#[[:space:]]+$k:" "$TMPL"; assert_true $? "template documents the Render sub-key $k"
+done
+grep -qE '^Render:' "$TMPL"; assert_false $? "template must not ship an ACTIVE Render: block"
+# R3: `Decision policy:`, `Tiers:` and the Limits line are plan D's to write here.
+
 assert_summary
