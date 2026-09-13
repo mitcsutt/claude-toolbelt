@@ -81,10 +81,20 @@ Write `$LOOP_DIR/LOOP_CONFIG.md` from `templates/LOOP_CONFIG.md`. Use the AskUse
    - `none` — run existing tests only; no failing-test-first per task.
    - `tdd-per-task` — write a failing test before each task's implementation; mandatory red → green.
 4. **Verification pipeline** — multi-select from `lint`, `tsc`, `build`, `test`, `e2e` (`multiSelect: true`). Listed order is execution order. Write space-separated, e.g. `lint tsc build test`.
-5. **Limits** — the harness reads `tick_timeout` from the single `Limits:` line as a `key=value` pair:
-   - `tick_timeout` — per-tick wall-clock cap in **seconds**, enforced by `timeout`/`gtimeout` (see Step 4). Default `1200`. This is rabbit-hole protection for a single stuck tick, not a loop budget.
+5. **Limits** — the harness reads one `Limits:` line of `key=value` pairs. `tick_timeout`
+   (default `1800`) is the outer per-tick sanity cap and the value the dashboard displays;
+   the real budgets are per phase: `scout_timeout=480 worker_timeout=1500 wrapup_timeout=300
+   eval_timeout=480 judge_timeout=360 planner_timeout=900 gate_cmd_timeout=600`, plus
+   `worker_resume_max=1` (how many times a timed-out Worker is resumed from its checkpoint
+   before the Judge escalates or splits), `worker_budget_usd=6`, and `max_attempts=3` (the
+   hard cap on attempts for one task, resumes and escalations included). All seconds except
+   the last two. Omitted keys take those defaults, so most users leave the line as the
+   template ships it.
 
-   There is **no cost, iteration, or wall-clock budget**. The loop runs until the plan is done or it hits your subscription's usage window — at which point the harness reads the `rate_limit_event` reset time and **auto-waits, then resumes** (or, if the reset is too far out, exits cleanly so you can re-run `run.sh` later). Write the single pair onto the `Limits:` line: `Limits: tick_timeout=1200`.
+   There is still **no cost, iteration, or wall-clock budget for the run**. The loop runs
+   until the plan is done or it hits your subscription's usage window — at which point the
+   harness reads the `rate_limit_event` reset time and **auto-waits, then resumes** (or, if
+   the reset is too far out, exits cleanly so you can re-run `run.sh` later).
 6. **Blocker policy** — single-select, default `continue-independent`:
    - `continue-independent` — a blocked task is marked blocked and the loop moves on to the next task whose dependencies are still satisfied; only halts when nothing independent remains.
    - `halt` — any blocked task stops the whole loop.
