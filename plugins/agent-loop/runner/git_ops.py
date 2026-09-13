@@ -167,6 +167,38 @@ def revert(cwd: str, paths: List[str]) -> None:
             parent = os.path.dirname(parent)
 
 
+def protected_paths(loop_dir: str, worktree: str) -> List[str]:
+    """Glob patterns for the loop's own dir, relative to the worktree.
+
+    The loop dir sits inside the worktree, so every containment path would
+    otherwise see the harness's own plan, runtime files and screenshots as
+    changes outside the contract and revert them — the loop destroying the
+    record it needs to recover.
+    """
+    rel = os.path.relpath(os.path.abspath(loop_dir), worktree)
+    return [rel, os.path.join(rel, "**")]
+
+
+def whole_renames(cwd: str, paths: List[str]) -> List[str]:
+    """Pull in the other side of any rename that is partly in `paths`.
+
+    A rename is one operation, but a path list judges each name separately.
+    Reverting only the destination leaves the tree with NEITHER name — the
+    destination deleted and the source still renamed away. Undoing both sides
+    restores the source from HEAD and removes the destination, which is the
+    state before the rename.
+    """
+    if not paths:
+        return paths
+    out = list(paths)
+    for src, dst in rename_pairs(cwd):
+        if dst in out and src not in out:
+            out.append(src)
+        elif src in out and dst not in out:
+            out.append(dst)
+    return out
+
+
 def head_sha(cwd: str) -> str:
     rc, out = _git(cwd, ["rev-parse", "HEAD"], check=False)
     return out.strip() if rc == 0 else ""
@@ -232,3 +264,13 @@ def similarity(src_path: str, dst_path: str) -> float:
     if not a or not b:
         return 0.0
     return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def last_commit(cwd: str) -> str:
+    """HEAD's full message — subject, body and trailers. '' in an empty repo."""
+    try:
+        out = subprocess.check_output(["git", "-C", cwd, "log", "-1", "--pretty=%B"],
+                                      stderr=subprocess.DEVNULL)
+    except (subprocess.CalledProcessError, OSError):
+        return ""
+    return out.decode("utf-8", "replace")
