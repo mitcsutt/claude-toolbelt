@@ -134,7 +134,7 @@ On an incident the harness writes `runtime/incident-<id>.json`, emits an `incide
   - While a tick runs, a single self-updating heartbeat line (spinner · current activity · tool count · elapsed) proves liveness.
   - When a tick finishes, one permanent summary line scrolls into history: `✓ t3 T26 · 3m12s · lint✓ tsc✓ build✓ test✓ · → a1b2c3   62% (26/42)` (verdict glyph, task, duration, verification gates from the commit's `Loop-Verification` trailer, short SHA, and **percentage-first** progress).
   - A session header prints each tick: `── loop · 62% ███████░░░░░ 26/42 · ⏱ 1h18m · ~45m left · 5h 90% ↺2h12m ──` (task percent + bar, count, elapsed, rough ETA from average tick time, and the usage-window utilization). The `5h 90%` segment is the 5-hour rate-limit window utilization Claude reports on `rate_limit_event` lines, with time-to-reset (`↺`); it's labelled to distinguish it from the leading task percentage, and is omitted until the stream reports it (Claude only includes `utilization` near the warning threshold). No dollar figure — `cost_usd` is raw list-price and is never summed or projected.
-  - `LOOP_VERBOSE=1` restores the per-tool/per-text trace to the terminal in place of the heartbeat. There is no longer a file copy of it: each phase's full transcript stays in its own session JSONL, whose path its `phase_end` event records. Piped/non-TTY runs stay quiet (header + summary lines only).
+  - There is no file copy of the raw trace and no verbose terminal mode: each phase's full transcript stays in its own session JSONL, whose path its `phase_end` event records. Piped/non-TTY runs stay quiet (header + summary lines only).
 - The harness reads the `rate_limit_event` from each tick. When the usage window is exhausted it **auto-waits until the reset** (`resetsAt`) and resumes; if the reset is further out than `MAX_WAIT` (default 6h, e.g. a weekly window) it logs the reset time and **exits cleanly** so you can re-run `run.sh` later. Resume is safe at any point: work is committed per task, an orphaned `[~]` is re-evaluated by the next tick (or reset by the medic), and the Worker's checkpoint file survives.
 - The loop also self-terminates on `LOOP_DONE`, a tick `LOOP_HALT`, 3 consecutive failed/garbage ticks, or 3 consecutive `CONTINUE` ticks with no drop in remaining tasks (no-progress guard) — each of these raises an incident first, so the medic gets a look before the harness stops.
 - Each `tick_end` carries a `cause` (`ok | timeout | killed | terminated | api_error | rate_limit | no_sentinel | crashed`), so the summary line distinguishes `killed (SIGKILL — likely OS memory pressure)` from a tick that produced nothing. A pre-tick memory guard delays (never halts) while free RAM is below `MEM_MIN_MB` and swap above `SWAP_MAX_PCT`, emitting `sleep reason=memory` so the dashboard says "waiting for memory headroom" rather than "stalled".
@@ -166,12 +166,10 @@ Set in `LOOP_CONFIG.md` (under `.claude/loop/<run-id>/`):
 | `MEDIC_TIMEOUT` | `600` | Wall clock per medic run; overrun counts as `escalated`. |
 | `DASH_MAX_RESTARTS` | `5` | Sidecar respawns per hour before `dashboard-crashloop`. |
 | `LOOP_DASHBOARD` | config | `auto`/`off`, overrides the `Dashboard:` line for one launch. |
-| `LOOP_DASHBOARD_OPEN` | unset | `1` → `open`/`xdg-open` the URL once. |
 | `LOOP_DASHBOARD_CMD` | serve.py | Full sidecar command override (tests, or a different observer). |
 | `LOOP_MEDIC_CMD` | claude | Full medic command override; default `claude --print --dangerously-skip-permissions [--model M] "/agent-loop-medic <id>"`. |
-| `LOOP_ORCHESTRATOR_MODEL` | config | One-off override of `Orchestrator model:`. |
 | `LOOP_MIGRATE_FORCE` | unset | `1` → run a pending schema migration even though `run.log` looks like a pre-2.0 harness is still writing it. Only after you have confirmed that harness is dead. |
-| `LOOP_VERBOSE` | unset | `1` → raw stream to the terminal instead of the heartbeat line. |
+| `LOOP_NOTIFY` | `1` | `0` → suppress desktop notifications on an incident. |
 | `MAX_WAIT` | `6h` | Longest rate-limit reset the harness will wait for before exiting cleanly. |
 
 ### Events (`events.jsonl`)
