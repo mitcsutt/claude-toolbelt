@@ -9,11 +9,13 @@ import fnmatch
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from . import claude_proc, contract as contract_mod, phases, util
+from . import claude_proc, contract as contract_mod, git_ops, phases, util
 from .config import TIER_ORDER, model_for, next_tier, phase_limit
+from .contract import save_contract
 from .task_state import TaskState
 
 MAX_GATE_LINES = 80
@@ -483,3 +485,168 @@ def decide(ctx, inp: JudgeInput) -> dict:
         out = _defer(errors, raw) if errors else _normalize(raw)
     out["_phase"] = result
     return out
+
+
+# --------------------------------------------------------------------------
+# applying a decision: the contract, the plan, the audit trail
+# --------------------------------------------------------------------------
+NEXT_ACTION = {"widen": "retry", "retry": "retry", "escalate": "escalate",
+               "resume": "resume", "revert-and-retry": "retry",
+               "split": "split", "defer": "defer", "halt": "halt"}
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def mark_blocked(ctx, decision: dict) -> None:
+    """The only place a task becomes `[!]`. Spec §7: never without a Judge.
+
+    This flips the glyph and nothing else. The containment revert of the loop's
+    own work and the `depends_on` fan-out to `blocked-upstream` belong to the
+    harness (`run.mark_blocked`), which holds the pre-existing-work baseline
+    this module cannot see.
+    """
+    if not (decision or {}).get("decision"):
+        raise RuntimeError("refusing to mark %s [!] without a Judge decision "
+                           "recorded (spec §7)" % ctx.task.id)
+    ctx.plan.set_state(ctx.task.id, "blocked")
+    ctx.plan.save()
+
+
+def append_decision(ctx, decision: dict, applied: List[str]) -> None:
+    """LOOP_DECISIONS.md: every judgement made instead of waking a human."""
+    path = os.path.join(ctx.loop_dir, "LOOP_DECISIONS.md")
+    chunks = []
+    if not os.path.exists(path):
+        chunks.append("# Loop Decisions\n\nEvery judgement this loop made instead "
+                      "of waking a human. Each entry says what was decided, what "
+                      "was rejected, and how to put it back.\n")
+    alts = decision.get("alternatives") or []
+    chunks.append("\n## %s %s — %s (%s)\n\n"
+                  % (_now(), ctx.task.id, decision["decision"],
+                     decision.get("classification", "open")))
+    chunks.append("- **Rationale:** %s\n" % one_line(decision.get("rationale")))
+    chunks.append("- **Alternatives:** %s\n"
+                  % ("; ".join(one_line(a) for a in alts) if alts
+                     else "none recorded"))
+    chunks.append("- **Applied:** %s\n"
+                  % ("; ".join(applied) if applied else "no file changed"))
+    chunks.append("- **Reverse:** %s\n"
+                  % (one_line(decision.get("reversal"))
+                     or "undo the Applied changes and re-run %s" % ctx.task.id))
+    if decision.get("rejected"):
+        chunks.append("- **Refused by policy:** %s\n"
+                      % "; ".join(decision["rejected"]))
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write("".join(chunks))
+
+
+def write_cleanup_entry(ctx, decision: dict) -> None:
+    """Spec §7: a deferral's LOOP_CLEANUP entry carries the classification, and
+    for `open` the proposed default, so a human reads the question and the
+    Judge's best answer to it in the same place."""
+    changes = decision.get("changes") or {}
+    blocks = changes.get("blocks") or []
+    default = one_line(changes.get("default_choice"))
+    chunks = [
+        "\n## %s — %s (%s)\n\n" % (ctx.task.id, one_line(ctx.task.title),
+                                   decision.get("classification", "open")),
+        "- **Decision needed:** %s\n" % one_line(decision.get("rationale")),
+        "- **Proposed default:** %s\n"
+        % (default or "none — the Judge could not justify one"),
+        "- **Blocks:** %s\n" % (", ".join(blocks) if blocks else "nothing else"),
+        "- **Raised by:** Judge, %s\n" % _now(),
+    ]
+    with open(os.path.join(ctx.loop_dir, "LOOP_CLEANUP.md"), "a",
+              encoding="utf-8") as fh:
+        fh.write("".join(chunks))
+
+
+def apply(ctx, contract, decision: dict) -> str:
+    """Do what the decision says, then tell the main loop what happens next."""
+    d = decision["decision"]
+    changes = decision.get("changes") or {}
+    applied = []
+    path = contract_path(ctx)
+    plan_path = os.path.join(ctx.loop_dir, "LOOP_PLAN.md")
+    contract_dirty = False
+
+    for p in changes.get("allow_list_add") or []:
+        if p not in contract.allow_list:
+            contract.allow_list.append(p)
+            applied.append("allow_list += %s" % p)
+            contract_dirty = True
+    removed = set(changes.get("forbidden_remove") or [])
+    if removed:
+        keep = []
+        for f in contract.forbidden:
+            if f.path in removed and f.source == "scout":
+                applied.append("forbidden -= %s (scout-sourced)" % f.path)
+                contract_dirty = True
+            else:
+                keep.append(f)
+        contract.forbidden = keep
+
+    note = one_line(decision.get("instruction")) or one_line(
+        changes.get("default_choice"))
+    if note and d in ("retry", "widen", "escalate", "resume"):
+        contract.scout_notes = ("%s\n\nJUDGE %s (%s): %s"
+                                % (contract.scout_notes, _now(), d, note)).strip()
+        applied.append("instruction appended to scout_notes")
+        contract_dirty = True
+    if contract_dirty:
+        save_contract(contract, path)
+
+    # The judged tier and the one cap extension are armed on the context; the
+    # next `phases.run_worker` reads both (spec §6 step 2). There is no ladder.
+    tier = changes.get("tier") or ""
+    if tier and d in ("retry", "widen", "escalate", "resume"):
+        ctx.tier = tier
+        applied.append("next attempt runs at tier %s" % tier)
+    extend = int(changes.get("extend_cap_s") or 0)
+    if extend > 0 and d in ("retry", "widen", "escalate", "resume"):
+        ctx.extend_cap_s = extend
+        applied.append("worker cap extended by %ds (this task's only one)"
+                       % extend)
+
+    for tid in changes.get("blocks") or []:
+        if ctx.plan.set_blocked_by(tid, [ctx.task.id]):
+            applied.append("%s blocked_by %s" % (tid, ctx.task.id))
+
+    if d == "revert-and-retry":
+        # Boot reconciliation only (spec §14). The revert itself is NOT done
+        # here: throwing away uncommitted work safely needs the pre-existing-work
+        # baseline, the protected loop-dir paths and both halves of a rename,
+        # and all three live on the Harness. `run.boot_task` owns the revert and
+        # branches on this decision; this module only drops the dead session.
+        ctx.resume_session = None
+        ctx.last_session = None
+        applied.append("session dropped; the harness reverts the tree, "
+                       "allow_list included, before re-scouting")
+    elif d == "split":
+        new_ids = ctx.plan.split(ctx.task.id, changes.get("sub_rows") or [])
+        ctx.plan.save()
+        sha = git_ops.commit(
+            ctx.cfg.worktree, [plan_path],
+            "loop: split %s → %s" % (ctx.task.id, ",".join(new_ids)),
+            {"Loop-Status": "skipped", "Loop-Task": ctx.task.id})
+        applied.append("plan split into %s" % ", ".join(new_ids))
+        ctx.events.emit("split", tick=ctx.tick, task=ctx.task.id, into=new_ids,
+                        sha=sha)
+    elif d in ("defer", "halt"):
+        write_cleanup_entry(ctx, decision)
+        mark_blocked(ctx, decision)
+        applied.append("%s marked [!]" % ctx.task.id)
+        # No commit here. `run.handle_failure` still has to revert the loop's own
+        # work and mark the `depends_on` fan-out `blocked-upstream`, and those
+        # edits belong in the SAME commit as this glyph change — a commit taken
+        # now would leave the plan file half-updated in history.
+    elif changes.get("blocks"):
+        ctx.plan.save()
+
+    append_decision(ctx, decision, applied)
+    ctx.events.emit("decision", tick=ctx.tick, task=ctx.task.id, decision=d,
+                    classification=decision.get("classification", ""),
+                    rejected=decision.get("rejected") or [])
+    return NEXT_ACTION[d]

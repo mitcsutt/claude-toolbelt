@@ -276,6 +276,32 @@ class Plan(object):
             rest = rest + " done(+%s)" % sha
         self.lines[t.line_no] = "%s- [%s] %s" % (indent, STATE_GLYPH[state], rest)
 
+    def set_blocked_by(self, task_id: str, blockers: List[str]) -> bool:
+        """Add semantic blockers to a task row's `| blocked_by:` tag.
+
+        Returns True when the row changed. Spec §7: the Judge's `blocks:` are
+        blockers IN ADDITION to `depends_on`, and `eligible()` already refuses a
+        task whose `blocked_by` names anything unfinished.
+        """
+        t = self.task(task_id)
+        if t is None:
+            return False
+        merged = list(t.blocked_by)
+        for b in blockers or []:
+            if b and b not in merged:
+                merged.append(b)
+        if merged == list(t.blocked_by):
+            return False
+        line = self.lines[t.line_no]
+        tag = " | blocked_by: %s" % ",".join(merged)
+        m = re.search(r"\s*\|\s*blocked_by:\s*[^|]*", line)
+        if m:
+            line = line[:m.start()] + tag + line[m.end():]
+        else:
+            line = line.rstrip() + tag
+        self.lines[t.line_no] = line
+        return True
+
     def append_tasks(self, segment_name: str, rows: List[str]) -> None:
         """Insert rows at the end of the named segment's block."""
         seg = self._segment(segment_name)
