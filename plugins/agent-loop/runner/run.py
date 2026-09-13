@@ -906,8 +906,18 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
         gate_text = gate.outputs_text(gate_results)
         out.gates = verification_summary(h.cfg, gate_ok)
         state.end_phase()
-        # plan B: run_visual_checks(h, ctx, contract) goes here, between GATE and
-        # EVALUATE; a render or fidelity failure joins the gate_ok branch below.
+        # plan B: the render gate and the fidelity check go here, between GATE
+        # and EVALUATE.
+        #
+        # One thing to RULE ON first, because the two plans disagree. Plan B's
+        # Task 5 says either failure "is a gate failure that takes the existing
+        # failure path"; plan C's `FAILURE_KINDS` already carries `render` and
+        # `fidelity` as kinds of their own. The kind reaches the Judge verbatim
+        # and is half of `failure_signature`, so folding them into `gate` hides
+        # "the app built and looks wrong" behind "the app did not build" -- which
+        # is the exact confusion spec §1 defect 1 is about. Whichever way it
+        # goes, route the answer through the same retry/escalate/resume/split/
+        # defer block below and put `failure_text` in the detail.
 
         diff = git_ops.diff_text(h.worktree, base_sha, contract.allow_list)
         # Bound on every path: the Evaluator is skipped for a mechanical task and
