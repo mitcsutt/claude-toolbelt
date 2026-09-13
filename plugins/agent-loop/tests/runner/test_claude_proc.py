@@ -463,6 +463,9 @@ class TestStopCheck(Harnessed):
                           stop_check=lambda: os.path.exists(sentinel))
         self.assertLess(time.time() - started, 45)
         self.assertTrue(res.killed)
+        # `killed` alone cannot say why. `stopped` is what lets execute_tick end
+        # the tick as a pause instead of charging the task a failed attempt.
+        self.assertTrue(res.stopped)
         self.assertFalse(res.timed_out)
         self.assertIn("model-a", res.usage_by_model)
 
@@ -471,6 +474,7 @@ class TestStopCheck(Harnessed):
                           stop_check=lambda: False)
         self.assertEqual(0, res.rc)
         self.assertFalse(res.killed)
+        self.assertFalse(res.stopped)
 
 
 class TestStubDrivenPhase(Harnessed):

@@ -41,6 +41,7 @@ class Recorder(object):
             side_effect()
         return PhaseResult(phase=kw["phase"], model=kw["model"], rc=0,
                            killed=reply.get("killed", False),
+                           stopped=reply.get("stopped", False),
                            session_id="sess-1",
                            result_text=reply.get("text", ""),
                            usage_by_model=reply.get("usage", {}))
@@ -190,6 +191,25 @@ class TestReask(Base):
         rec = self.patch([{"text": "", "killed": True}])
         phases.run_reviewer(self.ctx(), "Segment A: wiring", "diff")
         self.assertEqual(1, len(rec.calls))
+
+    def test_a_stopped_phase_is_not_re_asked(self):
+        """A STOP must spend nothing more; a re-ask is a second subprocess."""
+        rec = self.patch([{"text": "", "killed": True, "stopped": True}])
+        phases.run_reviewer(self.ctx(), "Segment A: wiring", "diff")
+        self.assertEqual(1, len(rec.calls))
+
+
+class TestStopCheckIsWired(Base):
+    """Spec §4.4: STOP has to reach the phase in flight, and only run_phase's
+    own watchdog can do it — the harness never holds the child's pid."""
+
+    def test_every_dispatch_carries_a_stop_check_that_reads_runtime_stop(self):
+        rec = self.patch([{"text": block({"findings": []})}])
+        phases.run_reviewer(self.ctx(), "Segment A: wiring", "diff")
+        check = rec.calls[0]["stop_check"]
+        self.assertFalse(check())
+        open(os.path.join(self.runtime, "STOP"), "w").close()
+        self.assertTrue(check())
 
 
 class TestWorker(Base):
