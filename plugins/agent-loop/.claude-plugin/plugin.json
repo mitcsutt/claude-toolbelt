@@ -1,7 +1,7 @@
 {
   "name": "agent-loop",
-  "version": "2.1.0",
-  "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A bash harness owns exclusivity and liveness (lock + heartbeat + structured lifecycle events), re-invokes a fresh headless tick per task for OS-level context reset, supervises a browser dashboard sidecar, and on incidents runs a budgeted /agent-loop-medic that repairs only from an allowlist and hands over to a human (NEEDS_HUMAN.md, exit 2) when it cannot. Handles blockers with a taxonomy and builds dynamic sprint contracts per task. Requires the superpowers plugin; bundles the postmortem plugin and recommends the permissions plugin for its /permissions-advisor pre-flight check.",
+  "version": "3.0.0",
+  "description": "Autonomous coding loop for long-running tasks (refactors, new features, test sweeps). A Python harness owns the state machine and runs one phase at a time as its own headless process — scout, worker, gate, render, evaluate, commit, learn, with a judge on any failure path — each with its own model tier, timeout, budget and usage record. It enforces the allow-list, screenshots the product and checks copy tasks for real similarity before anything commits, resumes or splits a timed-out worker instead of losing the tick, and settles the decisions it can settle on its own into an auditable ledger rather than waking a human. Pause and Stop land at a phase boundary; a browser dashboard shows the phase in flight, the screenshots and the decisions. On an incident it runs a budgeted /agent-loop-medic that repairs only from an allowlist and hands over to a human (NEEDS_HUMAN.md, exit 2) when it cannot. Requires the superpowers plugin; bundles the postmortem plugin and recommends the permissions plugin for its /permissions-advisor pre-flight check.",
   "author": {
     "name": "Mitchell Sutton"
   }
