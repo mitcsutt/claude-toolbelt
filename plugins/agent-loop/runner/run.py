@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
 
 from . import (config, contract as contract_mod, events as events_mod, gate,
-               git_ops, harness, incidents, migrate, phases, plan as plan_mod,
-               sidecar, status, task_state, util)
+               git_ops, harness, incidents, judge, migrate, phases,
+               plan as plan_mod, sidecar, status, task_state, util)
 
 EXIT_OK = 0
 EXIT_HALT = 1
@@ -33,17 +33,12 @@ STOP_FILE = "STOP"
 # grows a tail longer than the segment.
 FOLLOW_UP_SEVERITIES = ("should-fix", "must-fix")
 
-# How many Worker attempts one task gets from plan A's stand-in: one dispatch
-# plus one same-tier re-dispatch. Spec §4.2's ceiling is 3, but the third attempt
-# is the Judge's to spend — it exists so a decision can change something, and in
-# plan A nothing would change between attempt 2 and attempt 3. `attempt_bound`
-# lets `max_attempts` lower this and says so in the log when it cannot raise it.
-PLAN_A_MAX_ATTEMPTS = 2
-
-# Spec §7's classification vocabulary, in full. Nothing else may be emitted:
-# `classification` is the Judge's read of WHY a task failed, and plan A has no
-# Judge, so every site here answers `open` — the one value that claims nothing.
-CLASSIFICATIONS = ("self-imposed", "spec-answered", "capability", "open")
+# Spec §7's classification vocabulary, in full — defined once, in judge.py, and
+# aliased here so the two can never disagree. `classification` is the Judge's
+# read of WHY a task failed; a decision event the HARNESS originates (a boot
+# reconcile, say) has no Judge behind it, so it answers `open` — the one value
+# that claims nothing — and puts its own fact in `cause`.
+CLASSIFICATIONS = judge.CLASSIFICATIONS
 UNJUDGED = "open"
 
 
@@ -360,30 +355,38 @@ def commit_task(h: Harness, task, contract) -> str:
                            "Loop-Files": shown})
 
 
-def attempt_bound(cfg) -> int:
-    """How many Worker attempts one task actually gets. Never more than plan A's.
+FAILURE_KINDS = ("invalid-contract", "gate", "render", "fidelity", "needs-work",
+                 "blocker", "worker-incomplete")
 
-    `Limits: max_attempts=` is a hand-edited, documented key that `/agent-loop-setup`
-    writes, and until now it was parsed, defaulted to 3 and then ignored — an
-    operator who raised it got no extra attempt and no warning, which is a trap
-    rather than a deferral. So it is honoured here as a CEILING that can only
-    lower the bound: `max_attempts=1` genuinely means "no retry" today, and a
-    value above plan A's two is clamped with a log line saying why. It cannot
-    raise the bound because the third attempt exists so that a DECISION can change
-    something — the Judge's tier, a widened allow_list, a split (spec §7) — and in
-    plan A nothing would differ between attempt two and attempt three except the
-    bill.
+
+def attempt_cap(cfg) -> int:
+    """How many Worker attempts one task gets. Spec §7: the harness bounds, the
+    Judge decides.
+
+    `Limits: max_attempts=` is honoured as written now that there is a Judge to
+    spend the attempts on — plan A clamped it to two because nothing would have
+    differed between attempt two and attempt three except the bill. A decision
+    can now change the tier, widen the contract or split the task, so the third
+    attempt buys something.
     """
     try:
-        configured = int(cfg.limits.get("max_attempts", PLAN_A_MAX_ATTEMPTS))
+        return max(1, int(cfg.limits.get("max_attempts",
+                                         config.DEFAULT_LIMITS["max_attempts"])))
     except (TypeError, ValueError):
-        configured = PLAN_A_MAX_ATTEMPTS
-    return max(1, min(PLAN_A_MAX_ATTEMPTS, configured))
+        return int(config.DEFAULT_LIMITS["max_attempts"])
 
 
-def failure_signature(reason: str, phase: str, task_id: str) -> str:
-    """Keyed on what actually repeated, not on `rc=124 after 1800s` (spec §8)."""
-    return "%s|%s|%s" % (reason, phase, task_id)
+def failure_signature(kind: str, detail: str) -> str:
+    """`kind:first-line-of-detail`, capped.
+
+    Two identical signatures on one task mean the last decision did not hold, so
+    this is what an attempt records as its `outcome` and what `handle_failure`
+    compares to spot a repeat (spec §7). It is deliberately NOT the medic's
+    repeat key: spec §8 keys that on `kind + phase + task` and it lives with the
+    incident records, which is the consumer that needs the phase.
+    """
+    lines = (detail or "").strip().splitlines()
+    return "%s:%s" % (kind, (lines[0][:120].strip() if lines else ""))
 
 
 def _loop_written(h: Harness, contract) -> List[str]:
@@ -415,14 +418,24 @@ def _loop_written(h: Harness, contract) -> List[str]:
     return [p for p in outside_loop if p in sanctioned and p not in base]
 
 
-def mark_blocked(h: Harness, task, reason: str, evidence: str, contract=None) -> None:
-    """`[!]`, a LOOP_CLEANUP entry with the evidence, and the blocked-upstream fan-out.
+def finish_deferral(h: Harness, ctx, contract, decision: dict) -> None:
+    """The harness's half of a Judge deferral (spec §7).
 
-    Reverts the loop's own work first: a half-applied workaround left in the tree
-    is worse than no attempt at all. `contract` is what bounds "own" — see
-    `_loop_written`. Passing None (no Worker ran; no contract was ever in force)
-    leaves the tree exactly as it was found.
+    `judge.apply` has already flipped the glyph, written the LOOP_CLEANUP entry
+    with the classification and the proposed default, and applied the Judge's
+    semantic `blocks:`. What is left needs things only the Harness holds:
+
+    - the containment revert of the loop's OWN work. A half-applied workaround
+      left in the tree is worse than no attempt at all — but "own" is bounded by
+      `_loop_written`, which subtracts the pre-existing dirty tree. With no
+      contract in force no Worker ever ran, the loop wrote nothing, and the tree
+      is left exactly as it was found.
+    - the `depends_on` fan-out to `blocked-upstream`. Spec §7 makes the Judge's
+      `blocks:` blockers IN ADDITION to `depends_on`, so both must land.
+    - one commit carrying the plan and the cleanup entry together. Committing
+      inside `judge.apply` would have put a half-updated plan in history.
     """
+    task = ctx.task
     changed = git_ops.changed_paths(h.worktree)
     to_revert = _loop_written(h, contract)
     _revert_reporting(h, to_revert, "blocked %s" % task.id)
@@ -436,61 +449,104 @@ def mark_blocked(h: Harness, task, reason: str, evidence: str, contract=None) ->
                  else "they are outside the contract's allow_list",
                  ", ".join(spared[:5])))
 
-    h.plan = plan_mod.Plan.load(h.plan_path)
-    h.plan.set_state(task.id, "blocked")
-    downstream = [t.id for t in h.plan.dependents(task.id)]
+    downstream = [t.id for t in ctx.plan.dependents(task.id)]
     for tid in downstream:
-        h.plan.set_state(tid, "blocked-upstream")
-    h.plan.save()
-
-    cleanup_path = os.path.join(h.loop_dir, "LOOP_CLEANUP.md")
-    entry = [
-        "",
-        "## %s — %s" % (task.id, reason),
-        "",
-        "- when: %s" % time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "- task: %s" % task.raw.strip(),
-        "- evidence:",
-        "",
-        "```",
-        (evidence or "(none)").strip()[:4000],
-        "```",
-        "",
-        "- decision a person must make: review the evidence above and either widen "
-        "the contract, restate the task, or drop it. The loop will not retry %s "
-        "until this entry is resolved." % task.id,
-    ]
-    if downstream:
-        entry.append("- blocked downstream: %s" % ", ".join(downstream))
-    entry.append("")
-    existing = util.read_text(cleanup_path)
-    header = "" if existing.strip() else "# Loop Cleanup\n"
-    with open(cleanup_path, "a") as f:
-        f.write(header + "\n".join(entry) + "\n")
+        ctx.plan.set_state(tid, "blocked-upstream")
+    ctx.plan.save()
+    h.plan = ctx.plan
 
     h.events.emit("task_status", id=task.id, status="blocked", sha="")
-    h.events.emit("decision", task=task.id, decision="defer",
-                  classification=UNJUDGED, cause=reason)
+    cleanup_path = os.path.join(h.loop_dir, "LOOP_CLEANUP.md")
     git_ops.commit(h.worktree, [h.plan_path, cleanup_path],
-                   "loop(%s): blocked — %s" % (task.id, reason),
+                   "loop: block %s — %s"
+                   % (task.id, decision.get("classification", "open")),
                    {"Loop-Status": "halted",
                     "Loop-Verification": verification_summary(h.cfg, False)})
-    h.log("blocked %s (%s); %d downstream task(s) marked blocked-upstream"
-          % (task.id, reason, len(downstream)))
+    h.log("blocked %s (%s: %s); %d downstream task(s) marked blocked-upstream"
+          % (task.id, decision.get("decision", "defer"),
+             decision.get("classification", "open"), len(downstream)))
 
 
-def handle_failure(h: Harness, task, reason: str, evidence: str, contract=None) -> str:
-    """What to do when a task cannot pass. Returns the tick verdict.
+def tick_verdict(h: Harness, action: str) -> str:
+    """A terminal Judge action, read through `Blocker policy:` (spec §7).
 
-    # plan C: this is where `judge.decide(ctx, contract, results, verdict,
-    # task_state.TaskState.load(...))` is called, and its decision (retry |
-    # escalate | widen | resume | split | defer | halt) replaces everything below.
-    # In plan A the stand-in is the last two lines: defer, then apply the blocker
-    # policy. Note what is NOT here: nothing consults config.next_tier.
+    `split` always continues — the sub-tasks are eligible the moment the plan is
+    rewritten. `defer` and `halt` stop THIS task either way; the policy decides
+    whether the loop moves on to independent work. `plan.mode()` answers "stuck"
+    when a deferral leaves nothing eligible, so continuing still ends the run
+    cleanly rather than spinning.
     """
-    h.log("failure signature %s" % failure_signature(reason, "execute", task.id))
-    mark_blocked(h, task, reason, evidence, contract=contract)
-    return "halt" if h.cfg.blocker_policy == "halt" else "continue"
+    if action == "split":
+        return "continue"
+    return "continue" if h.cfg.blocker_policy == "continue-independent" else "halt"
+
+
+def last_instruction(ctx) -> str:
+    """The instruction from the most recent Judge decision on this task, if any."""
+    for record in reversed(judge.attempts_for(ctx.runtime_dir, ctx.task.id)):
+        decision = record.get("judge") or {}
+        if decision.get("instruction"):
+            return decision["instruction"]
+        if (decision.get("changes") or {}).get("default_choice"):
+            return decision["changes"]["default_choice"]
+    return ""
+
+
+def handle_failure(h: Harness, ctx, contract, kind: str, detail: str,
+                   verdict=None, phase_results=None) -> str:
+    """Every failure path in the loop ends here (spec §7).
+
+    Returns the next action — `retry | escalate | resume | split | defer | halt`.
+    Nothing else in the runner marks a task `[!]`: a glyph the loop cannot
+    explain is what sent the 2026-09-11 run to a human eleven times for
+    questions its own files answered.
+    """
+    signature = failure_signature(kind, detail)
+    previous = judge.attempts_for(ctx.runtime_dir, ctx.task.id)
+    repeat = any(a.get("outcome") == signature for a in previous)
+    # The repeat is an ADDITION to what failed, never a replacement for it. The
+    # signature stays keyed on the original kind and detail, so a third identical
+    # failure is still recognised -- and the cleanup entry keeps the real output,
+    # which is what a human needs most on the attempt that gives up.
+    evidence = detail
+    if repeat:
+        kind = "repeat"
+        detail = ("same failure signature as an earlier attempt: %s\n\n%s"
+                  % (signature, detail))
+
+    if contract is None:
+        # Two Scouts failed validation, so no contract was ever in force. The
+        # Judge still gets a dossier — an empty contract IS the evidence, and
+        # the validation errors are in `detail`.
+        contract = contract_mod.Contract(
+            task=ctx.task.id, success_criteria=[], allow_list=[], forbidden=[],
+            verification=[], render_gate=None, fidelity_source=[],
+            evaluator_must_read=[], evaluator_must_view=[],
+            estimated_diff_lines=0, scout_notes="", relevant_learnings=[])
+        in_force = None
+    else:
+        in_force = contract
+
+    failure = judge.Failure(kind=kind, detail=detail, verdict=verdict or {},
+                            signature=signature, repeat=repeat)
+    inp = judge.build_input(ctx, contract, failure)
+    decision = judge.decide(ctx, inp)
+    judge_phase = decision.pop("_phase", None)
+    if judge_phase is not None and phase_results is not None:
+        phase_results.append(judge_phase)
+    h.log("%s %s → judge says %s (%s): %s"
+          % (ctx.task.id, signature, decision["decision"],
+             decision.get("classification", "open"),
+             judge.one_line(decision.get("rationale"))[:200]))
+
+    action = judge.apply(ctx, contract, decision, evidence=evidence)
+    if action in ("defer", "halt"):
+        finish_deferral(h, ctx, in_force, decision)
+    # The attempt's other phases were recorded as they ran (spec §14); this
+    # closes it with the Judge's own phase, the signature and the decision.
+    judge.close_attempt(ctx, signature, decision=decision,
+                        judge_phase=judge_phase)
+    return action
 
 
 def run_worker_attempt(h: Harness, ctx, contract, attempt: int = 1,
@@ -678,12 +734,27 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             h.log("contract for %s rejected (try %d): %s"
                   % (task.id, scout_try, "; ".join(errors)))
         if contract is None or errors:
-            state.end_attempt("invalid-contract")
             # contract=None on purpose: two Scouts failed validation, no Worker
-            # ran, and nothing in the tree is the loop's to revert.
-            out.verdict = handle_failure(h, task, "invalid-contract",
-                                         "\n".join(errors) or "the Scout wrote no contract")
+            # ran, and nothing in the tree is the loop's to revert. The Judge
+            # still decides — a Scout that invented an impossible constraint is
+            # the `self-imposed` case §7 exists for.
+            action = handle_failure(
+                h, ctx, None, "invalid-contract",
+                "\n".join(errors) or "the Scout wrote no contract",
+                phase_results=out.results)
+            state = task_state.TaskState.load(h.runtime_dir, task.id)
             out.cause = "invalid-contract"
+            if action in ("retry", "escalate", "resume"):
+                # Nothing here can act on a re-attempt: there is no contract to
+                # work to, and the Scout has already had its two tries.
+                h.log("%s: the Judge asked to %s an invalid contract; the Scout "
+                      "has already had both its tries, so this is a deferral"
+                      % (task.id, action))
+                action = "defer"
+                judge.mark_blocked(ctx, {"decision": "defer"})
+                finish_deferral(h, ctx, None, {"decision": "defer",
+                                               "classification": "open"})
+            out.verdict = tick_verdict(h, action)
             return out
 
     attempt = max(1, state.attempt)
@@ -709,10 +780,9 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             h.log("%s: resuming at GATE — the recorded Worker had already returned"
                   % task.id)
         else:
-            wresults, _ = run_worker_attempt(h, ctx, contract, attempt,
-                                             findings=findings, state=state)
+            wresults, payload = run_worker_attempt(h, ctx, contract, attempt,
+                                                   findings=findings, state=state)
             out.results.extend(wresults)
-            wres = wresults[0]
             if any(r.stopped for r in wresults):
                 # STOP, not a timeout: the operator asked for the loop to stop,
                 # so the tick ends where it stands. The sandbox has already run,
@@ -722,6 +792,51 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
                 return out
             if pause_state(h):
                 out.verdict = "paused"
+                return out
+
+            if next_worker_action(ctx, payload, wresults) == "judge":
+                # Spec §6 step 2: a Worker that did not finish is never resumed
+                # on the harness's own initiative. The Judge reads the checkpoint
+                # and says resume, escalate or split. Running the gate over work
+                # the Worker itself calls unfinished buys a failure we already
+                # know about, at the price of the whole verification pipeline.
+                detail = judge.one_line(payload.get("summary")) if payload else ""
+                checkpoint = judge.one_line(
+                    (payload or {}).get("checkpoint"))
+                action = handle_failure(
+                    h, ctx, contract, "worker-incomplete",
+                    "%s\n%s" % (detail or "the Worker did not report complete",
+                                checkpoint),
+                    phase_results=out.results)
+                state = task_state.TaskState.load(h.runtime_dir, task.id)
+                out.cause = "worker-incomplete"
+                if action in ("retry", "escalate", "resume"):
+                    if attempt >= attempt_cap(h.cfg):
+                        h.log("%s: the Judge asked to %s an incomplete Worker but "
+                              "attempt %d is the last; deferring instead"
+                              % (task.id, action, attempt))
+                        judge.write_cleanup_entry(ctx, {
+                            "classification": "capability",
+                            "rationale": "the attempt cap (max_attempts=%d) is "
+                                         "spent" % attempt_cap(h.cfg),
+                            "changes": {}})
+                        judge.mark_blocked(ctx, {"decision": "defer"})
+                        finish_deferral(h, ctx, contract,
+                                        {"decision": "defer",
+                                         "classification": "capability"})
+                        out.verdict = tick_verdict(h, "defer")
+                        return out
+                    if action == "escalate":
+                        ctx.resume_session = None
+                    elif action == "resume":
+                        start_resume(ctx, wresults)
+                    attempt += 1
+                    findings = (judge.one_line(last_instruction(ctx))
+                                or "the previous Worker did not finish; its "
+                                   "checkpoint is in the tree")
+                    state.begin_attempt(phases.worker_tier(ctx))
+                    continue
+                out.verdict = tick_verdict(h, action)
                 return out
         findings = ""
 
@@ -737,12 +852,19 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
         # EVALUATE; a render or fidelity failure joins the gate_ok branch below.
 
         diff = git_ops.diff_text(h.worktree, base_sha, contract.allow_list)
+        # Bound on every path: the Evaluator is skipped for a mechanical task and
+        # for a failed gate, and the Judge is handed this verdict either way.
+        vdata = {}
         if task.class_flag == "mechanical":
             verdict = "PASS" if gate_ok else "NEEDS_WORK"
             summary = "mechanical task: the gate is the only judge"
+            vdata = {"verdict": verdict, "findings": [], "views": [],
+                     "summary": summary}
         elif not gate_ok:
             verdict = "NEEDS_WORK"
             summary = "the verification gate failed"
+            vdata = {"verdict": verdict, "findings": [], "views": [],
+                     "summary": summary}
         else:
             state.begin_phase("EVALUATE")
             eres, vdata = phases.run_evaluator(ctx, contract, diff, gate_text, [])
@@ -768,39 +890,52 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             out.verdict = "continue"
             return out
 
-        reason = ("blocker" if verdict == "BLOCKER"
-                  else "gate-failed" if not gate_ok else "needs-work")
-        state.end_attempt(reason)
-        # plan C: judge.decide(...) replaces this branch entirely, and it may spend
-        # up to cfg.limits["max_attempts"] where plan A's stand-in is capped at
-        # PLAN_A_MAX_ATTEMPTS by attempt_bound().
-        bound = attempt_bound(h.cfg)
-        if attempt >= bound and int(h.cfg.limits.get("max_attempts", bound)) > bound:
-            h.log("%s: max_attempts=%s is configured but plan A's stand-in retries "
-                  "once at the same tier, so the effective ceiling is %d. The third "
-                  "attempt is the Judge's to spend (plan C) — it exists so a decision "
-                  "can change something, and nothing here would change."
-                  % (task.id, h.cfg.limits.get("max_attempts"), bound))
-        if attempt < bound and verdict != "BLOCKER":
-            # Same tier, with the Evaluator's findings in front of it. Spec §11
-            # item 4: a re-attempt's tier is a judgement from the checkpoint, not
-            # a ladder, and most overruns are one extra iteration — paying the top
-            # tier for every one of them is how a cheap retry becomes expensive.
-            attempt += 1
-            findings = summary or "the previous attempt did not satisfy the contract"
-            state.begin_attempt(phases.worker_tier(ctx))
-            # NOT `capability`: a first NEEDS_WORK or a failed gate is no evidence
-            # the model was incapable, and claiming it would put the wrong cause in
-            # front of whoever reads the run back. Classifying a failure is the
-            # Judge's job, and plan A has not asked one.
-            h.events.emit("decision", task=task.id, decision="retry",
-                          classification=UNJUDGED, cause=reason)
-            h.log("%s %s on attempt %d — re-dispatching the Worker at the same tier "
-                  "with the Evaluator's findings" % (task.id, reason, attempt - 1))
-            continue
+        kind = ("blocker" if verdict == "BLOCKER"
+                else "gate" if not gate_ok else "needs-work")
         evidence = "%s\n\n%s" % (summary, gate_text)
-        out.verdict = handle_failure(h, task, reason, evidence, contract=contract)
-        out.cause = reason
+        out.cause = kind
+        action = handle_failure(h, ctx, contract, kind, evidence,
+                                verdict=vdata, phase_results=out.results)
+        # `close_attempt` re-read the state from disk to write the decision, so
+        # the copy this function holds is stale; its next save would clobber the
+        # closed attempt.
+        state = task_state.TaskState.load(h.runtime_dir, task.id)
+
+        cap = attempt_cap(h.cfg)
+        if action in ("retry", "escalate", "resume") and attempt >= cap:
+            # Belt to the Judge's braces: `validate_decision` already refuses
+            # these on the last attempt, so this only fires if `max_attempts`
+            # changed under a running loop. Never spend one attempt past the cap.
+            h.log("%s: the Judge asked to %s but attempt %d of %d is the last; "
+                  "deferring instead" % (task.id, action, attempt, cap))
+            judge.write_cleanup_entry(ctx, {
+                "classification": "capability",
+                "rationale": "the attempt cap (max_attempts=%d) is spent" % cap,
+                "changes": {}})
+            judge.mark_blocked(ctx, {"decision": "defer"})
+            finish_deferral(h, ctx, contract, {"decision": "defer",
+                                               "classification": "capability"})
+            action = "defer"
+
+        if action in ("retry", "escalate", "resume"):
+            if action == "escalate":
+                ctx.resume_session = None     # a fresh session at the judged tier
+            elif action == "resume":
+                start_resume(ctx, out.results)
+            attempt += 1
+            # The Judge's instruction is how a decision reaches the next Worker;
+            # `judge.apply` has already appended it to the contract's scout_notes,
+            # and this puts it in front of the Worker as its findings too.
+            findings = (judge.one_line(last_instruction(ctx))
+                        or summary
+                        or "the previous attempt did not satisfy the contract")
+            state.begin_attempt(phases.worker_tier(ctx))
+            # The loop re-enters at WORK, never at SCOUT: the contract is already
+            # validated and may have just been widened, and re-scouting would
+            # throw the Judge's decision away.
+            continue
+
+        out.verdict = tick_verdict(h, action)
         return out
 
 

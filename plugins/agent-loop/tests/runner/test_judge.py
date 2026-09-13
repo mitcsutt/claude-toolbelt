@@ -533,5 +533,176 @@ class TestApply(_PolicyBase):
             judge.mark_blocked(self.ctx, {})
         self.assertIn("without a Judge decision", str(ctx.exception))
 
+
+class TestFailurePath(_PolicyBase):
+    def setUp(self):
+        _PolicyBase.setUp(self)
+        cfixtures.git_init(self.cfg.worktree)
+        cfixtures.write_contract(self.ctx, self.contract)
+        self.h = cfixtures.make_harness(self.cfg, self.plan, self.loop_dir,
+                                        self.runtime)
+
+    def _judge_says(self, payload):
+        from unittest import mock
+        from runner.claude_proc import PhaseResult
+        return mock.patch.object(
+            judge.claude_proc, "run_phase", return_value=PhaseResult(
+                phase="judge", model="opus", rc=0, killed=False, timed_out=False,
+                session_id="sid-judge", transcript_path=None, started=1, ended=2,
+                result_text="```json\n%s\n```" % json.dumps(payload),
+                usage_by_model={}, tool_calls=0, last_activity=2))
+
+    def test_signature_is_kind_plus_first_detail_line(self):
+        from runner import run as runner_run
+        self.assertEqual(
+            runner_run.failure_signature("gate", "tsc failed\nand more"),
+            "gate:tsc failed")
+        self.assertEqual(runner_run.failure_signature("needs-work", ""),
+                         "needs-work:")
+
+    def test_widen_decision_returns_retry_and_closes_the_attempt(self):
+        from runner import run as runner_run
+        from runner.task_state import TaskState
+        state = TaskState.load(self.runtime, "T60")
+        state.begin_attempt("standard")
+        state.save()
+        with self._judge_says({
+                "decision": "widen", "classification": "self-imposed",
+                "rationale": "scout-sourced constraint",
+                "alternatives": ["halt"], "reversal": "revert the contract",
+                "changes": {"forbidden_remove":
+                            ["packages/api/src/requests/activepipe/index.ts"]}}):
+            action = runner_run.handle_failure(
+                self.h, self.ctx, self.contract, "gate", "tsc failed\nTS2339 line 4")
+        self.assertEqual(action, "retry")
+
+        attempts = judge.attempts_for(self.runtime, "T60")
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["n"], 1)
+        self.assertEqual(attempts[0]["tier"], "standard")
+        self.assertEqual(attempts[0]["outcome"], "gate:tsc failed")
+        self.assertEqual(attempts[0]["judge"]["decision"], "widen")
+        self.assertNotIn("_phase", attempts[0]["judge"])
+        self.assertIn("judge", [p["phase"] for p in attempts[0]["phase_results"]],
+                      "the Judge phase itself is recorded on the attempt")
+        self.assertFalse(os.path.exists(
+            os.path.join(self.runtime, "attempts-T60.json")))
+
+    def test_second_same_signature_failure_is_flagged_to_the_judge(self):
+        from runner import run as runner_run
+        seen = {}
+
+        def capture(ctx, inp):
+            seen["failure"] = inp.failure
+            seen["attempts"] = len(inp.attempts)
+            return judge._normalize({"decision": "escalate",
+                                     "classification": "capability",
+                                     "rationale": "the same tier failed twice",
+                                     "changes": {"tier": "most-capable"}})
+
+        cfixtures.seed_attempt(self.runtime, "T60", 1, "gate:tsc failed")
+        from unittest import mock
+        from runner.task_state import TaskState
+        state = TaskState.load(self.runtime, "T60")
+        state.begin_attempt("standard")
+        state.save()
+        with mock.patch.object(judge, "decide", side_effect=capture):
+            self.ctx.attempt = 2
+            action = runner_run.handle_failure(
+                self.h, self.ctx, self.contract, "gate", "tsc failed")
+        self.assertEqual(action, "escalate")
+        self.assertIn("repeat", seen["failure"])
+        self.assertEqual(seen["attempts"], 1)
+
+    def test_the_attempt_cap_turns_a_stale_retry_into_a_defer(self):
+        from runner import run as runner_run
+        self.ctx.attempt = 3                       # max_attempts is 3
+        with self._judge_says({
+                "decision": "defer", "classification": "capability",
+                "rationale": "three attempts, no progress",
+                "alternatives": ["split"], "reversal": "clear the [!]",
+                "changes": {}}):
+            self.assertEqual(runner_run.handle_failure(
+                self.h, self.ctx, self.contract, "gate", "tsc failed"), "defer")
+
+    def test_halt_obeys_blocker_policy(self):
+        from runner import run as runner_run
+        halt = {"decision": "halt", "classification": "open",
+                "rationale": "uncommitted work would be lost",
+                "alternatives": ["defer"], "reversal": "resume", "changes": {}}
+        with self._judge_says(halt):
+            self.assertEqual(runner_run.handle_failure(
+                self.h, self.ctx, self.contract, "blocker", "api missing"), "halt")
+
+        self.cfg.blocker_policy = "halt"
+        with self._judge_says(halt):
+            self.assertEqual(runner_run.handle_failure(
+                self.h, self.ctx, self.contract, "blocker", "api missing"), "halt")
+
+    def test_defer_continues_under_continue_independent(self):
+        from runner import run as runner_run
+        with self._judge_says({
+                "decision": "defer", "classification": "open",
+                "rationale": "the spec is silent",
+                "alternatives": ["guess"], "reversal": "clear blocked_by",
+                "changes": {"default_choice": "internal/", "blocks": ["T61"]}}):
+            self.assertEqual(runner_run.handle_failure(
+                self.h, self.ctx, self.contract, "needs-work", "criterion 2 unmet"),
+                "defer")
+
+    def test_a_deferral_contains_the_loops_own_work_and_fans_out_downstream(self):
+        """Conflict row 7: the glyph is judge.py's, the containment revert and
+        the depends_on fan-out are the harness's, and both land in one commit."""
+        import subprocess
+        from runner import run as runner_run
+        from runner.plan import Plan
+        # Order matters and is the real one: the human's file is already dirty
+        # when the harness starts, and the loop writes its own file afterwards.
+        theirs = os.path.join(self.cfg.worktree, "HUMAN.md")
+        with open(theirs, "w") as fh:
+            fh.write("mine, uncommitted\n")
+        h = cfixtures.make_harness(self.cfg, self.plan, self.loop_dir, self.runtime)
+        self.assertIn("HUMAN.md", h.preexisting)
+
+        inside = os.path.join(self.cfg.worktree, "packages", "api", "src",
+                              "requests", "activepipe", "internal")
+        os.makedirs(inside)
+        with open(os.path.join(inside, "half.ts"), "w") as fh:
+            fh.write("// half a workaround the loop wrote\n")
+
+        with self._judge_says({
+                "decision": "defer", "classification": "open",
+                "rationale": "the spec is silent",
+                "alternatives": ["guess"], "reversal": "clear blocked_by",
+                "changes": {"blocks": []}}):
+            runner_run.handle_failure(h, self.ctx, self.contract,
+                                      "needs-work", "criterion 2 unmet")
+
+        self.assertFalse(os.path.exists(os.path.join(inside, "half.ts")),
+                         "a half-applied workaround inside allow_list is reverted")
+        self.assertTrue(os.path.exists(theirs),
+                        "work the loop never created is never reverted")
+        reloaded = Plan.load(os.path.join(self.loop_dir, "LOOP_PLAN.md"))
+        by_id = dict((t.id, t) for t in reloaded.tasks())
+        self.assertEqual(by_id["T60"].state, "blocked")
+        log = subprocess.check_output(
+            ["git", "-C", self.cfg.worktree, "log", "-1", "--pretty=%B"]).decode()
+        self.assertIn("loop: block T60", log)
+        self.assertIn("Loop-Status: halted", log)
+
+    def test_an_invalid_contract_still_reaches_the_judge(self):
+        """No Worker ran and there is no contract; the Judge still gets a dossier
+        rather than the loop marking [!] on its own."""
+        from runner import run as runner_run
+        with self._judge_says({
+                "decision": "defer", "classification": "open",
+                "rationale": "the Scout could not write a valid contract",
+                "alternatives": ["re-scout a third time"], "reversal": "clear [!]",
+                "changes": {}}):
+            action = runner_run.handle_failure(
+                self.h, self.ctx, None, "invalid-contract",
+                "success_criteria names a path outside allow_list")
+        self.assertEqual(action, "defer")
+
 if __name__ == "__main__":
     unittest.main()
