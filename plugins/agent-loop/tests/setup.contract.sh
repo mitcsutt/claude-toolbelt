@@ -89,6 +89,18 @@ has '--detach'
 grep -qF 'RAM adds to the session' "$F"; assert_false $? "setup drops the retracted RAM rationale"
 grep -qF 'migrate' "$A"; assert_true $? "attach skill explains that run.sh migrates on the next launch"
 
+# v3: Stop-now vs Pause, the decisions ledger, and harness.log instead of run.log.
+ahas 'runtime/STOP'
+ahas 'phase boundary'
+ahas 'LOOP_DECISIONS.md'
+ahas 'harness.log'
+grep -qiE 'PAUSE.*(finish|end of).*(tick|phase)' "$A"; assert_true $? "attach skill contrasts PAUSE with STOP"
+# NB the backticks: the skill writes it as `run.log`, so the un-backticked
+# needle in plan D never matched and the assertion could not fail.
+grep -qF 'run.log` is forensic' "$A"; assert_false $? "attach skill no longer points at run.log"
+# Liveness is unchanged by v3 — run.sh still execs the runner, so the ps match holds.
+ahas 'ps -o command= -p'
+
 # Task 8: machine logs gitignored, ledgers dropped from seed git add
 SETUP="$HERE/../skills/agent-loop-setup/SKILL.md"
 for f in run.log events.jsonl LOOP_LOG.jsonl LOOP_USAGE.jsonl; do
