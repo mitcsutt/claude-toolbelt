@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import os
 import shutil
-from typing import Dict, List, Tuple
+import signal
+import subprocess
+import time
+import urllib.error
+import urllib.request
+from typing import Dict, List, Optional, Tuple
 
 from . import gate as gate_mod
 from .config import phase_limit
@@ -114,3 +119,130 @@ def reference_screenshots(cfg) -> List[Dict]:
         if name and os.path.isfile(path):
             out.append({"name": name, "path": path, "kind": "reference"})
     return out
+
+
+READY_TIMEOUT_S = 120
+READY_POLL_S = 2.0
+STOP_GRACE_S = 10
+
+
+class RenderAppError(Exception):
+    """The render recipe's app would not start or would not become ready."""
+
+
+def _pid_path(runtime_dir: str) -> str:
+    return os.path.join(runtime_dir, "render-app.pid")
+
+
+def _read_pid(runtime_dir: str) -> Optional[int]:
+    try:
+        with open(_pid_path(runtime_dir)) as fh:
+            return int(fh.read().strip())
+    except (IOError, OSError, ValueError):
+        return None
+
+
+# Apps this process started, by pid. A dead child stays in the process table as
+# a zombie until someone reaps it, and `os.kill(zombie, 0)` succeeds — so without
+# this, stop_app would burn its full SIGTERM grace on an app that exited
+# instantly, then SIGKILL a corpse. poll() is the reap.
+_APPS = {}  # type: Dict[int, subprocess.Popen]
+
+
+def _alive(pid: int) -> bool:
+    proc = _APPS.get(pid)
+    if proc is not None and proc.poll() is not None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _wait_ready(url: str, timeout_s: int, poll_s: float) -> None:
+    deadline = time.time() + timeout_s
+    last = "no attempt made"
+    while time.time() < deadline:
+        try:
+            resp = urllib.request.urlopen(url, timeout=5)
+            code = resp.getcode()
+            resp.close()
+            if code == 200:
+                return
+            last = "HTTP %s" % code
+        except urllib.error.HTTPError as exc:
+            last = "HTTP %s" % exc.code
+        except Exception as exc:  # URLError, socket.timeout, ConnectionRefused
+            last = "%s: %s" % (type(exc).__name__, exc)
+        time.sleep(poll_s)
+    raise RenderAppError(
+        "render app never became ready: %s did not return 200 within %ds (last: %s)"
+        % (url, timeout_s, last)
+    )
+
+
+def ensure_app(cfg, runtime_dir: str, events=None,
+               ready_timeout_s: int = READY_TIMEOUT_S,
+               poll_s: float = READY_POLL_S) -> Optional[int]:
+    """Start the recipe's app once per harness; return its pid (None if no recipe)."""
+    start = (cfg.render or {}).get("start", "")
+    if not start:
+        return None
+
+    pid = _read_pid(runtime_dir)
+    if pid is not None and _alive(pid):
+        ready = (cfg.render or {}).get("ready", "")
+        if ready:
+            _wait_ready(ready, ready_timeout_s, poll_s)
+        return pid
+
+    log_path = os.path.join(runtime_dir, "render-app.log")
+    log = open(log_path, "ab")
+    proc = subprocess.Popen(
+        start, shell=True, cwd=cfg.worktree,
+        stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    log.close()
+    tmp = _pid_path(runtime_dir) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("%d\n" % proc.pid)
+    os.replace(tmp, _pid_path(runtime_dir))
+    _APPS[proc.pid] = proc
+    if events is not None:
+        events.emit("render_app_start", pid=proc.pid, cmd=start)
+
+    ready = (cfg.render or {}).get("ready", "")
+    if ready:
+        try:
+            _wait_ready(ready, ready_timeout_s, poll_s)
+        except RenderAppError:
+            stop_app(runtime_dir)
+            raise
+    return proc.pid
+
+
+def stop_app(runtime_dir: str) -> None:
+    """Kill the backgrounded render app and drop its pid file. Never raises."""
+    pid = _read_pid(runtime_dir)
+    if pid is None:
+        return
+    for sig, wait in ((signal.SIGTERM, STOP_GRACE_S), (signal.SIGKILL, 0)):
+        if not _alive(pid):
+            break
+        try:
+            os.killpg(os.getpgid(pid), sig)
+        except OSError:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                break
+        deadline = time.time() + wait
+        while wait and _alive(pid) and time.time() < deadline:
+            time.sleep(0.1)
+    _APPS.pop(pid, None)
+    try:
+        os.unlink(_pid_path(runtime_dir))
+    except OSError:
+        pass
