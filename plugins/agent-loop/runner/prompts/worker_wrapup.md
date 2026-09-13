@@ -39,7 +39,8 @@ The contract you were working to:
 
 Do not start new work. Do not open files you have not already read in this
 session. Do not run the verification pipeline. Do not commit — the harness
-commits. Never call `AskUserQuestion` or `EnterPlanMode`.
+commits. Never call `AskUserQuestion`, never call `EnterPlanMode`, and never
+invoke any tool that waits on a person — it will hang this process forever.
 
 Your last checkpoint, for reference:
 
