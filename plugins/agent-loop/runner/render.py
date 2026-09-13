@@ -5,6 +5,7 @@ images, and computes the ratios; the Evaluator is handed the results (spec 5.2).
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -15,6 +16,7 @@ import urllib.request
 from typing import Dict, List, Optional, Tuple
 
 from . import gate as gate_mod
+from . import git_ops
 from .config import phase_limit
 
 
@@ -246,3 +248,53 @@ def stop_app(runtime_dir: str) -> None:
         os.unlink(_pid_path(runtime_dir))
     except OSError:
         pass
+
+
+def run_fidelity(ctx, contract) -> List[Dict]:
+    """Line-similarity ratio for every declared copy/port pair (spec 5.4)."""
+    pairs = list(getattr(contract, "fidelity_source", []) or [])
+    if not pairs:
+        return []
+
+    checks = []  # type: List[Dict]
+    for fs in pairs:
+        src = _abs(ctx.cfg.worktree, fs.src)
+        dst = _abs(ctx.cfg.worktree, fs.dst)
+        entry = {"src": fs.src, "dst": fs.dst, "min": fs.min_similarity}
+        if not os.path.isfile(src):
+            entry["ratio"] = 0.0
+            entry["error"] = "reference file not found: %s" % src
+        elif not os.path.isfile(dst):
+            entry["ratio"] = 0.0
+            entry["error"] = "target file not found: %s" % dst
+        else:
+            entry["ratio"] = round(git_ops.similarity(src, dst), 4)
+        entry["ok"] = entry["ratio"] >= fs.min_similarity
+        checks.append(entry)
+
+    path = os.path.join(ctx.runtime_dir, "fidelity-%s.json" % ctx.task.id)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"task": ctx.task.id, "t": int(time.time()), "checks": checks}, fh, indent=2)
+    os.replace(tmp, path)
+    return checks
+
+
+def fidelity_text(checks: List[Dict]) -> str:
+    """Human/model-readable summary; goes into the gate outputs on failure."""
+    if not checks:
+        return ""
+    lines = ["## Fidelity (line similarity vs the reference)"]
+    for c in checks:
+        lines.append(
+            "%s  %s -> %s  ratio=%.2f  min=%.2f%s"
+            % ("PASS" if c["ok"] else "FAIL", c["src"], c["dst"],
+               c["ratio"], c["min"],
+               "  (%s)" % c["error"] if c.get("error") else "")
+        )
+    if any(not c["ok"] for c in checks):
+        lines.append(
+            "A copy/port task whose target barely resembles its reference is not a copy. "
+            "Port the reference file's structure, not a note that says you did."
+        )
+    return "\n".join(lines)
