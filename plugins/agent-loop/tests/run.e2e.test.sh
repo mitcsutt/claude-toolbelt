@@ -431,4 +431,79 @@ assert_eq "wrapup" "$(jq -r 'select(.type=="resume") | .kind' "$WT/$LD/events.js
 grep -q '^- \[x\] T2' "$WT/$LD/LOOP_PLAN.md"; assert_true $? "the first half completed"
 grep -q '^- \[x\] T3' "$WT/$LD/LOOP_PLAN.md"; assert_true $? "the second half completed"
 
+# --------------------------- RENDER + FIDELITY: the loop sees what it built
+# Plan B's own file table adds no e2e scenario, so the render gate and the
+# fidelity check would never run through the harness. These two do.
+setup_case
+# A contract with a render gate that writes a real PNG, and a fidelity pair the
+# Worker will honestly port. `printf` writes the PNG magic bytes; bash 3.2
+# understands the octal escapes.
+side 001 "cat > \"\$RUNTIME_DIR/sprint-T1.json\" <<'JSON'
+{\"task\":\"T1\",\"success_criteria\":[\"src/a.ts exports parse\"],
+ \"allow_list\":[\"src/a.ts\"],\"forbidden\":[],\"verification\":[\"true\"],
+ \"render_gate\":{\"commands\":[\"mkdir -p shots && printf '\\\\211PNG\\\\r\\\\n\\\\032\\\\n' > shots/home.png\"],
+                \"screenshots\":[{\"name\":\"home\",\"path\":\"shots/home.png\"}]},
+ \"fidelity_source\":[{\"from\":\"src/ref.ts\",\"to\":\"src/a.ts\",\"min_similarity\":0.6}],
+ \"evaluator_must_read\":[],\"evaluator_must_view\":[],
+ \"estimated_diff_lines\":5,\"scout_notes\":\"inline\",\"relevant_learnings\":[]}
+JSON"
+reply 001 '{"contract_path":"sprint-T1.json","notes":"ok"}'
+# The reference and the port: identical but for one line, so the ratio clears 0.6.
+printf 'export const parse = () => 1\nexport const other = () => 2\nexport const third = () => 3\n' > "$WT/src/ref.ts"
+side 002 "printf 'export const parse = () => 1\nexport const other = () => 2\nexport const third = () => 9\n' > \"$WT/src/a.ts\""
+reply 002 '{"status":"complete","summary":"ported it"}'
+reply 003 '{"verdict":"PASS","findings":[],"views":[{"name":"home","observation":"the page renders"}],"summary":"criteria met"}'
+reply 004 '{"patterns":[],"log":"T1 rendered","invariants":[]}'
+( cd "$WT" && bash "$RUN" >/dev/null 2>&1 )
+assert_eq "0" "$?" "a task with a render gate and a fidelity pair reaches done"
+isfile "$WT/$LD/artifacts/T1/home.png"; assert_true $? \
+  "the screenshot is archived under artifacts/<T>/"
+assert_eq "home" "$(ev artifact .name | head -1)" "an artifact event names the screenshot"
+assert_eq "T1" "$(ev artifact .task | head -1)" "and the task it belongs to"
+head -c 8 "$WT/$LD/artifacts/T1/home.png" | od -An -c | grep -q 'P   N   G'
+assert_true $? "the archived file is the PNG the render command wrote"
+isfile "$WT/$LD/runtime/fidelity-T1.json"; assert_true $? "the fidelity record is written"
+assert_eq "true" "$(jq -r '.checks[0].ok' "$WT/$LD/runtime/fidelity-T1.json")" \
+  "an honest port passes its threshold"
+isfile "$WT/$LD/runtime/gate-render-T1-1.txt"; assert_true $? \
+  "the render command's output is captured under its own render- tag"
+grep -q '^- \[x\] T1:' "$WT/$LD/LOOP_PLAN.md"; assert_true $? "the row is marked [x]"
+# The counterpart to the skip assertion in the failing scenario below: when the
+# visual checks pass, the Evaluator does run, and it is handed the screenshots.
+assert_eq "1" "$(jq -rs '[.[] | select(.type=="role_start" and .role=="Evaluator")] | length' "$WT/$LD/events.jsonl")" \
+  "a green render runs the Evaluator"
+# artifacts/ is gitignored, so the screenshot is not a stray the SANDBOX reverts
+# and not a file the work commit swallows.
+git -C "$WT" status --porcelain > "$STUB/porcelain.txt"
+grep -q 'artifacts/' "$STUB/porcelain.txt"; assert_false $? \
+  "the archived screenshot is not left as an untracked stray"
+
+# ---------------- a six-line "copy" fails the fidelity check and reaches the Judge
+setup_case
+side 001 "cat > \"\$RUNTIME_DIR/sprint-T1.json\" <<'JSON'
+{\"task\":\"T1\",\"success_criteria\":[\"src/a.ts exports parse\"],
+ \"allow_list\":[\"src/a.ts\"],\"forbidden\":[],\"verification\":[\"true\"],
+ \"fidelity_source\":[{\"from\":\"src/ref.ts\",\"to\":\"src/a.ts\",\"min_similarity\":0.6}],
+ \"evaluator_must_read\":[],\"evaluator_must_view\":[],
+ \"estimated_diff_lines\":5,\"scout_notes\":\"inline\",\"relevant_learnings\":[]}
+JSON"
+reply 001 '{"contract_path":"sprint-T1.json","notes":"ok"}'
+printf 'export const parse = () => 1\nexport const other = () => 2\nexport const third = () => 3\n' > "$WT/src/ref.ts"
+# w5 §5, verbatim in shape: the "copy" is a note saying it was copied.
+side 002 "printf '// TODO(rise-regression): copied from src/ref.ts\n' > \"$WT/src/a.ts\""
+reply 002 '{"status":"complete","summary":"copied it"}'
+# 003 is the Judge: the Evaluator is SKIPPED on a visual failure, exactly as it
+# is on a failed verification command.
+reply 003 '{"decision":"defer","classification":"capability","rationale":"the target does not resemble the reference","instruction":"","alternatives":["retry with the real file"],"reversal":"clear the [!] on T1","changes":{}}'
+( cd "$WT" && bash "$RUN" >/dev/null 2>&1 )
+assert_eq "1" "$?" "a failed fidelity check does not reach done"
+assert_eq "false" "$(jq -r '.checks[0].ok' "$WT/$LD/runtime/fidelity-T1.json")" \
+  "the six-line comment fails its threshold"
+assert_eq "defer" "$(ev decision .decision | tail -1)" "the failure reached the Judge"
+assert_eq "fidelity" "$(jq -r '.attempts[0].outcome' "$WT/$LD/runtime/task-T1.json" | cut -d: -f1)" \
+  "the attempt records its own failure kind, not gate"
+assert_eq "0" "$(jq -rs '[.[] | select(.type=="role_start" and .role=="Evaluator")] | length' "$WT/$LD/events.jsonl")" \
+  "the Evaluator is skipped on a visual failure"
+grep -q '^- \[!\] T1:' "$WT/$LD/LOOP_PLAN.md"; assert_true $? "the row is marked blocked"
+
 assert_summary

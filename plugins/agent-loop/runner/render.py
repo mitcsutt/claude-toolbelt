@@ -13,6 +13,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from . import gate as gate_mod
@@ -298,3 +299,68 @@ def fidelity_text(checks: List[Dict]) -> str:
             "Port the reference file's structure, not a note that says you did."
         )
     return "\n".join(lines)
+
+
+@dataclass
+class VisualResult:
+    ok: bool = True
+    render_results: List = field(default_factory=list)
+    screenshots: List[Dict] = field(default_factory=list)
+    references: List[Dict] = field(default_factory=list)
+    fidelity: List[Dict] = field(default_factory=list)
+    failure_text: str = ""
+
+
+def run_visual_checks(ctx, contract, ready_timeout_s: int = READY_TIMEOUT_S,
+                      poll_s: float = READY_POLL_S) -> VisualResult:
+    """RENDER then FIDELITY. Either failing is a gate failure (spec 3, 5.3, 5.4)."""
+    vis = VisualResult()
+    problems = []  # type: List[str]
+
+    if getattr(contract, "render_gate", None) is not None:
+        try:
+            ensure_app(ctx.cfg, ctx.runtime_dir, events=ctx.events,
+                       ready_timeout_s=ready_timeout_s, poll_s=poll_s)
+        except RenderAppError as exc:
+            vis.ok = False
+            vis.failure_text = "## Render app FAILED\n%s" % exc
+            return vis
+        vis.render_results, vis.screenshots = run_render_gate(ctx, contract)
+        failed = [r for r in vis.render_results if r.rc != 0]
+        if failed:
+            vis.ok = False
+            problems.append(
+                "## Render gate FAILED\n"
+                + "\n".join("%s (rc=%s%s) -> %s"
+                            % (r.cmd, r.rc, ", timed out" if r.timed_out else "", r.output_path)
+                            for r in failed)
+            )
+        vis.references = reference_screenshots(ctx.cfg)
+
+    vis.fidelity = run_fidelity(ctx, contract)
+    if any(not c["ok"] for c in vis.fidelity):
+        vis.ok = False
+        problems.append(fidelity_text(vis.fidelity))
+
+    vis.failure_text = "\n\n".join(problems)
+    return vis
+
+
+def failure_kind(vis: VisualResult) -> str:
+    """Which first-class failure kind this result is, or "" when it passed.
+
+    Render before fidelity: an app that would not render is why the copy could
+    not be compared, not the other way round. The kind is half of
+    `run.failure_signature` and reaches the Judge verbatim, so the two stay
+    distinct — "it built and looks wrong" must not read as "it did not build".
+    """
+    if vis.ok:
+        return ""
+    if not vis.failure_text.startswith("## Fidelity"):
+        return "render"
+    return "fidelity"
+
+
+def evaluator_screenshots(vis: VisualResult) -> List[Dict]:
+    """New images first, then the recipe's reference images."""
+    return list(vis.screenshots) + list(vis.references)
