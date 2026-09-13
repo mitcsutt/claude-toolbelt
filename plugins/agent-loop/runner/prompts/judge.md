@@ -180,3 +180,9 @@ End your reply with exactly one fenced json block and nothing after it:
   }
 }
 ```
+
+Write `rationale` and `alternatives` for a person, not for the harness. Every
+decision you return is appended verbatim to `LOOP_DECISIONS.md`, which a human
+reads after the run to **ratify or reverse** what you settled on their behalf.
+A rationale that does not name the evidence, and alternatives that do not say
+why they lost, make that review impossible.

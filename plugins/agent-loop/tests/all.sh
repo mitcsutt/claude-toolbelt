@@ -2,7 +2,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 fail=0
-for t in run.e2e.test.sh setup.contract.sh medic.contract.sh postmortem.contract.sh; do
+for t in run.e2e.test.sh prompts.contract.sh setup.contract.sh medic.contract.sh postmortem.contract.sh; do
   echo "### $t"
   bash "$HERE/$t" || fail=1
 done
