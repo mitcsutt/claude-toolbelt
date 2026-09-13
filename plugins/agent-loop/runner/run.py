@@ -17,7 +17,7 @@ from typing import Any, List, Optional, Tuple
 
 from . import (config, contract as contract_mod, events as events_mod, gate,
                git_ops, harness, incidents, judge, migrate, phases,
-               plan as plan_mod, sidecar, status, task_state, util)
+               plan as plan_mod, render, sidecar, status, task_state, util)
 
 EXIT_OK = 0
 EXIT_HALT = 1
@@ -906,42 +906,45 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
         gate_text = gate.outputs_text(gate_results)
         out.gates = verification_summary(h.cfg, gate_ok)
         state.end_phase()
-        # plan B: the render gate and the fidelity check go here, between GATE
-        # and EVALUATE.
-        #
-        # One thing to RULE ON first, because the two plans disagree. Plan B's
-        # Task 5 says either failure "is a gate failure that takes the existing
-        # failure path"; plan C's `FAILURE_KINDS` already carries `render` and
-        # `fidelity` as kinds of their own. The kind reaches the Judge verbatim
-        # and is half of `failure_signature`, so folding them into `gate` hides
-        # "the app built and looks wrong" behind "the app did not build" -- which
-        # is the exact confusion spec §1 defect 1 is about. Whichever way it
-        # goes, route the answer through the same retry/escalate/resume/split/
-        # defer block below and put `failure_text` in the detail.
+        # RENDER + FIDELITY (plan B), between GATE and EVALUATE. A visual
+        # failure is routed exactly like a failed verification command -- the
+        # Evaluator is skipped and the synthesised NEEDS_WORK verdict goes to
+        # the Judge -- but it keeps its own `kind` (`render`/`fidelity`, both in
+        # FAILURE_KINDS). The kind is half of `failure_signature` and reaches
+        # the Judge verbatim, so "it built and looks wrong" must not arrive as
+        # "it did not build": that is spec §1 defect 1. Nothing returns early
+        # here; the fall-through below is what spends an attempt.
+        state.begin_phase("RENDER")
+        vis = render.run_visual_checks(ctx, contract)
+        state.end_phase()
+        if vis.failure_text:
+            gate_text += "\n\n" + vis.failure_text
 
         diff = git_ops.diff_text(h.worktree, base_sha, contract.allow_list)
         # Bound on every path: the Evaluator is skipped for a mechanical task and
         # for a failed gate, and the Judge is handed this verdict either way.
         vdata = {}
         if task.class_flag == "mechanical":
-            verdict = "PASS" if gate_ok else "NEEDS_WORK"
+            verdict = "PASS" if gate_ok and vis.ok else "NEEDS_WORK"
             summary = "mechanical task: the gate is the only judge"
             vdata = {"verdict": verdict, "findings": [], "views": [],
                      "summary": summary}
-        elif not gate_ok:
+        elif not gate_ok or not vis.ok:
             verdict = "NEEDS_WORK"
-            summary = "the verification gate failed"
+            summary = ("the verification gate failed" if not gate_ok
+                       else "the %s check failed" % render.failure_kind(vis))
             vdata = {"verdict": verdict, "findings": [], "views": [],
                      "summary": summary}
         else:
             state.begin_phase("EVALUATE")
-            eres, vdata = phases.run_evaluator(ctx, contract, diff, gate_text, [])
+            eres, vdata = phases.run_evaluator(ctx, contract, diff, gate_text,
+                                               render.evaluator_screenshots(vis))
             out.results.append(eres)
             state.end_phase(eres)
             verdict = vdata["verdict"]
             summary = vdata.get("summary", "")
 
-        if gate_ok and verdict == "PASS":
+        if gate_ok and vis.ok and verdict == "PASS":
             state.begin_phase("COMMIT")
             sha = commit_task(h, task, contract)
             out.sha = sha
@@ -959,7 +962,8 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             return out
 
         kind = ("blocker" if verdict == "BLOCKER"
-                else "gate" if not gate_ok else "needs-work")
+                else "gate" if not gate_ok
+                else render.failure_kind(vis) or "needs-work")
         evidence = "%s\n\n%s" % (summary, gate_text)
         out.cause = kind
         action = handle_failure(h, ctx, contract, kind, evidence,
@@ -1516,6 +1520,7 @@ def teardown(h: Harness, hb, supervisor, adopted: bool, code: int) -> None:
         _quietly("stopping the dashboard supervisor", supervisor.stop)
     elif not adopted:
         _quietly("stopping the sidecar", lambda: sidecar.stop(h.runtime_dir))
+    _quietly("stopping the render app", lambda: render.stop_app(h.runtime_dir))
     _quietly("stopping the heartbeat", hb.stop)
     _quietly("emitting loop_end",
              lambda: h.events.emit("loop_end", reason=h.exit_reason or "error",
