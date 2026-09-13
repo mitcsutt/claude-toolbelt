@@ -56,6 +56,24 @@ def build_argv(plugin_root: str, loop_dir: str, runtime_dir: str,
             "--sidecar", "--no-spawn", "--loop-dir", loop_dir, "--port", str(port)]
 
 
+def _marker_for(argv: List[str]) -> str:
+    """The substring that must appear in `ps -o command=` for `argv` once run.
+
+    `LOOP_DASHBOARD_CMD` (and `cmd_override` generally) means the spawned
+    command is not always `web/serve.py` -- the e2e suite points it at
+    `tests/fixtures/dashboard-stub`, and unit tests use bare commands like
+    `true` or `sleep 5`. Hardcoding "serve.py" would make the identity check
+    vacuous in exactly the configuration Task 21 exercises, so the marker is
+    derived from what was actually about to be launched: the script path for
+    the real `[python, serve.py, ...]` shape (matching `adoptable()`'s own
+    convention), else the basename of the program itself.
+    """
+    for arg in argv:
+        if arg.endswith("serve.py"):
+            return "serve.py"
+    return os.path.basename(argv[0]) if argv else ""
+
+
 def start(plugin_root: str, loop_dir: str, runtime_dir: str,
           cmd_override: Optional[str] = None, wait_s: float = 5.0) -> Optional[str]:
     """Spawn the observer and return the URL it announces, or None in time.
@@ -64,8 +82,10 @@ def start(plugin_root: str, loop_dir: str, runtime_dir: str,
     can outlive an unclean harness exit (a crash skips `stop()`), and without
     this a resumed harness would leave that orphan running while it spawns a
     second one -- exactly the two-dashboards-fighting-over-one-port failure
-    this module exists to prevent. A pid already confirmed dead costs nothing
-    extra: `stop()` no-ops on it.
+    this module exists to prevent. `stop()` only ever signals a pid whose
+    identity it can verify, so this is safe even when the recorded pid has
+    since been reassigned to an unrelated process: that process is left alone,
+    and a fresh sidecar is spawned regardless.
     """
     stop(runtime_dir)
     os.makedirs(runtime_dir, exist_ok=True)
@@ -78,7 +98,11 @@ def start(plugin_root: str, loop_dir: str, runtime_dir: str,
                                     stderr=subprocess.STDOUT, start_new_session=True)
     except OSError:
         return None
+    # The pid and the marker that proves it's still this exact process are
+    # recorded together, at spawn time, from the argv actually launched --
+    # `stop()` re-derives nothing and never guesses.
     util.atomic_write(os.path.join(runtime_dir, "sidecar.pid"), str(proc.pid))
+    util.atomic_write(os.path.join(runtime_dir, "sidecar.marker"), _marker_for(argv))
 
     stop_at = wait_s
     step = 0.25
@@ -151,35 +175,67 @@ def _reap(pid: int, timeout: float = 5.0) -> None:
 
 
 def stop(runtime_dir: str) -> None:
-    """Kill this runtime dir's sidecar, if it has one. Never raises."""
-    path = os.path.join(runtime_dir, "sidecar.pid")
-    pid = util.read_int(path, 0)
-    if pid > 0:
+    """Kill this runtime dir's sidecar, if it has one, and only if it still is
+    what it claims to be. Never raises.
+
+    The pid in `sidecar.pid` is read from disk, not held live in memory, so it
+    can outlive its process across a harness crash and restart -- exactly the
+    TOCTOU window in which the OS is free to hand that same number to an
+    unrelated process. Signalling on the bare pid, the way `_signal_group`'s
+    caller used to, would then kill a stranger. So this checks the recorded
+    pid against the marker recorded alongside it at spawn time (`start()`,
+    `_marker_for`) via `util.process_alive` -- the plugin's one liveness
+    primitive, not a second hand-rolled rule -- and fails closed: no marker,
+    or a marker that doesn't match the live process's command line, means the
+    pid is never signalled. Either way the stale bookkeeping is dropped, so a
+    reused or unverifiable pid is simply abandoned rather than adopted or
+    killed.
+    """
+    pid_path = os.path.join(runtime_dir, "sidecar.pid")
+    marker_path = os.path.join(runtime_dir, "sidecar.marker")
+    pid = util.read_int(pid_path, 0)
+    marker = util.read_text(marker_path).strip()
+    if pid > 0 and marker and util.process_alive(pid, marker):
         _signal_group(pid, signal.SIGTERM)
         _reap(pid)
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+    for path in (pid_path, marker_path):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 class Supervisor(object):
     """Restarts a dead sidecar, up to a ceiling, then reports a crash loop.
 
-    `restarts` counts consecutive failures. It resets to zero whenever the
-    most recently spawned instance ran for at least `stable_after` seconds
-    before dying -- otherwise a dashboard that is perfectly healthy for hours
-    and then dies once, long after any earlier trouble, would be treated as
-    the next strike in a crash loop from days ago and reported (or silenced)
-    on evidence that no longer means anything. `stable_after` defaults to a
-    healthy multiple of `interval` so normal restart-detection latency never
-    reads as "it was stable."
+    Two independent ceilings, because either alone is gameable:
+
+    - `restarts` counts CONSECUTIVE failures and resets to zero whenever the
+      most recently spawned instance ran for at least `stable_after` seconds
+      before dying -- otherwise a dashboard that is perfectly healthy for
+      hours and then dies once, long after any earlier trouble, would be
+      treated as the next strike in a crash loop from days ago.
+    - that same reset is exactly what a sidecar dying on a period just over
+      `stable_after`, forever, would exploit: `restarts` would pin at 1
+      forever and `on_crashloop` would never fire, while the harness spins a
+      fresh process every `interval` all night with no visibility. So a
+      SECOND counter -- restarts within a fixed trailing window -- cannot be
+      reset by the same trick, because it doesn't care whether any individual
+      cycle looked "stable"; it only cares how many restarts happened
+      recently. Defaults: `window_s=3600.0`, `max_in_window=10` -- a healthy
+      sidecar essentially never restarts, so more than ten times in an hour,
+      by any pattern, is itself the signal, independent of the consecutive
+      count.
+
+    `stable_after` defaults to a healthy multiple of `interval` so normal
+    restart-detection latency never reads as "it was stable."
     """
 
     def __init__(self, runtime_dir: str, plugin_root: str, loop_dir: str,
                  on_crashloop: Callable[[int], None], interval: float = 10.0,
                  max_restarts: int = 5, cmd_override: Optional[str] = None,
-                 stable_after: Optional[float] = None):
+                 stable_after: Optional[float] = None,
+                 window_s: float = 3600.0, max_in_window: int = 10):
         self.runtime_dir = runtime_dir
         self.plugin_root = plugin_root
         self.loop_dir = loop_dir
@@ -189,8 +245,11 @@ class Supervisor(object):
         self.cmd_override = cmd_override
         self.stable_after = (stable_after if stable_after is not None
                              else max(60.0, interval * 6))
+        self.window_s = window_s
+        self.max_in_window = max_in_window
         self.restarts = 0
         self._last_spawn = None  # type: Optional[float]
+        self._restart_times = []  # type: List[float]
         self._stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name="sidecar-supervisor")
         self.thread.daemon = True
@@ -215,9 +274,17 @@ class Supervisor(object):
         if self._last_spawn is not None and (now - self._last_spawn) >= self.stable_after:
             self.restarts = 0
         self.restarts += 1
-        if self.restarts > self.max_restarts:
+
+        self._restart_times.append(now)
+        cutoff = now - self.window_s
+        self._restart_times = [t for t in self._restart_times if t >= cutoff]
+        windowed_count = len(self._restart_times)
+
+        crashlooping = self.restarts > self.max_restarts
+        windowed = windowed_count > self.max_in_window
+        if crashlooping or windowed:
             try:
-                self.on_crashloop(self.restarts)
+                self.on_crashloop(self.restarts if crashlooping else windowed_count)
             except Exception:
                 pass
             return True
