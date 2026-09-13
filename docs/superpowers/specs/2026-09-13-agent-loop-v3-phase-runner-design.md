@@ -154,7 +154,7 @@ Orchestrator model:   # ignored by v3, kept so old configs parse
   "verification": ["pnpm turbo run lint check test --filter=@repo/internal"],
   "render_gate": {"commands": ["pnpm --filter @repo/integration cypress run --spec cypress/e2e/internal/customers/orgunits.cy.ts"],
                   "screenshots": [{"name": "orgunits-list", "path": "apps/integration/cypress/screenshots/orgunits.png"}]},
-  "fidelity_source": [{"from": "apps/frontend/src/layouts/Header/Header.tsx", "to": "apps/internal/src/layouts/Header/Header.tsx", "min_similarity": 0.6}],
+  "fidelity_source": [{"src": "apps/frontend/src/layouts/Header/Header.tsx", "dst": "apps/internal/src/layouts/Header/Header.tsx", "min_similarity": 0.6}],
   "evaluator_must_read": ["apps/frontend/src/layouts/Sidebar/AppNavigation/components/AppNavigationItem.tsx"],
   "evaluator_must_view": ["orgunits-list"],
   "estimated_diff_lines": 300,
@@ -177,6 +177,10 @@ The harness pre-loads `evaluator_must_read` file contents (capped) into the Eval
 The setup skill asks once per repo for a **render recipe**: how to start the app if needed, the command pattern that renders a route and writes a screenshot, and the UI path globs. The recipe is stored under `Render:` in `LOOP_CONFIG.md`. The Scout instantiates it per task into `render_gate`. The harness runs it after GATE, copies screenshots into `$LOOP_DIR/artifacts/<T>/`, attaches them to the tick (`artifact` event, ignored by today's dashboard), and fails the tick if a command fails. Reference screenshots (e.g. the Rise page a copy is meant to match) can be listed in the recipe and are handed to the Evaluator alongside the new ones.
 
 ### 5.4 Fidelity check
+Each pair is `src`/`dst` (`from`/`to` is accepted on the wire for a contract written
+against an earlier draft of this section, but `src`/`dst` is what `contract.FidelitySource`
+carries and what the Scout is told to write).
+
 For each `fidelity_source` pair the harness computes a normalized line-similarity ratio (`difflib`, whitespace/import-order normalized) and fails the tick below `min_similarity` with the ratio in the gate output. A copy task that produces a six-line diff hard-fails (`w5` §5).
 
 ---
