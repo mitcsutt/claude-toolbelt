@@ -120,9 +120,16 @@ class Heartbeat(object):
         self.thread.daemon = True
 
     def _run(self) -> None:
-        os.makedirs(self.runtime_dir, exist_ok=True)
         while True:
-            util.stamp_epoch(os.path.join(self.runtime_dir, "HEARTBEAT"))
+            try:
+                os.makedirs(self.runtime_dir, exist_ok=True)
+                util.stamp_epoch(os.path.join(self.runtime_dir, "HEARTBEAT"))
+            except Exception:
+                # A transient write failure (disk full, runtime dir removed or
+                # made unwritable underneath us) must skip this beat, not kill
+                # the thread: a dead heartbeat reads as a dead harness to every
+                # liveness consumer, which is the opposite of this class's job.
+                pass
             if self._stop.wait(self.interval):
                 return
 

@@ -70,6 +70,31 @@ class TestLock(unittest.TestCase):
         self.assertEqual([], leftovers)
 
 
+class TestHarnessAlive(unittest.TestCase):
+    def test_it_calls_process_alive_with_the_run_sh_token(self):
+        original = util.process_alive
+        self.addCleanup(setattr, util, "process_alive", original)
+        calls = []
+
+        def stub_true(pid, must_contain=None):
+            calls.append((pid, must_contain))
+            return True
+
+        util.process_alive = stub_true
+        self.assertTrue(harness.harness_alive(1234))
+        self.assertEqual([(1234, "run.sh")], calls)
+
+        calls.clear()
+
+        def stub_false(pid, must_contain=None):
+            calls.append((pid, must_contain))
+            return False
+
+        util.process_alive = stub_false
+        self.assertFalse(harness.harness_alive(1234))
+        self.assertEqual([(1234, "run.sh")], calls)
+
+
 class TestHeartbeat(unittest.TestCase):
     def test_it_stamps_an_epoch_and_stops_on_request(self):
         rt = tempfile.mkdtemp()
@@ -90,6 +115,20 @@ class TestHeartbeat(unittest.TestCase):
         hb.start()
         hb.stop()
         hb.stop()
+
+    def test_a_write_failure_skips_a_beat_instead_of_killing_the_thread(self):
+        parent = tempfile.mkdtemp()
+        blocked = os.path.join(parent, "runtime")
+        with open(blocked, "w") as f:
+            f.write("not a directory")
+        hb = harness.Heartbeat(blocked, interval=0.05)
+        hb.start()
+        try:
+            time.sleep(0.2)
+            self.assertTrue(hb.thread.is_alive())
+        finally:
+            hb.stop()
+        self.assertFalse(hb.thread.is_alive())
 
 
 class TestTickJson(unittest.TestCase):
