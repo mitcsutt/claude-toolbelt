@@ -24,6 +24,14 @@ them, plus a fourth manual layer for prompt-shaped plugins.
    file exists; the substance of what it asserts is a review concern (R5),
    not something a script can judge.
 
+   A plugin whose implementation is Python puts its unit tests in
+   `plugins/<name>/tests/runner/test_*.py` and has `tests/all.sh` run them with
+   `python3 -m unittest discover -s tests/runner -p 'test_*.py'`, skipping with
+   a printed note when `python3` is absent — the same treatment `serve.test.py`
+   already gets. `agent-loop` is the only plugin in that shape: its harness is
+   `runner/run.py` and `run.sh` is a four-line shim, so `tests/run.e2e.test.sh`
+   skips too when there is no `python3` to run.
+
 3. **`scripts/test-all.sh`** — runs `scripts/validate.sh`, then every
    plugin's `tests/all.sh` in turn, then `node --test` over every tracked
    `*.test.mjs` file. This is the single command that must pass before any
