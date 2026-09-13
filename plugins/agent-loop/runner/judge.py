@@ -218,7 +218,8 @@ def build_input(ctx, contract, failure: Failure) -> JudgeInput:
         cap_extended=cap_extended(attempts),
         resume_session=getattr(ctx, "last_session", None),
         resumes_left=max(0, resume_max - used),
-        boot_evidence="",          # Task 8 fills this for boot-reconcile
+        boot_evidence=(boot_evidence(ctx, contract)
+                       if failure.kind == "boot-reconcile" else ""),
     )
 
 
@@ -648,15 +649,30 @@ def apply(ctx, contract, decision: dict, evidence: str = "") -> str:
             applied.append("%s blocked_by %s" % (tid, ctx.task.id))
 
     if d == "revert-and-retry":
-        # Boot reconciliation only (spec §14). The revert itself is NOT done
-        # here: throwing away uncommitted work safely needs the pre-existing-work
-        # baseline, the protected loop-dir paths and both halves of a rename,
-        # and all three live on the Harness. `run.boot_task` owns the revert and
-        # branches on this decision; this module only drops the dead session.
+        # Boot reconciliation only (spec §14): "the harness reverts EVERY
+        # uncommitted change, including inside allow_list, then restarts from
+        # SCOUT". Two of the sandbox's three guards apply and are shared with it
+        # through git_ops -- the loop's own dir is never reverted, and both
+        # halves of a rename go together or the tree keeps neither name.
+        #
+        # The third guard, the pre-existing-work baseline, deliberately does NOT
+        # apply here. At boot that baseline was captured from a tree a DEAD
+        # harness had already dirtied, so it covers the loop's own leftovers as
+        # well as the human's; subtracting it would revert nothing at all and
+        # make this decision a no-op recorded as a real one. That ambiguity is
+        # precisely why the Judge was asked, and it is shown this exact file
+        # list as `boot_evidence` before it chooses -- the prompt says in terms
+        # that this throws work away and that it must say so in `reversal`.
+        changed = git_ops.changed_paths(ctx.cfg.worktree)
+        keep = git_ops.protected_paths(ctx.loop_dir, ctx.cfg.worktree)
+        doomed = git_ops.whole_renames(
+            ctx.cfg.worktree, git_ops.strays(changed, keep))
+        if doomed:
+            git_ops.revert(ctx.cfg.worktree, doomed)
+            applied.append("reverted %d uncommitted path(s), allow_list included"
+                           % len(doomed))
         ctx.resume_session = None
         ctx.last_session = None
-        applied.append("session dropped; the harness reverts the tree, "
-                       "allow_list included, before re-scouting")
     elif d == "split":
         new_ids = ctx.plan.split(ctx.task.id, changes.get("sub_rows") or [])
         ctx.plan.save()
@@ -683,3 +699,88 @@ def apply(ctx, contract, decision: dict, evidence: str = "") -> str:
                     classification=decision.get("classification", ""),
                     rejected=decision.get("rejected") or [])
     return NEXT_ACTION[d]
+
+
+# --------------------------------------------------------------------------
+# boot reconciliation — a `[~]` task with no state file (spec §14, decision 13)
+# --------------------------------------------------------------------------
+BOOT_TRAILER_RE = re.compile(r"^(Loop-[A-Za-z-]+|Co-Authored-By):")
+
+
+def boot_evidence(ctx, contract) -> str:
+    """What the 2.x medic used to read by hand before deciding (spec §14).
+
+    The Judge cannot resume a phase it has no record of, so it gets the three
+    things that survive a crash: the uncommitted tree split by the contract's
+    allow_list, the Worker's own checkpoint, and what HEAD claims happened.
+
+    Gathered BEFORE anything is reverted. A dossier assembled after the tree was
+    cleaned describes a tree the Judge is not being asked about.
+    """
+    worktree = ctx.cfg.worktree
+    changed = git_ops.changed_paths(worktree)
+    stray = git_ops.strays(changed, list(contract.allow_list))
+    inside = [p for p in changed if p not in set(stray)]
+
+    lines = ["### Uncommitted tree vs the contract's allow_list",
+             "- inside allow_list (%d): %s"
+             % (len(inside), ", ".join(inside[:20]) or "none"),
+             "- outside allow_list (%d): %s"
+             % (len(stray), ", ".join(stray[:20]) or "none"),
+             "",
+             "### runtime/worker-result.json"]
+    body = util.read_text(os.path.join(ctx.runtime_dir,
+                                       "worker-result.json")).strip()
+    lines.append(body or "(absent - the Worker never wrote one)")
+
+    message = git_ops.last_commit(worktree)
+    msg_lines = message.splitlines()
+    trailers = [ln for ln in msg_lines if BOOT_TRAILER_RE.match(ln.strip())]
+    lines.append("")
+    lines.append("### HEAD commit")
+    lines.append(msg_lines[0] if msg_lines else "(no commit on this branch)")
+    lines.extend(trailers or ["(no Loop- trailers)"])
+    return "\n".join(lines)
+
+
+# Where each boot decision leaves the tick, as a `task_state.PHASES` name. The
+# reconciliation writes the state file that was missing, and stamping the phase
+# it routed to makes a crash DURING the reconcile idempotent: the next boot
+# reads a real phase and takes the same branch again, instead of falling through
+# to SCOUT and throwing away the tree this decision just chose to keep.
+BOOT_PHASE = {"resume": "WORK", "retry": "SCOUT", "revert-and-retry": "SCOUT"}
+
+
+def boot_reconcile(ctx, contract) -> str:
+    """A `[~]` task with no runtime/task-<T>.json: the ambiguous step of a boot
+    or of the 2->3 migration, handed to an agent with a budget and an allowlist
+    (spec §14, decision 13). Returns retry | resume | defer."""
+    failure = Failure(
+        kind="boot-reconcile",
+        detail="the harness restarted and found %s marked [~] with no "
+               "runtime/task-%s.json to resume from"
+               % (ctx.task.id, ctx.task.id))
+    inp = build_input(ctx, contract, failure)
+    decision = decide(ctx, inp)
+    judge_phase = decision.pop("_phase", None)
+    action = apply(ctx, contract, decision)
+
+    state = TaskState.load(ctx.runtime_dir, ctx.task.id)
+    state.begin_attempt(inp.tier)
+    phase = BOOT_PHASE.get(decision["decision"], "")
+    if phase:
+        state.begin_phase(phase)
+    if judge_phase is not None:
+        # No `begin_phase("judge")`: §14's PHASES has no JUDGE, and an
+        # unrecognised phase name sends the next boot to SCOUT. See close_attempt.
+        state.end_phase(judge_phase)
+        if phase:
+            state.phase = phase
+    state.end_attempt("boot-reconcile:%s" % decision["decision"],
+                      judge=json_safe(decision))
+    state.save()
+
+    ctx.events.emit("boot_reconcile", tick=ctx.tick, task=ctx.task.id,
+                    decision=decision["decision"],
+                    classification=decision.get("classification", ""))
+    return action
