@@ -48,10 +48,13 @@ Read all of:
    "by_model":{"<model-id>":{"cost_usd":..,"input_tokens":..,"output_tokens":..,"cache_read_tokens":..,"cache_creation_tokens":..}}}
   ```
 
-  **CRITICAL:** the top-level `input_tokens`/`output_tokens` are the **orchestrator (parent) process only** — every subagent's usage (Planner, Scout, Worker, Evaluator) lives exclusively in `by_model`. Summing the top-level fields undercounts the run by ~350× and reports orchestrator-only output. The true billed surface is the sum across `by_model.*` of `input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens`. `cost_usd` (top-level) IS the full-tick cost and may be summed for the cost figure.
+  **Reading `by_model`.** `by_model` is the whole billed surface: from v3 the harness sums each phase's usage into `tick_end.by_model` for every tick, and flushes it **even when a phase is SIGTERMed or SIGKILLed**, so there is no missing tick and no unattributed spend (a 2.x run left ~$61 unaccounted for exactly this way). Sum across `by_model.*` of `input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens` for tokens; sum the top-level `cost_usd` for cost. **Historical caveat for a ledger written by 2.x:** there, the top-level `input_tokens`/`output_tokens` were the orchestrator (parent) process only — every subagent's usage lived exclusively in `by_model`, and summing the top-level fields undercounted the run by ~350x. v3 has no orchestrator process, so the top-level figures are the sum of the phases; the rule to read `by_model` is the same either way.
 
   This is the source of truth for tokens and timing — task *outcomes* live in the commit trailers, not here. `cost_usd` is a raw API-list-price estimate recorded per tick (it is not summed by the harness and does not map to subscription billing). Empty if the loop crashed before any tick produced parseable JSON (expected for an early halt).
 - **`$LOOP_DIR/LOOP_CLEANUP.md`** — the human-decision queue: each `[!]` task's reason and the specific decision a person must make to unblock it, plus any permission/scope gaps left unresolved
+- **`$LOOP_DIR/LOOP_DECISIONS.md`** — every choice the Judge made without a human under `Decision policy: autonomous`: widened constraints, tier escalations, task splits, and defaults picked where the spec was silent, each with the alternatives it rejected. This is **not** a failure list — it is the queue a human **ratifies or reverses** now that the run is over. Absent or empty is valid (a `conservative` run defers instead of deciding).
+- **`$LOOP_DIR/artifacts/`** — one directory per task (`artifacts/<T>/<name>.png`), holding the screenshots the render gate produced and the Evaluator was required to observe. List them **per task**: a UI task with no screenshots means either a `| no-ui` tag or a render recipe that never ran, and both are findings.
+- **`runtime/task-<T>.json`** for any task worth a closer look — its attempt history (`attempts[].n`, `.tier`, `.outcome`, `.judge`) shows whether a task passed clean or needed a resume/escalation/split, and at which tier each attempt ran. A task with several attempts and no matching `LOOP_DECISIONS.md` entry is a gap to flag.
 - **`$LOOP_DIR/LOOP_LOG.jsonl`** (supplementary) — the tick event log, one JSON event per line (tick-start, blocked, recovery, etc.). Commit trailers are the primary outcome record; skim this only for events that left no commit (e.g. a halted tick, a stale-lock recovery). Empty/absent is fine.
 - **`git log --grep="Loop-Status"` for the loop branch** — full structured commit history. Parse trailers:
 
@@ -72,7 +75,8 @@ Compute:
 **Usage rollup (from `$LOOP_DIR/LOOP_USAGE.jsonl`):**
 
 - **Total ticks** (line count), and the split of **plan ticks** vs **execute ticks** vs **review ticks** (the `mode` field)
-- **Evaluator invocation count** — count `role_start` events with `role: "Evaluator"` in `$LOOP_DIR/events.jsonl`, split into per-task vs per-segment, and the per-model tier each ran on. Report this **separately from the review-tick count**: the per-task Evaluator runs *inside* execute ticks, so the review-tick count (the `mode:"review"` ledger rows) badly understates real judgement cost. In the source run there were 30 Evaluator dispatches across only 10 review ticks. Flag if every Evaluator ran on the most-capable tier (a sign the flat `Evaluator tier` config defeated the per-class split — see Plan 2).
+- **Phase counts and cost** — from `phase_end` events in `$LOOP_DIR/events.jsonl`, grouped by `phase`: how many times each of scout/worker/evaluator/judge/planner/reviewer/learner ran, on which model, and the wall-clock and cost each accounted for. **Evaluator invocation count** is one row of this table; report it separately from the review-tick count, because the per-task Evaluator runs *inside* execute ticks and the `mode:"review"` ledger rows badly understate real judgement cost (in the source run, 30 Evaluator dispatches across only 10 review ticks). Flag two shapes: every Evaluator on the most-capable tier (a tier ceiling set where the per-class split should have governed), and a Judge count that is a large fraction of the tick count (the loop is spending its most expensive phase on recurring failures — name the failure).
+- **Resumes and splits** — count `resume` and `split` events. A high resume rate means `worker_timeout=` is set too low; a high split rate means the plan's tasks are too large. These are the two knobs the next run should change.
 - **Total billed tokens** = sum across every record's `by_model.*` of `(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens)`. This is the meaningful usage figure. **Report the cache-read share** (`sum(cache_read_tokens) / total billed`) explicitly — in the source run it was 93%, i.e. cost is dominated by re-reading fixed context, not by output. **Canonicalize model ids before grouping**: strip the `us.anthropic.`/`anthropic.` region prefix, the `[1m]` window suffix, and the `-v1:0` version suffix, or the same model double-lists (e.g. `claude-sonnet-4-6` vs `us.anthropic.claude-sonnet-4-6`).
 - **Per-model cost/token table** — one row per canonical model: cost_usd, the four token fields, and % of total cost. (Source run: the standard tier ~$89 / 66%, most-capable ~$41 / 31%, cheap ~$4 / 3%.)
 - **Total cost** = sum of top-level `cost_usd` (already full-tick; informational, not subscription spend).
@@ -125,7 +129,8 @@ Format as a single markdown block that `/postmortem` will receive as input:
 
 ### Usage (from LOOP_USAGE.jsonl)
 - Ticks: <N> total (<P> plan · <E> execute · <R> review)
-- Evaluator dispatches: <N> total (<per-task> per-task · <per-segment> per-segment), tiers: <model:count …>
+- Phases: scout <N> · worker <N> (<R> resumed, <S> split) · evaluator <N> · judge <N> · planner <N> · reviewer <N> · learner <N>
+- Evaluator dispatches: <N> total, tiers: <model:count …>
 - Total cost: $<X> · Total tokens: <in>+<out>
 - Cost per task: $<X> (total ÷ done)
 - Slowest ticks: tick <n> (<mode>, <s>s, $<X>) · tick <n> (…) · tick <n> (…)
@@ -135,6 +140,12 @@ For each `## Segment <id>` — done / skipped / blocked / blocked-upstream / pen
 
 ### Blocked work — human-decision queue
 For each `[!]` / `[blocked-upstream]` task — task ID, segment, and the specific decision a person must make (verbatim from `LOOP_CLEANUP.md`).
+
+### Decisions taken without a human (from LOOP_DECISIONS.md)
+For each entry — task ID, the decision (`retry|escalate|widen|resume|split|defer|halt`), its classification (`self-imposed|spec-answered|capability|open`), the rationale, and the alternatives rejected. Mark each **ratify** or **reverse** with one line of reasoning. An `open` classification is the one to read hardest: the loop picked a default the spec did not state.
+
+### Product evidence (from artifacts/)
+Per task with a render gate: the screenshot names, and whether the Evaluator's `views` carried an observation for each. List UI-touching tasks with **no** artefacts and say which are `| no-ui` (fine) and which are a gap in the render recipe (a finding — the whole point of the render gate is that a human should not be the first to look at the product).
 
 ### Cleanup follow-ups (from LOOP_CLEANUP.md)
 - [ ] <verbatim from file, one per line>
@@ -211,6 +222,7 @@ Elapsed:    <human-readable>
 Postmortem: $LOOP_DIR/POSTMORTEM.md
 
 Manual cleanup: <N items> in LOOP_CLEANUP.md (human-decision queue)
+Decided without you: <N> entries in LOOP_DECISIONS.md (<M> classified `open` — read those first)
 Next: review the postmortem, then merge / squash / push.
 ```
 
