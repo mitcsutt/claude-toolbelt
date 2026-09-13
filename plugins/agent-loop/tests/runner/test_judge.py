@@ -690,6 +690,23 @@ class TestFailurePath(_PolicyBase):
         self.assertIn("loop: block T60", log)
         self.assertIn("Loop-Status: halted", log)
 
+    def test_an_invalid_contract_is_not_overwritten_by_the_stand_in(self):
+        """The dossier's contract is synthesised, not loaded. Saving it over the
+        Scout's file would destroy the evidence of WHY it was rejected."""
+        from runner import run as runner_run
+        from runner.contract import load_contract
+        path = os.path.join(self.runtime, "sprint-T60.json")
+        before = load_contract(path).allow_list
+        with self._judge_says({
+                "decision": "retry", "classification": "spec-answered",
+                "rationale": "the spec answers where it goes",
+                "instruction": "put it under internal/",
+                "alternatives": ["defer"], "reversal": "none", "changes": {}}):
+            runner_run.handle_failure(
+                self.h, self.ctx, None, "invalid-contract", "allow_list is empty")
+        self.assertEqual(load_contract(path).allow_list, before,
+                         "the Scout's rejected contract survives for a human")
+
     def test_an_invalid_contract_still_reaches_the_judge(self):
         """No Worker ran and there is no contract; the Judge still gets a dossier
         rather than the loop marking [!] on its own."""

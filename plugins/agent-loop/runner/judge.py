@@ -592,12 +592,19 @@ def write_cleanup_entry(ctx, decision: dict, evidence: str = "") -> None:
         fh.write("".join(chunks))
 
 
-def apply(ctx, contract, decision: dict, evidence: str = "") -> str:
+def apply(ctx, contract, decision: dict, evidence: str = "",
+          persist: bool = True) -> str:
     """Do what the decision says, then tell the main loop what happens next.
 
     `evidence` is the failure detail the decision was made on; it is written
     into the LOOP_CLEANUP entry of a deferral so a human sees what actually
     failed and not only the Judge's summary of it.
+
+    `persist=False` when `contract` is a stand-in rather than a document that
+    came off disk — the `invalid-contract` path synthesises an empty one so the
+    Judge still gets a dossier, and saving THAT over `runtime/sprint-<T>.json`
+    would destroy the Scout's rejected contract, which is the evidence a human
+    needs to see why it was rejected.
     """
     d = decision["decision"]
     changes = decision.get("changes") or {}
@@ -629,7 +636,7 @@ def apply(ctx, contract, decision: dict, evidence: str = "") -> str:
                                 % (contract.scout_notes, _now(), d, note)).strip()
         applied.append("instruction appended to scout_notes")
         contract_dirty = True
-    if contract_dirty:
+    if contract_dirty and persist:
         save_contract(contract, path)
 
     # The judged tier and the one cap extension are armed on the context; the
