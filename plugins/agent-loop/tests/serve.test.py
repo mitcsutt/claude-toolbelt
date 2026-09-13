@@ -1515,5 +1515,50 @@ class TestBindServerFallback(unittest.TestCase):
             httpd.server_close()
 
 
+class TestMockMatchesFixture(unittest.TestCase):
+    """`dashboard.html`'s MOCK claims byte-identity with the checked-in fixture.
+
+    Nothing asserted that claim, and it had drifted in two fields by 3.0.0
+    (`loop.plugin_version` and `loop.migration`). The fixture is referenced by
+    nothing else in the repo -- it exists *only* to be the thing MOCK matches --
+    so an unasserted claim is the whole of its value. Parse both and compare.
+    """
+
+    HERE = os.path.dirname(os.path.abspath(__file__))
+
+    def _mock(self):
+        path = os.path.join(self.HERE, "..", "web", "dashboard.html")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        marker = "const MOCK = "
+        start = text.index(marker) + len(marker)
+        depth, i = 0, start
+        while i < len(text):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return json.loads(text[start:i + 1])
+            i += 1
+        self.fail("unbalanced MOCK object in dashboard.html")
+
+    def _fixture(self):
+        path = os.path.join(self.HERE, "fixtures", "snapshot-sample.json")
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_mock_equals_snapshot_fixture(self):
+        self.assertEqual(self._mock(), self._fixture())
+
+    def test_both_name_the_current_plugin_version(self):
+        """A stale version in the mock reads as a real dashboard showing 2.x."""
+        path = os.path.join(self.HERE, "..", ".claude-plugin", "plugin.json")
+        with open(path, encoding="utf-8") as fh:
+            version = json.load(fh)["version"]
+        self.assertEqual(self._mock()["loop"]["plugin_version"], version)
+        self.assertEqual(self._fixture()["loop"]["plugin_version"], version)
+
+
 if __name__ == "__main__":
     unittest.main()
