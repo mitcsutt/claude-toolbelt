@@ -1,43 +1,120 @@
 #!/usr/bin/env bash
-# Mock `claude` for stream-json. Ignores flags/stdin. Emits the Nth block of
-# $MOCK_CLAUDE_SCRIPT (blocks separated by a line equal to '==='). If a block's
-# first line is 'RC=<n>', exit with that code (and don't print that line). If a
-# block's first line is 'SLEEP=<s>', sleep that long first (and don't print it) —
-# used to hold a tick open while a second harness races for the lock.
+# Scripted stand-in for `claude`, driven by a directory of numbered responses.
 #
-# Non-tick invocations (the harness also shells out to `claude --print "/skill"`)
-# must NOT consume a block, or every medic/postmortem call would eat a tick:
-#   /agent-loop-medic      -> run $MOCK_MEDIC_SCRIPT if set (args passed through), else exit 0
-#   /agent-loop-postmortem -> exit 0
+#   STUB_SCRIPT=<dir>   invocation N consumes, in this order:
+#                         <dir>/NNN.sh     bash side effects, run in this cwd, so a
+#                                          scripted phase can write sprint-<T>.json,
+#                                          worker-result.json, edit tracked files, or
+#                                          drop a PAUSE/STOP sentinel mid-phase
+#                         <dir>/NNN.jsonl  the stream-json transcript, printed line by line
+#                         <dir>/NNN.sleep  seconds to hang AFTER printing, so a phase can
+#                                          be killed by its timeout or by STOP with its
+#                                          usage already on the wire
+#                         <dir>/NNN.exit   the exit code (default 0)
+#   STUB_DELAY=<secs>   sleep between transcript lines (stall/activity tests)
+#   STUB_LOG=<file>     append "<NNN> <resumed-session-id|none>" per invocation
+#
+# Every invocation prints a system/init line carrying a session_id first, which is
+# what the harness captures for --resume.
+#
+# A skill invocation (`/agent-loop-medic`, `/agent-loop-postmortem`) must NOT consume a
+# numbered response, or every medic call would eat a phase.
+#
+# With STUB_SCRIPT unset the v2 MOCK_CLAUDE_* protocol below still applies: the bash
+# harness's tests/run.e2e.test.sh drives it that way and stays green until the spec §12
+# rewrite replaces it. That second half goes away with run.e2e.test.sh, and
+# tests/runner/test_claude_proc.py::TestStubFixtureLegacyProtocol is what guards it
+# until then.
+set -uo pipefail
+
+resume=""
+prev=""
 for arg in "$@"; do
+  if [ "$prev" = "--resume" ]; then
+    resume="$arg"
+  fi
   case "$arg" in
     */agent-loop-medic*)
-      if [[ -n "${MOCK_MEDIC_SCRIPT:-}" ]]; then
+      if [ -n "${MOCK_MEDIC_SCRIPT:-}" ]; then
         bash "$MOCK_MEDIC_SCRIPT" "$@"
         exit "$?"
       fi
-      exit 0 ;;
+      exit 0
+      ;;
     */agent-loop-postmortem*)
-      exit 0 ;;
+      exit 0
+      ;;
   esac
+  prev="$arg"
 done
 
-state="${MOCK_CLAUDE_STATE:?MOCK_CLAUDE_STATE unset}"
-script="${MOCK_CLAUDE_SCRIPT:?MOCK_CLAUDE_SCRIPT unset}"
-cat >/dev/null 2>&1 || true   # drain stdin
-n=0; [[ -f "$state" ]] && n="$(cat "$state")"
-n=$((n + 1)); echo "$n" > "$state"
-block="$(awk -v want="$n" 'BEGIN{b=1} /^===$/{b++; next} { if (b==want) print }' "$script")"
-exit_code=0
-first="$(printf '%s\n' "$block" | head -1)"
-if [[ "$first" == SLEEP=* ]]; then
-  sleep "${first#SLEEP=}"
-  block="$(printf '%s\n' "$block" | tail -n +2)"
+cat >/dev/null 2>&1 || true   # drain the prompt on stdin
+
+if [ -z "${STUB_SCRIPT:-}" ]; then
+  # ---- v2 protocol: blocks of $MOCK_CLAUDE_SCRIPT separated by a line of '==='.
+  # A block's first line may be SLEEP=<s> (hang first) and/or RC=<n> (exit code);
+  # neither is printed.
+  state="${MOCK_CLAUDE_STATE:?MOCK_CLAUDE_STATE unset}"
+  script="${MOCK_CLAUDE_SCRIPT:?MOCK_CLAUDE_SCRIPT unset}"
+  n=0
+  [ -f "$state" ] && n="$(cat "$state")"
+  n=$((n + 1)); echo "$n" > "$state"
+  block="$(awk -v want="$n" 'BEGIN{b=1} /^===$/{b++; next} { if (b==want) print }' "$script")"
+  exit_code=0
   first="$(printf '%s\n' "$block" | head -1)"
+  if [ "${first#SLEEP=}" != "$first" ]; then
+    sleep "${first#SLEEP=}"
+    block="$(printf '%s\n' "$block" | tail -n +2)"
+    first="$(printf '%s\n' "$block" | head -1)"
+  fi
+  if [ "${first#RC=}" != "$first" ]; then
+    exit_code="${first#RC=}"
+    block="$(printf '%s\n' "$block" | tail -n +2)"
+  fi
+  printf '%s\n' "$block"
+  exit "$exit_code"
 fi
-if [[ "$first" == RC=* ]]; then
-  exit_code="${first#RC=}"
-  block="$(printf '%s\n' "$block" | tail -n +2)"
+
+dir="$STUB_SCRIPT"
+state="$dir/.n"
+n=0
+if [ -f "$state" ]; then
+  n="$(cat "$state")"
 fi
-printf '%s\n' "$block"
-exit "$exit_code"
+case "$n" in
+  ''|*[!0-9]*) n=0 ;;
+esac
+n=$((n + 1))
+printf '%s' "$n" > "$state"
+idx="$(printf '%03d' "$n")"
+
+if [ -n "${STUB_LOG:-}" ]; then
+  printf '%s %s\n' "$idx" "${resume:-none}" >> "$STUB_LOG"
+fi
+
+if [ -f "$dir/$idx.sh" ]; then
+  bash "$dir/$idx.sh"
+fi
+
+printf '{"type":"system","subtype":"init","session_id":"stub-%s","model":"stub"}\n' "$idx"
+
+if [ -f "$dir/$idx.jsonl" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ -n "$line" ]; then
+      printf '%s\n' "$line"
+      if [ -n "${STUB_DELAY:-}" ]; then
+        sleep "$STUB_DELAY"
+      fi
+    fi
+  done < "$dir/$idx.jsonl"
+fi
+
+if [ -f "$dir/$idx.sleep" ]; then
+  sleep "$(cat "$dir/$idx.sleep")"
+fi
+
+rc=0
+if [ -f "$dir/$idx.exit" ]; then
+  rc="$(cat "$dir/$idx.exit")"
+fi
+exit "$rc"
