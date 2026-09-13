@@ -615,12 +615,11 @@ class TestBlastRadius(Base):
         """After a Worker, the allow_list work IS the loop's and goes back — and
         `mark_blocked` adds nothing to what the sandbox already took.
 
-        This test also PINS a hole this fix round did not close, so that changing
-        it is a deliberate act: the SANDBOX (spec §6.4, "revert anything outside
-        allow_list") reverts pre-existing human work too, because it has no
-        baseline to tell "the Worker wrote this" from "this was already dirty".
-        `mark_blocked` no longer compounds that, but the sandbox reaches it first.
-        See task-18-fix-1-report.md §5.
+        Note this harness was constructed BEFORE `human_work()` ran, so its
+        pre-existing baseline is empty and the sandbox still reverts those
+        files here. That ordering is the test rig's, not production's --
+        `TestSandboxBaseline` below builds the harness after the human's work,
+        the way a real boot does, and pins the behaviour that actually ships.
         """
         self.human_work()
         self.patch({
@@ -755,3 +754,88 @@ class TestFailureSignature(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSandboxBaseline(Base):
+    """The sandbox contains the Worker; it does not tidy the human's tree.
+
+    `sandbox` runs after EVERY Worker phase, so this fires on ordinary
+    successful ticks, not only on failures. Without a baseline every path the
+    human had already dirtied is outside the allow_list and therefore a
+    "stray", and the first green tick of the night silently destroys it.
+
+    The harness is built AFTER the human's work here, which is the real
+    ordering: a human edits their tree, then starts the loop.
+    """
+
+    def boot_after_human_work(self):
+        """Re-make the Harness so its baseline sees the tree as a boot would."""
+        with open(os.path.join(self.wt, "KEEP.md"), "w") as f:
+            f.write("an untracked file the human left lying about\n")
+        with open(os.path.join(self.wt, "src", "a.ts"), "a") as f:
+            f.write("// an uncommitted edit the human made before the loop ran\n")
+        self.h = run.Harness(
+            cfg=self.cfg, plugin_root="/plugin", loop_dir=self.loop_dir,
+            runtime_dir=self.runtime, worktree=self.wt,
+            config_path=os.path.join(self.loop_dir, "LOOP_CONFIG.md"),
+            plan_path=self.plan_path,
+            events=EventLog(self.events_path, os.path.join(self.runtime, "eventseq")),
+            usage=UsageLog(os.path.join(self.loop_dir, "LOOP_USAGE.jsonl")),
+            log=run.Log(os.path.join(self.loop_dir, "harness.log")),
+            plan=plan_mod.Plan.load(self.plan_path),
+            medic=incidents.MedicState())
+
+    def test_a_green_tick_does_not_destroy_work_the_human_left_in_the_tree(self):
+        self.boot_after_human_work()
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(
+                           allow_list=["src/w.ts"],
+                           success_criteria=["src/w.ts exists"])}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit("src/w.ts", "loop wrote this\n")}],
+            "evaluator": [{"text": block({"verdict": "PASS", "summary": "ok"})}],
+            "learner": [{"text": block({"learnings": []})}]})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+
+        self.assertTrue(os.path.exists(os.path.join(self.wt, "KEEP.md")),
+                        "the human's untracked file was deleted by the sandbox")
+        with open(os.path.join(self.wt, "src", "a.ts")) as f:
+            self.assertIn("before the loop ran", f.read(),
+                          "the human's uncommitted edit was reverted by the sandbox")
+
+    def test_the_spared_paths_are_named_in_the_log_not_silently_skipped(self):
+        """Sparing is a judgement the operator must be able to see and argue
+        with -- a Worker edit hiding behind a human's dirty file stays in the
+        tree, and the log is the only place that says so."""
+        self.boot_after_human_work()
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(
+                           allow_list=["src/w.ts"],
+                           success_criteria=["src/w.ts exists"])}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit("src/w.ts", "loop wrote this\n")}],
+            "evaluator": [{"text": block({"verdict": "PASS", "summary": "ok"})}],
+            "learner": [{"text": block({"learnings": []})}]})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        log = util.read_text(os.path.join(self.loop_dir, "harness.log"))
+        self.assertIn("already modified before this run started", log)
+        self.assertIn("KEEP.md", log)
+
+    def test_the_loops_own_stray_is_still_reverted(self):
+        """The baseline must not become an amnesty: a path the Worker dirtied
+        that the human had not touched is still the sandbox's to take."""
+        self.boot_after_human_work()
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(
+                           allow_list=["src/w.ts"],
+                           success_criteria=["src/w.ts exists"])}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit("src/stray.ts", "not sanctioned\n")}],
+            "evaluator": [{"text": block({"verdict": "PASS", "summary": "ok"})}],
+            "learner": [{"text": block({"learnings": []})}]})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "stray.ts")),
+                         "a genuine Worker stray survived the sandbox")
