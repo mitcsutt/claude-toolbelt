@@ -30,6 +30,19 @@ STOP_FILE = "STOP"
 # grows a tail longer than the segment.
 FOLLOW_UP_SEVERITIES = ("should-fix", "must-fix")
 
+# How many Worker attempts one task gets from plan A's stand-in: one dispatch
+# plus one same-tier re-dispatch. Spec §4.2's ceiling is 3, but the third attempt
+# is the Judge's to spend — it exists so a decision can change something, and in
+# plan A nothing would change between attempt 2 and attempt 3. `attempt_bound`
+# lets `max_attempts` lower this and says so in the log when it cannot raise it.
+PLAN_A_MAX_ATTEMPTS = 2
+
+# Spec §7's classification vocabulary, in full. Nothing else may be emitted:
+# `classification` is the Judge's read of WHY a task failed, and plan A has no
+# Judge, so every site here answers `open` — the one value that claims nothing.
+CLASSIFICATIONS = ("self-imposed", "spec-answered", "capability", "open")
+UNJUDGED = "open"
+
 
 class Log(object):
     """harness.log plus the operator's terminal. Never the loop's state source."""
@@ -115,6 +128,37 @@ def _protected(h: Harness) -> List[str]:
     return [rel, os.path.join(rel, "**")]
 
 
+def _revert_reporting(h: Harness, paths: List[str], label: str) -> List[str]:
+    """Revert `paths`, then RE-READ the tree and say what actually came back.
+
+    The log used to assert the revert rather than observe it: `git_ops.revert`
+    cannot remove a directory-shaped stray (a nested repository, a dirty
+    submodule — git reports each as one porcelain entry and refuses to descend),
+    and the failure was swallowed while the harness logged "reverted N path(s)".
+    A containment step that silently fails is worse than one that refuses out
+    loud, because only the second leaves evidence. One extra `git status` per
+    revert buys an observation instead of a claim.
+
+    Returns the paths that survived.
+    """
+    if not paths:
+        return []
+    git_ops.revert(h.worktree, paths)
+    still = set(git_ops.changed_paths(h.worktree))
+    survived = [p for p in paths if p in still]
+    reverted = [p for p in paths if p not in still]
+    if reverted:
+        h.log("%s: reverted %d path(s): %s"
+              % (label, len(reverted), ", ".join(reverted[:5])))
+    if survived:
+        h.log("%s: COULD NOT revert %d path(s) and did not try harder — git reports "
+              "each as a directory it will not descend into (a nested repository or "
+              "a dirty submodule), and deleting one recursively would destroy "
+              "uncommitted work this loop did not create. They are still in the "
+              "tree: %s" % (label, len(survived), ", ".join(survived[:5])))
+    return survived
+
+
 def sandbox(h: Harness, contract) -> List[str]:
     """Revert everything the contract did not sanction. Runs after EVERY Worker.
 
@@ -123,13 +167,13 @@ def sandbox(h: Harness, contract) -> List[str]:
     a stray is most likely. The stray set comes from `git_ops.strays` over
     `git_ops.changed_paths`, never from a hand-built list: a rename reports both
     of its names there, and a list assembled anywhere else drops one of them.
+
+    Returns every stray FOUND. What was actually reverted, and what survived, is
+    in the log — a directory stray cannot be reverted and is refused by name.
     """
     changed = git_ops.changed_paths(h.worktree)
     stray = git_ops.strays(changed, list(contract.allow_list) + _protected(h))
-    if stray:
-        git_ops.revert(h.worktree, stray)
-        h.log("sandbox: reverted %d path(s) outside allow_list: %s"
-              % (len(stray), ", ".join(stray[:5])))
+    _revert_reporting(h, stray, "sandbox")
     return stray
 
 
@@ -192,8 +236,12 @@ def boot_reconcile(h: Harness) -> None:
         h.resume_phase = task_state.boot_resume(state)
         h.log("boot-reconcile: %s was recorded in phase %r; resuming at %s"
               % (task.id, state.phase or "?", h.resume_phase))
+        # §7's enum is the Judge's read of WHY a task failed; a harness that died
+        # is none of self-imposed, spec-answered or capability, and plan A has no
+        # Judge to say more. `open` claims nothing, which is the truth. The
+        # boot-reconcile fact rides in `cause`, a field of our own event.
         h.events.emit("decision", task=task.id, decision="resume",
-                      classification="boot-reconcile")
+                      classification=UNJUDGED, cause="boot-reconcile")
     else:
         # No state file: a 2.x dir, or a crash before the first write.
         # plan C: hand this to the Judge with failure="boot-reconcile" and the
@@ -211,15 +259,15 @@ def boot_reconcile(h: Harness) -> None:
         changed = git_ops.changed_paths(h.worktree)
         stray = git_ops.strays(changed, allow + _protected(h))
         kept = [p for p in changed if p not in stray]
-        if stray:
-            git_ops.revert(h.worktree, stray)
+        survived = _revert_reporting(h, stray, "boot-reconcile")
         h.resume_phase = "scout"
         h.log("boot-reconcile WARNING: %s is [~] but runtime/task-%s.json does not "
               "exist, so nothing records how far it got. Kept %d change(s) inside "
-              "allow_list, reverted %d stray path(s), and re-running the task from "
-              "SCOUT." % (task.id, task.id, len(kept), len(stray)))
+              "allow_list, reverted %d stray path(s) (%d could not be reverted and "
+              "are named above), and re-running the task from SCOUT."
+              % (task.id, task.id, len(kept), len(stray) - len(survived), len(survived)))
         h.events.emit("decision", task=task.id, decision="retry",
-                      classification="boot-reconcile")
+                      classification=UNJUDGED, cause="boot-reconcile")
 
     h.resume_task = task.id
     h.plan.set_state(task.id, "pending")
@@ -248,22 +296,77 @@ def commit_task(h: Harness, task, contract) -> str:
                            "Loop-Files": shown})
 
 
+def attempt_bound(cfg) -> int:
+    """How many Worker attempts one task actually gets. Never more than plan A's.
+
+    `Limits: max_attempts=` is a hand-edited, documented key that `/agent-loop-setup`
+    writes, and until now it was parsed, defaulted to 3 and then ignored — an
+    operator who raised it got no extra attempt and no warning, which is a trap
+    rather than a deferral. So it is honoured here as a CEILING that can only
+    lower the bound: `max_attempts=1` genuinely means "no retry" today, and a
+    value above plan A's two is clamped with a log line saying why. It cannot
+    raise the bound because the third attempt exists so that a DECISION can change
+    something — the Judge's tier, a widened allow_list, a split (spec §7) — and in
+    plan A nothing would differ between attempt two and attempt three except the
+    bill.
+    """
+    try:
+        configured = int(cfg.limits.get("max_attempts", PLAN_A_MAX_ATTEMPTS))
+    except (TypeError, ValueError):
+        configured = PLAN_A_MAX_ATTEMPTS
+    return max(1, min(PLAN_A_MAX_ATTEMPTS, configured))
+
+
 def failure_signature(reason: str, phase: str, task_id: str) -> str:
     """Keyed on what actually repeated, not on `rc=124 after 1800s` (spec §8)."""
     return "%s|%s|%s" % (reason, phase, task_id)
 
 
-def mark_blocked(h: Harness, task, reason: str, evidence: str) -> None:
-    """`[!]`, a LOOP_CLEANUP entry with the evidence, and the blocked-upstream fan-out.
+def _loop_written(h: Harness, contract) -> List[str]:
+    """The changed paths this loop was SANCTIONED to write, and only those.
 
-    Reverts first: a half-applied workaround left in the tree is worse than no
-    attempt at all. The worktree belongs to the loop and to nothing else, so
-    everything outside the loop's own dir is this task's partial work.
+    The old rule here was "everything outside the loop's own dir is this task's
+    partial work". It is not, and the assumption is destructive in a way that
+    cannot be undone: on the `invalid-contract` path no Worker has run at all, so
+    every changed path belongs to the human — and a hand-written untracked file
+    was deleted, an unrelated modified file reset to HEAD, to recover from the
+    loop's OWN Scout failing validation twice.
+
+    What the loop actually wrote is what the contract permitted it to write. The
+    sandbox has already run after every Worker, so anything still outside the
+    allow_list is either the human's or something the sandbox could not revert
+    (a directory stray, reported by name in the log) — and neither is this
+    function's to destroy. With no contract in force, the loop wrote nothing and
+    this list is empty.
     """
     changed = git_ops.changed_paths(h.worktree)
-    to_revert = git_ops.strays(changed, _protected(h))   # everything but the loop dir
-    if to_revert:
-        git_ops.revert(h.worktree, to_revert)
+    outside_loop = git_ops.strays(changed, _protected(h))
+    if contract is None:
+        return []
+    sanctioned = set(changed) - set(git_ops.strays(changed, list(contract.allow_list)))
+    return [p for p in outside_loop if p in sanctioned]
+
+
+def mark_blocked(h: Harness, task, reason: str, evidence: str, contract=None) -> None:
+    """`[!]`, a LOOP_CLEANUP entry with the evidence, and the blocked-upstream fan-out.
+
+    Reverts the loop's own work first: a half-applied workaround left in the tree
+    is worse than no attempt at all. `contract` is what bounds "own" — see
+    `_loop_written`. Passing None (no Worker ran; no contract was ever in force)
+    leaves the tree exactly as it was found.
+    """
+    changed = git_ops.changed_paths(h.worktree)
+    to_revert = _loop_written(h, contract)
+    _revert_reporting(h, to_revert, "blocked %s" % task.id)
+    spared = [p for p in git_ops.strays(changed, _protected(h))
+              if p not in set(to_revert)]
+    if spared:
+        h.log("blocked %s: left %d changed path(s) alone — %s, so they are not this "
+              "loop's to revert: %s"
+              % (task.id, len(spared),
+                 "no contract was ever in force on this tick" if contract is None
+                 else "they are outside the contract's allow_list",
+                 ", ".join(spared[:5])))
 
     h.plan = plan_mod.Plan.load(h.plan_path)
     h.plan.set_state(task.id, "blocked")
@@ -298,7 +401,8 @@ def mark_blocked(h: Harness, task, reason: str, evidence: str) -> None:
         f.write(header + "\n".join(entry) + "\n")
 
     h.events.emit("task_status", id=task.id, status="blocked", sha="")
-    h.events.emit("decision", task=task.id, decision="defer", classification="open")
+    h.events.emit("decision", task=task.id, decision="defer",
+                  classification=UNJUDGED, cause=reason)
     git_ops.commit(h.worktree, [h.plan_path, cleanup_path],
                    "loop(%s): blocked — %s" % (task.id, reason),
                    {"Loop-Status": "halted",
@@ -307,7 +411,7 @@ def mark_blocked(h: Harness, task, reason: str, evidence: str) -> None:
           % (task.id, reason, len(downstream)))
 
 
-def handle_failure(h: Harness, task, reason: str, evidence: str) -> str:
+def handle_failure(h: Harness, task, reason: str, evidence: str, contract=None) -> str:
     """What to do when a task cannot pass. Returns the tick verdict.
 
     # plan C: this is where `judge.decide(ctx, contract, results, verdict,
@@ -317,7 +421,7 @@ def handle_failure(h: Harness, task, reason: str, evidence: str) -> str:
     # policy. Note what is NOT here: nothing consults config.next_tier.
     """
     h.log("failure signature %s" % failure_signature(reason, "execute", task.id))
-    mark_blocked(h, task, reason, evidence)
+    mark_blocked(h, task, reason, evidence, contract=contract)
     return "halt" if h.cfg.blocker_policy == "halt" else "continue"
 
 
@@ -389,6 +493,8 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
                   % (task.id, scout_try, "; ".join(errors)))
         if contract is None or errors:
             state.end_attempt("invalid-contract")
+            # contract=None on purpose: two Scouts failed validation, no Worker
+            # ran, and nothing in the tree is the loop's to revert.
             out.verdict = handle_failure(h, task, "invalid-contract",
                                          "\n".join(errors) or "the Scout wrote no contract")
             out.cause = "invalid-contract"
@@ -473,9 +579,17 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
         reason = ("blocker" if verdict == "BLOCKER"
                   else "gate-failed" if not gate_ok else "needs-work")
         state.end_attempt(reason)
-        # plan C: judge.decide(...) replaces this branch entirely, and its bound is
-        # cfg.limits["max_attempts"] rather than the literal two below.
-        if attempt < 2 and verdict != "BLOCKER":
+        # plan C: judge.decide(...) replaces this branch entirely, and it may spend
+        # up to cfg.limits["max_attempts"] where plan A's stand-in is capped at
+        # PLAN_A_MAX_ATTEMPTS by attempt_bound().
+        bound = attempt_bound(h.cfg)
+        if attempt >= bound and int(h.cfg.limits.get("max_attempts", bound)) > bound:
+            h.log("%s: max_attempts=%s is configured but plan A's stand-in retries "
+                  "once at the same tier, so the effective ceiling is %d. The third "
+                  "attempt is the Judge's to spend (plan C) — it exists so a decision "
+                  "can change something, and nothing here would change."
+                  % (task.id, h.cfg.limits.get("max_attempts"), bound))
+        if attempt < bound and verdict != "BLOCKER":
             # Same tier, with the Evaluator's findings in front of it. Spec §11
             # item 4: a re-attempt's tier is a judgement from the checkpoint, not
             # a ladder, and most overruns are one extra iteration — paying the top
@@ -483,13 +597,17 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             attempt += 1
             findings = summary or "the previous attempt did not satisfy the contract"
             state.begin_attempt(phases.worker_tier(h.cfg))
+            # NOT `capability`: a first NEEDS_WORK or a failed gate is no evidence
+            # the model was incapable, and claiming it would put the wrong cause in
+            # front of whoever reads the run back. Classifying a failure is the
+            # Judge's job, and plan A has not asked one.
             h.events.emit("decision", task=task.id, decision="retry",
-                          classification="capability")
+                          classification=UNJUDGED, cause=reason)
             h.log("%s %s on attempt %d — re-dispatching the Worker at the same tier "
                   "with the Evaluator's findings" % (task.id, reason, attempt - 1))
             continue
         evidence = "%s\n\n%s" % (summary, gate_text)
-        out.verdict = handle_failure(h, task, reason, evidence)
+        out.verdict = handle_failure(h, task, reason, evidence, contract=contract)
         out.cause = reason
         return out
 
