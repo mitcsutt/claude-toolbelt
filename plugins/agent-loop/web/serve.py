@@ -5,13 +5,13 @@ Reads the loop's existing artefacts under $LOOP_DIR, tails events.jsonl
 incrementally into a bounded EventStore, serves a single-page dashboard over
 HTTP + SSE from one shared 1 Hz snapshot, and drives Start/Pause/Resume/Stop
 via the runtime/PAUSE file. Headless `bash run.sh` is unaffected. The server
-creates no scratch dir; it reuses $LOOP_DIR and writes only runtime/PAUSE +
-runtime/dashboard.json.
+creates no scratch dir; it reuses $LOOP_DIR and writes only runtime/PAUSE,
+runtime/STOP + runtime/dashboard.json.
 
-Status is derived from events.jsonl + PID liveness only. run.log is forensic:
-it is read for the 12-line display tail and for nothing else. Nothing here
-greps it for HALT:/LOOP_DONE — a subagent prompt quoting those tokens used to
-flip the dashboard to HALTED mid-run.
+Status is derived from events.jsonl + PID liveness only. harness.log (run.log
+on an unmigrated v2 dir) is forensic: it is read for the 12-line display tail
+and for nothing else. Nothing here greps it for HALT:/LOOP_DONE — a subagent
+prompt quoting those tokens used to flip the dashboard to HALTED mid-run.
 """
 import argparse
 import hashlib
@@ -527,6 +527,22 @@ def _tail_lines(path, n=12, window=65536):
     return lines[-n:]
 
 
+def _log_tail(loop_dir, n=12):
+    """Last `n` lines of the harness's own log, and the basename they came from.
+
+    v3 does not tee a run.log — one v2 run left a 105 MB file nobody read. The
+    harness writes its own lines to harness.log (rotated 10 MB x 3) and each
+    phase's full transcript stays in the session JSONL its phase_end event
+    names. A v2 loop dir has only run.log, so the fallback keeps a dir that has
+    not been migrated yet readable from a v3 dashboard.
+    """
+    for name in ("harness.log", "run.log"):
+        path = os.path.join(loop_dir, name)
+        if os.path.exists(path):
+            return _tail_lines(path, n), name
+    return [], "harness.log"
+
+
 # --------------------------------------------------------------- liveness
 # Every liveness answer comes from runtime/ + the kernel. `pgrep` and
 # `ps | grep run.sh` are banned here and in the skills: they match the
@@ -1015,6 +1031,7 @@ def build_snapshot(loop_dir, store, live, status, now, stall_s=300):
     ls = store.last("loop_start")
     started = live.get("harness_started_at") or _t(ls) or None
     dash = _read_json(os.path.join(loop_dir, "runtime", "dashboard.json")) or {}
+    log_lines, log_file = _log_tail(loop_dir, 12)
     dash_pid = dash.get("pid")
 
     return {
@@ -1060,7 +1077,8 @@ def build_snapshot(loop_dir, store, live, status, now, stall_s=300):
         "quota": parse_quota(quota_obj, now),
         "config": config,
         "elapsed_s": max(0, now - started) if started else 0,
-        "log": _tail_lines(os.path.join(loop_dir, "run.log"), 12),
+        "log": log_lines,
+        "log_file": log_file,
     }
 
 
