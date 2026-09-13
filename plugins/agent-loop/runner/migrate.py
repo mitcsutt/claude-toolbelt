@@ -141,7 +141,17 @@ def v2_harness_live(runtime_dir: str) -> bool:
     lock = util.read_json(os.path.join(runtime_dir, "harness.json"))
     if not isinstance(lock, dict):
         return False
-    if not util.process_alive(lock.get("pid"), "run.sh"):
+    try:
+        owner = int(lock.get("pid"))
+    except (TypeError, ValueError):
+        return False
+    # Our own lock is not another harness. `main` takes the lock before it
+    # migrates -- it has to, or two harnesses could migrate the same dir at
+    # once -- so without this the harness reads its own pid and fresh
+    # heartbeat as "a 2.x harness is live" and refuses to upgrade its own dir.
+    if owner == os.getpid():
+        return False
+    if not util.process_alive(owner, "run.sh"):
         return False
     age = _heartbeat_age_s(runtime_dir, time.time())
     return age is not None and age <= _HEARTBEAT_STALE_S
@@ -215,11 +225,15 @@ def _normalise_contracts(runtime_dir: str) -> int:
     return count
 
 
-def migrate_2_to_3(loop_dir: str, runtime_dir: str) -> str:
-    """2.x -> 3.0: the phase runner's new durable files, plus the contract shape.
+def ensure_layout(loop_dir: str) -> List[str]:
+    """Create the schema-3 files this loop dir is missing; name what was made.
 
-    LOOP_PLAN.md is not touched, so a `[~]` task survives the upgrade untouched
-    and is reconciled by the boot rule (spec §14) on the first tick.
+    Shared by the 2 -> 3 migration and by the harness's own start-up, because a
+    dir created fresh at schema 3 never runs a migration and would otherwise
+    never get these at all -- `artifacts/` in particular, which is where plan
+    B writes screenshots and which the sandbox would delete as a stray if it
+    were not also in the per-run `.gitignore`. Idempotent: re-running it on a
+    complete dir creates nothing and returns an empty list.
     """
     actions: List[str] = []
     artifacts = os.path.join(loop_dir, "artifacts")
@@ -238,6 +252,16 @@ def migrate_2_to_3(loop_dir: str, runtime_dir: str) -> str:
         actions.append("harness-log")
     if _ensure_gitignore(loop_dir):
         actions.append("gitignore-artifacts")
+    return actions
+
+
+def migrate_2_to_3(loop_dir: str, runtime_dir: str) -> str:
+    """2.x -> 3.0: the phase runner's new durable files, plus the contract shape.
+
+    LOOP_PLAN.md is not touched, so a `[~]` task survives the upgrade untouched
+    and is reconciled by the boot rule (spec §14) on the first tick.
+    """
+    actions = ensure_layout(loop_dir)
     normalised = _normalise_contracts(runtime_dir)
     if normalised:
         actions.append("contracts-normalised:%d" % normalised)
