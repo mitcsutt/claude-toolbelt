@@ -57,6 +57,13 @@ class TestChangedPaths(unittest.TestCase):
         sh(self.d, "git", "mv", "old.ts", "new.ts")
         self.assertIn("new.ts", git_ops.changed_paths(self.d))
 
+    def test_a_rename_reports_both_names(self):
+        write(self.d, "old.ts", "x\n")
+        sh(self.d, "git", "add", "old.ts")
+        sh(self.d, "git", "commit", "-q", "-m", "add old")
+        sh(self.d, "git", "mv", "old.ts", "new.ts")
+        self.assertEqual(["new.ts", "old.ts"], sorted(git_ops.changed_paths(self.d)))
+
 
 class TestStrays(unittest.TestCase):
     def test_exact_paths_and_globs_are_inside(self):
@@ -96,17 +103,36 @@ class TestRevert(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.d, "keep.ts")))
 
     def test_a_staged_rename_outside_the_allow_list_is_fully_undone(self):
+        # End-to-end through the real call path: changed_paths -> strays ->
+        # revert. An allow_list that covers neither name means the whole
+        # rename is out of scope and must come back exactly as HEAD had it.
         write(self.d, "old.ts", "x\n")
         sh(self.d, "git", "add", "old.ts")
         sh(self.d, "git", "commit", "-q", "-m", "add old")
         sh(self.d, "git", "mv", "old.ts", "new.ts")
-        git_ops.revert(self.d, ["old.ts", "new.ts"])
+        changed = git_ops.changed_paths(self.d)
+        to_revert = git_ops.strays(changed, ["README.md"])
+        git_ops.revert(self.d, to_revert)
         with open(os.path.join(self.d, "old.ts")) as f:
             self.assertEqual("x\n", f.read())
         self.assertFalse(os.path.exists(os.path.join(self.d, "new.ts")))
         status = subprocess.run(["git", "status", "--porcelain"], cwd=self.d,
                                 stdout=subprocess.PIPE).stdout.decode()
         self.assertEqual("", status)
+
+    def test_a_rename_whose_source_is_allow_listed_only_reverts_the_destination(self):
+        # The Worker was entitled to delete old.ts (it's in the allow_list),
+        # so only new.ts -- the part the contract never sanctioned -- is a
+        # stray. old.ts staying deleted is the correct, in-scope outcome.
+        write(self.d, "old.ts", "x\n")
+        sh(self.d, "git", "add", "old.ts")
+        sh(self.d, "git", "commit", "-q", "-m", "add old")
+        sh(self.d, "git", "mv", "old.ts", "new.ts")
+        changed = git_ops.changed_paths(self.d)
+        to_revert = git_ops.strays(changed, ["old.ts"])
+        git_ops.revert(self.d, to_revert)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "new.ts")))
+        self.assertFalse(os.path.exists(os.path.join(self.d, "old.ts")))
 
     def test_a_non_ascii_untracked_stray_is_reported_and_deleted(self):
         write(self.d, "naïve.ts", "x\n")
