@@ -108,6 +108,17 @@ def revert(cwd: str, paths: List[str]) -> None:
     correctly: the old name is in HEAD and comes back, the new name is not
     and is removed. An unborn branch (no HEAD yet) makes every path "not in
     HEAD" automatically, since `cat-file -e HEAD:<path>` fails there too.
+
+    **A directory-shaped path is refused, not emptied.** `git status
+    --porcelain -uall` still reports a nested repository as ONE entry ending
+    in `/`, because git will not descend into another repo; a dirty submodule
+    reports as a single modified entry that `checkout HEAD --` does not
+    recurse into. Recursively deleting either destroys a whole repository's
+    uncommitted work to contain a stray, which is a far bigger hammer than the
+    problem justifies. This function therefore never removes a directory, and
+    the caller is expected to RE-READ the tree and report what survived —
+    `os.remove` raising on a directory was being swallowed here, so the only
+    record of the failure was a log line claiming the opposite.
     """
     for path in paths:
         if _unsafe(path):
@@ -116,8 +127,10 @@ def revert(cwd: str, paths: List[str]) -> None:
         if rc == 0:
             _git(cwd, ["checkout", "HEAD", "--", path], check=False)
             continue
+        full = os.path.join(cwd, path.rstrip("/"))
+        if os.path.isdir(full) and not os.path.islink(full):
+            continue
         _git(cwd, ["rm", "-f", "--cached", "--", path], check=False)
-        full = os.path.join(cwd, path)
         try:
             os.remove(full)
         except OSError:

@@ -10,6 +10,13 @@ from runner import plan as plan_mod, run, status, task_state, util
 from runner.claude_proc import PhaseResult
 from runner.events import EventLog, UsageLog
 
+# Every test here builds a real throwaway git repo and then deliberately destroys
+# things inside it. It must never be able to reach the real worktree: honour the
+# session scratchpad when one is exported, and fall back to the system temp dir.
+SCRATCH = os.environ.get("CLAUDE_SCRATCHPAD") or None
+if SCRATCH and not os.path.isdir(SCRATCH):
+    SCRATCH = None
+
 PLAN = """## Segment A: wiring
 - [ ] T1: Add the parser
 - [ ] T2: Add the writer | depends_on: T1
@@ -55,7 +62,7 @@ class Replies(object):
 
 class Base(unittest.TestCase):
     def setUp(self):
-        self.wt = tempfile.mkdtemp()
+        self.wt = tempfile.mkdtemp(dir=SCRATCH)
         sh(self.wt, "git", "init", "-q")
         sh(self.wt, "git", "config", "user.email", "loop@example.com")
         sh(self.wt, "git", "config", "user.name", "Loop")
@@ -543,7 +550,7 @@ class TestBootReconcile(Base):
             self.assertIn("parse", f.read())
         self.assertIn("boot-reconcile",
                       util.read_text(os.path.join(self.loop_dir, "harness.log")))
-        self.assertEqual("boot-reconcile", self.emitted("decision")[0]["classification"])
+        self.assertEqual("boot-reconcile", self.emitted("decision")[0]["cause"])
 
     def test_no_state_file_and_no_contract_reverts_everything_outside_the_loop_dir(self):
         self.mark_doing()
@@ -568,6 +575,172 @@ class TestBootReconcile(Base):
         self.h.resume_task = "T1"
         self.h.resume_phase = "gate"
         self.assertEqual("", self.h.take_resume("T2"))
+
+
+class TestBlastRadius(Base):
+    """The revert on the blocked path may only touch what the loop was
+    sanctioned to write. A human's file is not the loop's to delete."""
+
+    def human_work(self):
+        """Three shapes of work the loop did not create, in one dirty tree."""
+        with open(os.path.join(self.wt, "HUMAN.md"), "w") as f:
+            f.write("a human wrote this by hand\n")
+        os.makedirs(os.path.join(self.wt, "humandir", "deep"))
+        with open(os.path.join(self.wt, "humandir", "deep", "idea.txt"), "w") as f:
+            f.write("half an idea\n")
+        with open(os.path.join(self.wt, "src", "a.ts"), "a") as f:
+            f.write("// and edited this tracked file\n")
+
+    def test_a_pre_worker_block_does_not_touch_anything_the_loop_did_not_write(self):
+        """`invalid-contract`: two Scouts failed, NO Worker ran, so the loop
+        produced none of the changes in the tree and may destroy none of them."""
+        self.human_work()
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(allow_list=[])},
+                      {"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(allow_list=[])}],
+            "worker": []})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        self.assertEqual("blocked", plan_mod.Plan.load(self.plan_path).task("T1").state)
+        self.assertTrue(os.path.exists(os.path.join(self.wt, "HUMAN.md")))
+        self.assertTrue(os.path.exists(
+            os.path.join(self.wt, "humandir", "deep", "idea.txt")))
+        self.assertIn("no contract was ever in force on this tick",
+                      util.read_text(os.path.join(self.loop_dir, "harness.log")))
+        with open(os.path.join(self.wt, "src", "a.ts")) as f:
+            self.assertIn("edited this tracked file", f.read())
+
+    def test_a_post_worker_block_reverts_the_loops_work_and_nothing_further(self):
+        """After a Worker, the allow_list work IS the loop's and goes back — and
+        `mark_blocked` adds nothing to what the sandbox already took.
+
+        This test also PINS a hole this fix round did not close, so that changing
+        it is a deliberate act: the SANDBOX (spec §6.4, "revert anything outside
+        allow_list") reverts pre-existing human work too, because it has no
+        baseline to tell "the Worker wrote this" from "this was already dirty".
+        `mark_blocked` no longer compounds that, but the sandbox reaches it first.
+        See task-18-fix-1-report.md §5.
+        """
+        self.human_work()
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(
+                           allow_list=["src/w.ts"],
+                           success_criteria=["src/w.ts exists"])}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit("src/w.ts", "loop wrote this\n")}],
+            "evaluator": [{"text": block({"verdict": "BLOCKER", "summary": "no"})}]})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        self.assertEqual("blocked", plan_mod.Plan.load(self.plan_path).task("T1").state)
+        self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "w.ts")))
+        log = util.read_text(os.path.join(self.loop_dir, "harness.log"))
+        # mark_blocked took exactly the loop's own sanctioned path, and no more.
+        self.assertIn("blocked T1: reverted 1 path(s): src/w.ts", log)
+        self.assertNotIn("blocked T1: reverted 2", log)
+        # …and the sandbox, not mark_blocked, is what took the human's work.
+        self.assertIn("sandbox: reverted 3 path(s): src/a.ts, HUMAN.md", log)
+        self.assertFalse(os.path.exists(os.path.join(self.wt, "HUMAN.md")))
+
+
+class TestDirectoryStray(Base):
+    """A nested repository is one porcelain entry git refuses to descend into.
+    The sandbox may not claim to have reverted it."""
+
+    def nested_repo(self, rel="vendor/nested"):
+        full = os.path.join(self.wt, rel)
+        os.makedirs(full)
+        sh(full, "git", "init", "-q")
+        with open(os.path.join(full, "someones-work.txt"), "w") as f:
+            f.write("uncommitted, and not ours\n")
+        return full
+
+    def test_it_survives_and_the_log_says_so_instead_of_claiming_a_revert(self):
+        full = self.nested_repo()
+        contract = cmod.Contract(task="T1", allow_list=["src/a.ts"])
+        stray = run.sandbox(self.h, contract)
+        self.assertIn("vendor/nested/", stray)
+        self.assertTrue(os.path.exists(os.path.join(full, "someones-work.txt")))
+        log = util.read_text(os.path.join(self.loop_dir, "harness.log"))
+        self.assertIn("COULD NOT revert", log)
+        self.assertIn("vendor/nested/", log)
+
+    def test_a_file_stray_beside_it_is_still_reverted_and_reported_as_reverted(self):
+        self.nested_repo()
+        self.worker_edit("src/b.ts", "stray\n")()
+        contract = cmod.Contract(task="T1", allow_list=["src/a.ts"])
+        run.sandbox(self.h, contract)
+        self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "b.ts")))
+        log = util.read_text(os.path.join(self.loop_dir, "harness.log"))
+        self.assertIn("sandbox: reverted 1 path(s): src/b.ts", log)
+
+
+class TestAttemptBound(Base):
+    """`Limits: max_attempts=` is documented and hand-edited. It may not be
+    parsed, defaulted and then ignored."""
+
+    def scripted(self, workers=4):
+        return {
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer()}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit()} for _ in range(workers)],
+            "evaluator": [{"text": block({"verdict": "NEEDS_WORK", "summary": "thin"})}
+                          for _ in range(workers)]}
+
+    def test_the_default_is_one_retry(self):
+        self.assertEqual(2, run.attempt_bound(self.cfg))
+
+    def test_a_lower_ceiling_is_honoured_and_costs_one_worker_not_two(self):
+        self.h.cfg.limits["max_attempts"] = 1
+        rec = self.patch(self.scripted())
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        self.assertEqual(1, len([c for c in rec.calls if c["phase"] == "worker"]))
+        self.assertEqual("blocked", plan_mod.Plan.load(self.plan_path).task("T1").state)
+
+    def test_a_higher_ceiling_is_clamped_and_the_operator_is_told(self):
+        self.h.cfg.limits["max_attempts"] = 5
+        rec = self.patch(self.scripted())
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        self.assertEqual(2, len([c for c in rec.calls if c["phase"] == "worker"]))
+        self.assertEqual(2, run.attempt_bound(self.h.cfg))
+        self.assertIn("max_attempts=5 is configured",
+                      util.read_text(os.path.join(self.loop_dir, "harness.log")))
+
+    def test_a_garbage_ceiling_falls_back_to_plan_as_own(self):
+        self.h.cfg.limits["max_attempts"] = "three"
+        self.assertEqual(2, run.attempt_bound(self.h.cfg))
+
+
+class TestClassificationVocabulary(Base):
+    """Spec §7 names exactly four. Emitting a fifth makes the field unreadable."""
+
+    def test_every_decision_event_uses_only_spec_7s_enum(self):
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer()}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit()},
+                       {"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit()}],
+            "evaluator": [{"text": block({"verdict": "NEEDS_WORK", "summary": "a"})},
+                          {"text": block({"verdict": "NEEDS_WORK", "summary": "b"})}]})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        events = self.emitted("decision")
+        self.assertEqual(["retry", "defer"], [e["decision"] for e in events])
+        for ev in events:
+            self.assertIn(ev["classification"], run.CLASSIFICATIONS)
+        # A first NEEDS_WORK is no evidence the model was incapable.
+        self.assertNotIn("capability", [e["classification"] for e in events])
+        self.assertEqual(["needs-work", "needs-work"], [e["cause"] for e in events])
+
+    def test_boot_reconcile_keeps_its_own_fact_in_cause_not_in_classification(self):
+        self.h.plan.set_state("T1", "doing")
+        self.h.plan.save()
+        run.boot_reconcile(self.h)
+        ev = self.emitted("decision")[0]
+        self.assertEqual(run.UNJUDGED, ev["classification"])
+        self.assertEqual("boot-reconcile", ev["cause"])
 
 
 class TestFailureSignature(Base):
