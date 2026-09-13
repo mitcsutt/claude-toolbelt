@@ -125,6 +125,16 @@ class Base(unittest.TestCase):
             util.write_json(os.path.join(self.runtime, "sprint-%s.json" % task_id), data)
         return write
 
+    def judge_says(self, decision="defer", classification="open", n=1, **over):
+        """`n` scripted Judge replies. Every failure path runs a Judge now, so a
+        test that drives one has to say what it decided."""
+        payload = {"decision": decision, "classification": classification,
+                   "rationale": "scripted for the test",
+                   "instruction": "", "alternatives": ["the other thing"],
+                   "reversal": "undo it", "changes": {}}
+        payload.update(over)
+        return [{"text": block(payload)} for _ in range(n)]
+
     def rename(self, src, dst):
         """A side effect that renames one tracked file to another name."""
         def go():
@@ -236,7 +246,8 @@ class TestExecuteTickRetry(Base):
             "evaluator": [{"text": block({"verdict": "NEEDS_WORK",
                                           "summary": "the parser is still a stub"})},
                           {"text": block({"verdict": "PASS", "summary": "good"})}],
-            "learner": [{"text": block({"patterns": [], "log": "", "invariants": []})}]})
+            "learner": [{"text": block({"patterns": [], "log": "", "invariants": []})}],
+            "judge": self.judge_says("retry", "capability")})
         outcome = run.execute_tick(self.h, 1, self.h.plan.task("T1"))
         self.assertEqual("continue", outcome.verdict)
         workers = [c for c in rec.calls if c["phase"] == "worker"]
@@ -246,9 +257,13 @@ class TestExecuteTickRetry(Base):
         self.assertNotIn("still a stub", workers[0]["prompt"])
         self.assertIn("the parser is still a stub", workers[1]["prompt"])
         self.assertEqual("retry", self.emitted("decision")[0]["decision"])
+        self.assertEqual("capability", self.emitted("decision")[0]["classification"],
+                         "a real §7 classification, because a Judge made the call")
         doc = util.read_json(os.path.join(self.runtime, "task-T1.json"))
-        self.assertEqual(["standard", "standard"], [a["tier"] for a in doc["attempts"]])
-        self.assertEqual(["needs-work", "pass"], [a["outcome"] for a in doc["attempts"]])
+        self.assertEqual(["standard", "standard"], [a["tier"] for a in doc["attempts"]],
+                         "the Judge named no tier, so the same one runs again")
+        self.assertEqual(["needs-work:the parser is still a stub", "pass"],
+                         [a["outcome"] for a in doc["attempts"]])
 
     def test_a_second_failure_blocks_the_task(self):
         self.patch({
@@ -288,7 +303,8 @@ class TestBlockedBookkeeping(Base):
             "worker": [{"text": block({"status": "complete", "summary": ""}),
                         "side_effect": self.worker_edit()}],
             "evaluator": [{"text": block({"verdict": "BLOCKER",
-                                          "summary": "stubbed the requirement"})}]})
+                                          "summary": "stubbed the requirement"})}],
+            "judge": self.judge_says("defer", "capability")})
         self.outcome = run.execute_tick(self.h, 1, self.h.plan.task("T1"))
 
     def test_the_cleanup_entry_names_the_task_and_the_evidence(self):
@@ -322,7 +338,8 @@ class TestBlockedBookkeeping(Base):
                                    "T3", verification=["exit 1"])}],
                     "worker": [{"text": block({"status": "complete", "summary": ""})},
                                {"text": block({"status": "complete", "summary": ""})}],
-                    "evaluator": []})
+                    "evaluator": [],
+                    "judge": self.judge_says("defer", "capability")})
         outcome = run.execute_tick(self.h, 2, self.h.plan.task("T3"))
         self.assertEqual("halt", outcome.verdict)
         self.assertEqual("blocked", plan_mod.Plan.load(self.plan_path).task("T3").state)
@@ -335,10 +352,15 @@ class TestContractRejection(Base):
                        "side_effect": self.contract_writer(allow_list=[])},
                       {"text": block({"contract_path": "x", "notes": ""}),
                        "side_effect": self.contract_writer(allow_list=[])}],
-            "worker": []})
+            "worker": [],
+            "judge": self.judge_says("defer", "self-imposed")})
         outcome = run.execute_tick(self.h, 1, self.h.plan.task("T1"))
         self.assertEqual(2, len([c for c in rec.calls if c["phase"] == "scout"]))
         self.assertEqual(0, len([c for c in rec.calls if c["phase"] == "worker"]))
+        self.assertEqual(1, len([c for c in rec.calls if c["phase"] == "judge"]),
+                         "a Scout that wrote an impossible contract is the "
+                         "self-imposed case §7 exists for; the loop does not "
+                         "mark [!] on its own")
         self.assertEqual("blocked", plan_mod.Plan.load(self.plan_path).task("T1").state)
         self.assertIn("allow_list", util.read_text(
             os.path.join(self.loop_dir, "LOOP_CLEANUP.md")))
@@ -368,13 +390,22 @@ class TestGateFailure(Base):
                         "side_effect": self.worker_edit()},
                        {"text": block({"status": "complete", "summary": ""}),
                         "side_effect": self.worker_edit()}],
-            "evaluator": []})
+            "evaluator": [],
+            "judge": self.judge_says("retry", "capability")
+                     + self.judge_says("defer", "capability")})
         run.execute_tick(self.h, 1, self.h.plan.task("T1"))
         self.assertEqual(2, len([c for c in rec.calls if c["phase"] == "worker"]))
         self.assertEqual(0, len([c for c in rec.calls if c["phase"] == "evaluator"]))
         self.assertEqual("blocked", plan_mod.Plan.load(self.plan_path).task("T1").state)
-        self.assertIn("exit 1", util.read_text(
-            os.path.join(self.loop_dir, "LOOP_CLEANUP.md")))
+        cleanup = util.read_text(os.path.join(self.loop_dir, "LOOP_CLEANUP.md"))
+        self.assertIn("exit 1", cleanup,
+                      "the entry carries what actually failed, not only the "
+                      "Judge's summary of it")
+        # The second failure has the same signature as the first, so the Judge is
+        # told so rather than being asked the same question twice over (spec §7).
+        judges = [c for c in rec.calls if c["phase"] == "judge"]
+        self.assertEqual(2, len(judges))
+        self.assertIn("same failure signature", judges[1]["prompt"])
 
 
 class TestMechanicalTask(Base):
@@ -516,7 +547,8 @@ class TestBootReconcile(Base):
         rec = self.patch({
             "evaluator": [{"text": block({"verdict": "PASS", "findings": [],
                                           "views": [], "summary": "good"})}],
-            "learner": [{"text": block({"patterns": [], "log": "", "invariants": []})}]})
+            "learner": [{"text": block({"patterns": [], "log": "", "invariants": []})}],
+            "judge": self.judge_says("retry", "capability")})
         outcome = run.execute_tick(self.h, 1, self.h.plan.task("T1"))
         self.assertEqual("continue", outcome.verdict)
         self.assertEqual([], [c for c in rec.calls if c["phase"] in ("scout", "worker")])
@@ -681,7 +713,7 @@ class TestDirectoryStray(Base):
         self.assertIn("sandbox: reverted 1 path(s): src/b.ts", log)
 
 
-class TestAttemptBound(Base):
+class TestAttemptCap(Base):
     """`Limits: max_attempts=` is documented and hand-edited. It may not be
     parsed, defaulted and then ignored."""
 
@@ -694,28 +726,40 @@ class TestAttemptBound(Base):
             "evaluator": [{"text": block({"verdict": "NEEDS_WORK", "summary": "thin"})}
                           for _ in range(workers)]}
 
-    def test_the_default_is_one_retry(self):
-        self.assertEqual(2, run.attempt_bound(self.cfg))
+    def test_the_default_is_spec_4_2s_three(self):
+        """Plan A clamped this to two because nothing would have differed
+        between attempt two and three except the bill. The Judge can now change
+        the tier, widen the contract or split, so the third attempt buys
+        something and `max_attempts` is honoured as written."""
+        self.assertEqual(3, run.attempt_cap(self.cfg))
 
     def test_a_lower_ceiling_is_honoured_and_costs_one_worker_not_two(self):
         self.h.cfg.limits["max_attempts"] = 1
-        rec = self.patch(self.scripted())
+        script = self.scripted()
+        script["judge"] = self.judge_says("retry", "capability")
+        rec = self.patch(script)
         run.execute_tick(self.h, 1, self.h.plan.task("T1"))
-        self.assertEqual(1, len([c for c in rec.calls if c["phase"] == "worker"]))
+        self.assertEqual(1, len([c for c in rec.calls if c["phase"] == "worker"]),
+                         "the cap bites even though the Judge asked to retry")
         self.assertEqual("blocked", plan_mod.Plan.load(self.plan_path).task("T1").state)
+        self.assertIn("attempt 1 of 1 is the last",
+                      util.read_text(os.path.join(self.loop_dir, "harness.log"))
+                      + util.read_text(os.path.join(self.loop_dir,
+                                                    "LOOP_DECISIONS.md")))
 
-    def test_a_higher_ceiling_is_clamped_and_the_operator_is_told(self):
-        self.h.cfg.limits["max_attempts"] = 5
-        rec = self.patch(self.scripted())
+    def test_a_higher_ceiling_is_now_honoured_rather_than_clamped(self):
+        self.h.cfg.limits["max_attempts"] = 3
+        script = self.scripted(workers=3)
+        script["judge"] = self.judge_says("retry", "capability", n=2)
+        rec = self.patch(script)
         run.execute_tick(self.h, 1, self.h.plan.task("T1"))
-        self.assertEqual(2, len([c for c in rec.calls if c["phase"] == "worker"]))
-        self.assertEqual(2, run.attempt_bound(self.h.cfg))
-        self.assertIn("max_attempts=5 is configured",
-                      util.read_text(os.path.join(self.loop_dir, "harness.log")))
+        self.assertEqual(3, len([c for c in rec.calls if c["phase"] == "worker"]),
+                         "three attempts, because a decision can change something")
+        self.assertEqual(3, run.attempt_cap(self.h.cfg))
 
-    def test_a_garbage_ceiling_falls_back_to_plan_as_own(self):
+    def test_a_garbage_ceiling_falls_back_to_the_documented_default(self):
         self.h.cfg.limits["max_attempts"] = "three"
-        self.assertEqual(2, run.attempt_bound(self.h.cfg))
+        self.assertEqual(3, run.attempt_cap(self.h.cfg))
 
 
 class TestClassificationVocabulary(Base):
@@ -730,15 +774,18 @@ class TestClassificationVocabulary(Base):
                        {"text": block({"status": "complete", "summary": ""}),
                         "side_effect": self.worker_edit()}],
             "evaluator": [{"text": block({"verdict": "NEEDS_WORK", "summary": "a"})},
-                          {"text": block({"verdict": "NEEDS_WORK", "summary": "b"})}]})
+                          {"text": block({"verdict": "NEEDS_WORK", "summary": "b"})}],
+            "judge": self.judge_says("retry", "spec-answered")
+                     + self.judge_says("defer", "open")})
         run.execute_tick(self.h, 1, self.h.plan.task("T1"))
         events = self.emitted("decision")
         self.assertEqual(["retry", "defer"], [e["decision"] for e in events])
         for ev in events:
             self.assertIn(ev["classification"], run.CLASSIFICATIONS)
-        # A first NEEDS_WORK is no evidence the model was incapable.
-        self.assertNotIn("capability", [e["classification"] for e in events])
-        self.assertEqual(["needs-work", "needs-work"], [e["cause"] for e in events])
+        self.assertEqual(["spec-answered", "open"],
+                         [e["classification"] for e in events],
+                         "a judged decision carries the Judge's own reading; "
+                         "`open` is no longer the only answer the loop can give")
 
     def test_boot_reconcile_keeps_its_own_fact_in_cause_not_in_classification(self):
         self.h.plan.set_state("T1", "doing")
@@ -750,13 +797,19 @@ class TestClassificationVocabulary(Base):
 
 
 class TestFailureSignature(Base):
-    def test_it_keys_on_kind_phase_and_task_not_on_the_return_code(self):
-        self.assertEqual(run.failure_signature("gate-failed", "gate", "T1"),
-                         run.failure_signature("gate-failed", "gate", "T1"))
-        self.assertNotEqual(run.failure_signature("gate-failed", "gate", "T1"),
-                            run.failure_signature("gate-failed", "gate", "T2"))
-        self.assertNotEqual(run.failure_signature("needs-work", "evaluator", "T1"),
-                            run.failure_signature("gate-failed", "gate", "T1"))
+    def test_it_keys_on_the_kind_and_what_failed_not_on_the_return_code(self):
+        """This is what an attempt records as its `outcome`, and what spots a
+        repeat. It is deliberately not the medic's `kind + phase + task` key
+        (spec §8), which lives with the incident records."""
+        self.assertEqual(run.failure_signature("gate", "tsc failed\nTS2339"),
+                         run.failure_signature("gate", "tsc failed\nelsewhere"))
+        self.assertNotEqual(run.failure_signature("gate", "tsc failed"),
+                            run.failure_signature("gate", "eslint failed"))
+        self.assertNotEqual(run.failure_signature("needs-work", "tsc failed"),
+                            run.failure_signature("gate", "tsc failed"))
+        self.assertEqual("needs-work:", run.failure_signature("needs-work", ""))
+        self.assertLessEqual(
+            len(run.failure_signature("gate", "x" * 400)), 5 + 120)
 
 
 if __name__ == "__main__":

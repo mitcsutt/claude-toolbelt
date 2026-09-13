@@ -220,26 +220,36 @@ assert_eq "1" "$(jq -r 'select(.type=="tick_end") | (.by_model | length)' "$WT/$
   "the killed tick attributes the spend it did incur"
 isfile "$WT/$LD/runtime/NEEDS_HUMAN.md"; assert_true $? "NEEDS_HUMAN.md is written"
 
-# ------------------------ NEEDS_WORK re-dispatches at the SAME tier
+# ------------ NEEDS_WORK goes to the Judge, which re-dispatches at the SAME tier
 setup_case
 contract_for 001 T1
 side 002 "printf 'export const parse = () => 1\n' > \"$WT/src/a.ts\""
 reply 002 '{"status":"complete","summary":"first try"}'
 reply 003 '{"verdict":"NEEDS_WORK","findings":[],"views":[],"summary":"too thin"}'
-side 004 "printf 'export const parse = () => 2\n' > \"$WT/src/a.ts\""
-reply 004 '{"status":"complete","summary":"second try"}'
-reply 005 '{"verdict":"PASS","findings":[],"views":[],"summary":"good now"}'
-reply 006 '{"patterns":[],"log":"needed two goes","invariants":[]}'
+reply 004 '{"decision":"retry","classification":"capability","rationale":"one more go at the same tier","instruction":"flesh the parser out","alternatives":["escalate"],"reversal":"none","changes":{}}'
+side 005 "printf 'export const parse = () => 2\n' > \"$WT/src/a.ts\""
+reply 005 '{"status":"complete","summary":"second try"}'
+reply 006 '{"verdict":"PASS","findings":[],"views":[],"summary":"good now"}'
+reply 007 '{"patterns":[],"log":"needed two goes","invariants":[]}'
 ( cd "$WT" && bash "$RUN" >/dev/null 2>&1 )
 assert_eq "0" "$?" "the re-dispatch reaches done"
+assert_eq "tier-big" "$(jq -r 'select(.type=="role_start" and .role=="judge") | .model' "$WT/$LD/events.jsonl" | head -1)" \
+  "the Judge runs at the most-capable tier (tier-big in this config)"
 assert_eq "tier-standard" "$(jq -r 'select(.type=="role_start" and .role=="Worker") | .model' "$WT/$LD/events.jsonl" | head -1)" \
   "the first Worker runs at the configured tier"
 assert_eq "tier-standard" "$(jq -r 'select(.type=="role_start" and .role=="Worker") | .model' "$WT/$LD/events.jsonl" | tail -1)" \
-  "the second Worker runs at the SAME tier — there is no ladder in code"
-assert_eq "retry" "$(ev decision .decision | head -1)" "the re-dispatch is recorded as a retry decision"
+  "the second Worker runs at the SAME tier — the Judge named none, and there is no ladder in code"
+assert_eq "retry" "$(ev decision .decision | head -1)" "the re-dispatch is the Judge's retry decision"
+assert_eq "capability" "$(ev decision .classification | head -1)" "and it carries the Judge's own §7 classification"
 assert_eq "2" "$(jq -r '.attempts | length' "$WT/$LD/runtime/task-T1.json")" "both attempts are recorded"
 assert_eq "standard standard" "$(jq -r '[.attempts[].tier] | join(" ")' "$WT/$LD/runtime/task-T1.json")" \
   "both attempts record the same dispatched tier"
+assert_eq "retry" "$(jq -r '.attempts[0].judge.decision' "$WT/$LD/runtime/task-T1.json")" \
+  "the decision is recorded on the attempt it closed"
+grep -q "flesh the parser out" "$WT/$LD/LOOP_DECISIONS.md"; assert_true $? \
+  "LOOP_DECISIONS.md records the instruction, not only that one was applied"
+grep -q "JUDGE" "$WT/$LD/runtime/sprint-T1.json"; assert_true $? \
+  "and the instruction reaches the next Worker through the contract"
 
 # ------------------------------------------------- needs-human on a newer dir
 setup_case "- [x] T1: already done"

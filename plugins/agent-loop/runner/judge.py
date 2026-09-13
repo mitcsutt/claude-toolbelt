@@ -185,7 +185,13 @@ def build_input(ctx, contract, failure: Failure) -> JudgeInput:
     ids = [ctx.task.id] + PARITY_RE.findall(ctx.task.raw or "")
     excerpts = grep_excerpts([ctx.cfg.plan_path, ctx.cfg.spec_path], ids)
 
-    attempts = attempts_for(ctx.runtime_dir, ctx.task.id)
+    # CLOSED attempts only. The attempt being judged is open (no `outcome` yet)
+    # and is what the rest of this dossier describes -- the failure, the gate
+    # tail, the checkpoint. Handing it over as a history row would show the
+    # Judge an attempt that "finished" with no outcome, and `Budget:` already
+    # says which attempt this is and what is left.
+    attempts = [a for a in attempts_for(ctx.runtime_dir, ctx.task.id)
+                if a.get("outcome")]
     limits = ctx.cfg.limits or {}
     configured = ctx.cfg.role_tiers.get("worker") or "standard"
     resume_max = int(limits.get("worker_resume_max", 1))
@@ -527,6 +533,12 @@ def append_decision(ctx, decision: dict, applied: List[str]) -> None:
                   % (_now(), ctx.task.id, decision["decision"],
                      decision.get("classification", "open")))
     chunks.append("- **Rationale:** %s\n" % one_line(decision.get("rationale")))
+    if decision.get("instruction"):
+        # The instruction is what the next Worker is told to do differently. The
+        # "Applied" line below says it reached the contract; a human reversing
+        # this decision needs to read what it actually said.
+        chunks.append("- **Instruction to the next Worker:** %s\n"
+                      % one_line(decision["instruction"]))
     chunks.append("- **Alternatives:** %s\n"
                   % ("; ".join(one_line(a) for a in alts) if alts
                      else "none recorded"))
@@ -542,29 +554,50 @@ def append_decision(ctx, decision: dict, applied: List[str]) -> None:
         fh.write("".join(chunks))
 
 
-def write_cleanup_entry(ctx, decision: dict) -> None:
-    """Spec §7: a deferral's LOOP_CLEANUP entry carries the classification, and
-    for `open` the proposed default, so a human reads the question and the
-    Judge's best answer to it in the same place."""
+def write_cleanup_entry(ctx, decision: dict, evidence: str = "") -> None:
+    """Spec §7: the entry is written "as today", PLUS the Judge's classification
+    and, for `open`, the proposed default.
+
+    "As today" is load-bearing and additive, not replaced: the task row, the
+    evidence that actually failed, and the sentence naming what a person has to
+    decide are what made a v2 cleanup entry actionable at 3am. The Judge's
+    rationale is a summary of the evidence, not a substitute for it — a human
+    arriving at this file needs the compiler output, not only the Judge's read
+    of it.
+    """
     changes = decision.get("changes") or {}
     blocks = changes.get("blocks") or []
     default = one_line(changes.get("default_choice"))
     chunks = [
         "\n## %s — %s (%s)\n\n" % (ctx.task.id, one_line(ctx.task.title),
                                    decision.get("classification", "open")),
+        "- **When:** %s\n" % _now(),
+        "- **Task:** %s\n" % (ctx.task.raw or "").strip(),
         "- **Decision needed:** %s\n" % one_line(decision.get("rationale")),
         "- **Proposed default:** %s\n"
         % (default or "none — the Judge could not justify one"),
         "- **Blocks:** %s\n" % (", ".join(blocks) if blocks else "nothing else"),
         "- **Raised by:** Judge, %s\n" % _now(),
     ]
+    if evidence:
+        chunks.append("- **Evidence:**\n\n```\n%s\n```\n"
+                      % evidence.strip()[:4000])
+    chunks.append(
+        "- **What a person must do:** review the evidence above and either widen "
+        "the contract, restate the task, or drop it. The loop will not retry %s "
+        "until this entry is resolved.\n" % ctx.task.id)
     with open(os.path.join(ctx.loop_dir, "LOOP_CLEANUP.md"), "a",
               encoding="utf-8") as fh:
         fh.write("".join(chunks))
 
 
-def apply(ctx, contract, decision: dict) -> str:
-    """Do what the decision says, then tell the main loop what happens next."""
+def apply(ctx, contract, decision: dict, evidence: str = "") -> str:
+    """Do what the decision says, then tell the main loop what happens next.
+
+    `evidence` is the failure detail the decision was made on; it is written
+    into the LOOP_CLEANUP entry of a deferral so a human sees what actually
+    failed and not only the Judge's summary of it.
+    """
     d = decision["decision"]
     changes = decision.get("changes") or {}
     applied = []
@@ -635,7 +668,7 @@ def apply(ctx, contract, decision: dict) -> str:
         ctx.events.emit("split", tick=ctx.tick, task=ctx.task.id, into=new_ids,
                         sha=sha)
     elif d in ("defer", "halt"):
-        write_cleanup_entry(ctx, decision)
+        write_cleanup_entry(ctx, decision, evidence)
         mark_blocked(ctx, decision)
         applied.append("%s marked [!]" % ctx.task.id)
         # No commit here. `run.handle_failure` still has to revert the loop's own
