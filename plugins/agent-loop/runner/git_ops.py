@@ -54,16 +54,25 @@ def _unquote(path: str) -> str:
 
 
 def changed_paths(cwd: str) -> List[str]:
-    """Every path the working tree differs on, untracked files included."""
+    """Every path the working tree differs on, untracked files included.
+
+    A rename reports BOTH sides, not just the destination: the source can be
+    a stray on its own if it falls outside the allow_list (the Worker
+    deleted a file it was never permitted to touch), independently of
+    whether the destination is in-scope.
+    """
     _, out = _git(cwd, ["status", "--porcelain", "-uall"])
     paths = []
     for line in out.splitlines():
         if len(line) < 4:
             continue
         rest = line[3:]
-        if " -> " in rest:                     # a rename: the new name is ours
-            rest = rest.split(" -> ", 1)[1]
-        paths.append(_unquote(rest))
+        if " -> " in rest:                     # a rename: both names are ours
+            src, dst = rest.split(" -> ", 1)
+            paths.append(_unquote(src))
+            paths.append(_unquote(dst))
+        else:
+            paths.append(_unquote(rest))
     return paths
 
 
