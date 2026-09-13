@@ -11,7 +11,7 @@ import os
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from . import (config, contract as contract_mod, gate, git_ops, harness,
                incidents, phases, plan as plan_mod, task_state, util)
@@ -88,6 +88,22 @@ class Harness:
     dashboard_url: str = ""
     resume_task: str = ""
     resume_phase: str = ""
+    preexisting: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Snapshot what was already dirty before this run wrote anything.
+
+        The sandbox reverts what the Worker put outside its allow_list. Without
+        a baseline it cannot tell that from what the human left in the tree
+        before the loop started, so an ordinary uncommitted edit -- or an
+        untracked scratch file -- reads as a stray and is destroyed on the first
+        successful tick, not merely on a failure. Captured here, at
+        construction, because every later point is after a Worker has run.
+        """
+        try:
+            self.preexisting = git_ops.changed_paths(self.worktree)
+        except Exception:
+            self.preexisting = []
 
     def take_resume(self, task_id: str) -> str:
         """The boot rule's answer for this task — `gate`, `wrapup` or `scout`.
@@ -159,6 +175,27 @@ def _revert_reporting(h: Harness, paths: List[str], label: str) -> List[str]:
     return survived
 
 
+def _minus_preexisting(h: Harness, stray: List[str],
+                       label: str) -> Tuple[List[str], List[str]]:
+    """Drop paths that were already dirty before this run started.
+
+    A path the human had already edited, or an untracked file they left lying
+    about, is not something the Worker put there, and reverting it destroys
+    work the loop never created. If the Worker also touched such a path the two
+    edits are indistinguishable in the tree, so it is spared and named: a dirty
+    gate is recoverable, a deleted file is not.
+    """
+    if not h.preexisting:
+        return stray, []
+    base = set(h.preexisting)
+    spared = [p for p in stray if p in base]
+    if spared:
+        h.log("%s: spared %d path(s) that were already modified before this run "
+              "started, so they are not this loop's to revert: %s"
+              % (label, len(spared), ", ".join(sorted(spared))))
+    return [p for p in stray if p not in base], spared
+
+
 def sandbox(h: Harness, contract) -> List[str]:
     """Revert everything the contract did not sanction. Runs after EVERY Worker.
 
@@ -173,6 +210,7 @@ def sandbox(h: Harness, contract) -> List[str]:
     """
     changed = git_ops.changed_paths(h.worktree)
     stray = git_ops.strays(changed, list(contract.allow_list) + _protected(h))
+    stray, spared = _minus_preexisting(h, stray, "sandbox")
     _revert_reporting(h, stray, "sandbox")
     return stray
 
@@ -258,6 +296,7 @@ def boot_reconcile(h: Harness) -> None:
             pass
         changed = git_ops.changed_paths(h.worktree)
         stray = git_ops.strays(changed, allow + _protected(h))
+        stray, _spared = _minus_preexisting(h, stray, "boot-reconcile")
         kept = [p for p in changed if p not in stray]
         survived = _revert_reporting(h, stray, "boot-reconcile")
         h.resume_phase = "scout"
@@ -344,7 +383,11 @@ def _loop_written(h: Harness, contract) -> List[str]:
     if contract is None:
         return []
     sanctioned = set(changed) - set(git_ops.strays(changed, list(contract.allow_list)))
-    return [p for p in outside_loop if p in sanctioned]
+    # A path the human had already dirtied before this run is not the loop's
+    # work even when the contract later allow-listed it: the two edits are
+    # indistinguishable in the tree, and only one of them can be recovered.
+    base = set(h.preexisting)
+    return [p for p in outside_loop if p in sanctioned and p not in base]
 
 
 def mark_blocked(h: Harness, task, reason: str, evidence: str, contract=None) -> None:
