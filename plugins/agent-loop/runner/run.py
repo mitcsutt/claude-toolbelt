@@ -493,30 +493,69 @@ def handle_failure(h: Harness, task, reason: str, evidence: str, contract=None) 
     return "halt" if h.cfg.blocker_policy == "halt" else "continue"
 
 
-def run_worker_attempt(h: Harness, ctx, contract, attempt: int, findings: str = "",
-                       tier: Optional[str] = None, state=None):
-    """One Worker dispatch plus the sandbox that always follows it.
+def run_worker_attempt(h: Harness, ctx, contract, attempt: int = 1,
+                       findings: str = "", tier: Optional[str] = None,
+                       state=None) -> Tuple[List[Any], dict]:
+    """One Worker dispatch, its wrap-up if it was killed, and the sandbox after
+    each of them.
 
-    `tier` is the seam plan C's Judge writes through (`changes.tier`); plan A
-    never passes it, so every attempt runs at the configured tier.
+    Returns EVERY PhaseResult, not just the last: a wrap-up is a real phase with
+    real spend, and a scalar return drops it from the tick's usage roll-up —
+    which is the same class of bug as the $61 of unattributed spend the v3
+    rewrite exists to fix.
 
-    `state` is optional only so the brief's signature still holds; pass it. The
-    Worker and the sandbox are separate phases in spec §14's PHASES list, and
-    recording the boundary is what stops a kill DURING the sandbox reading as a
-    kill inside WORK -- which would send the boot rule to `wrapup` and spend a
-    second Worker budget on top of a half-reverted tree.
+    `tier` is an explicit override; normally the tier comes off `ctx.tier`, where
+    `judge.apply` armed it. The Worker and the sandbox are separate phases in
+    spec §14's PHASES list, and recording the boundary is what stops a kill
+    DURING the sandbox reading as a kill inside WORK -- which would send the boot
+    rule to `wrapup` and spend a second Worker budget on top of a half-reverted
+    tree. The wrap-up sits INSIDE the WORK bracket for the same reason: it is a
+    Worker turn on the same session, so a kill during it is still a kill in WORK.
     """
     ctx.attempt = attempt
+    results: List[Any] = []
     if state is not None:
         state.begin_phase("WORK")
-    result, data = phases.run_worker(ctx, contract, tier=tier, findings=findings)
+    result, data = phases.run_worker(ctx, contract, tier=tier, findings=findings,
+                                     resume_session=ctx.resume_session)
+    results.append(result)
     if state is not None:
         state.end_phase(result)
+
+    # Spec §6 step 1: at the deadline the harness has already sent SIGTERM; the
+    # wrap-up is a bounded continuation on the SAME session that writes an honest
+    # checkpoint. A phase killed by STOP gets none -- the operator asked for the
+    # loop to stop, and spending another model call to tidy up defeats that.
+    if result.timed_out and result.session_id and not result.stopped:
+        h.log("%s: the Worker hit its %ds cap; wrapping up on session %s so the "
+              "next attempt inherits the checkpoint"
+              % (ctx.task.id, phases.worker_cap(ctx), result.session_id))
+        ctx.events.emit("resume", tick=ctx.tick, task=ctx.task.id,
+                        attempt=ctx.attempt, kind="wrapup",
+                        session=result.session_id)
+        if state is not None:
+            state.begin_phase("WORK")
+        wrap, data = phases.run_worker(ctx, contract,
+                                       resume_session=result.session_id,
+                                       wrapup=True, tier=tier)
+        results.append(wrap)
+        if state is not None:
+            state.end_phase(wrap)
+
+    if state is not None:
         state.begin_phase("SANDBOX")
     sandbox(h, contract)
     if state is not None:
         state.end_phase()
-    return result, data
+
+    # A resume is consumed by the attempt that ran it; the session that survived
+    # is what a later `resume` decision would continue from.
+    ctx.resume_session = None
+    if result.session_id:
+        ctx.last_session = result.session_id
+    if state is not None:
+        ctx.resume_count = state.resumes_spent()
+    return results, data
 
 
 def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
@@ -574,7 +613,7 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             resume = "scout"
 
     if contract is None:
-        state.begin_attempt(phases.worker_tier(h.cfg))
+        state.begin_attempt(phases.worker_tier(ctx))
         errors: List[str] = []
         for scout_try in (1, 2):
             state.begin_phase("SCOUT")
@@ -620,10 +659,11 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             h.log("%s: resuming at GATE — the recorded Worker had already returned"
                   % task.id)
         else:
-            wres, _ = run_worker_attempt(h, ctx, contract, attempt,
-                                         findings=findings, state=state)
-            out.results.append(wres)
-            if wres.stopped:
+            wresults, _ = run_worker_attempt(h, ctx, contract, attempt,
+                                             findings=findings, state=state)
+            out.results.extend(wresults)
+            wres = wresults[0]
+            if any(r.stopped for r in wresults):
                 # STOP, not a timeout: the operator asked for the loop to stop,
                 # so the tick ends where it stands. The sandbox has already run,
                 # and the row stays `[~]` for the boot rule to pick up.
@@ -698,7 +738,7 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
             # tier for every one of them is how a cheap retry becomes expensive.
             attempt += 1
             findings = summary or "the previous attempt did not satisfy the contract"
-            state.begin_attempt(phases.worker_tier(h.cfg))
+            state.begin_attempt(phases.worker_tier(ctx))
             # NOT `capability`: a first NEEDS_WORK or a failed gate is no evidence
             # the model was incapable, and claiming it would put the wrong cause in
             # front of whoever reads the run back. Classifying a failure is the
