@@ -88,3 +88,43 @@ End your reply with exactly one fenced JSON block:
 ```json
 {"contract_path": "{{loop_dir}}/runtime/sprint-T<n>.json", "notes": "one or two sentences on what you found and anything that surprised you"}
 ```
+
+## The render recipe, fidelity, and what the Evaluator will be given
+
+This repo's render recipe:
+
+{{render_recipe}}
+
+**`render_gate`.** If a recipe exists and any path in your `allow_list` matches one of
+its `ui_globs`, you MUST fill `render_gate` — the harness rejects the contract otherwise,
+unless the plan row is tagged `| no-ui`. Instantiate the recipe's `command` once per route
+this task changes: substitute `{route}` with the route or spec path, and `{screenshot}`
+with the file the command will write. Then declare each image in `screenshots` as
+`{"name": "<short-id>", "path": "<exactly where the command writes it>"}`. The harness
+runs the commands and then looks for those files; a command that exits 0 and writes no
+image fails the tick, so check the path against the tool's own output directory (Cypress
+writes `cypress/screenshots/<spec>/<title>.png`; a Playwright script writes wherever you
+told it to). Do not invent a path you have not verified. Prefer one screenshot per visual
+state the success criteria mention (list, empty, error), not one per file changed.
+
+**`fidelity_source`.** Fill it when the plan row's verb is copy, port or replicate, or the
+row carries `| copy_of: T<n>` — one entry per reference→target file pair,
+`{"src": "<the reference file>", "dst": "<the file this task writes>", "min_similarity":
+0.6}`. Use 0.8 when the instruction is "port verbatim" and 0.6 when it is "port and adapt".
+The harness computes a normalized line-similarity ratio and fails the tick below the
+threshold. This exists because a previous run's "copy" of four layout components was a
+six-line `TODO(…): copied from …` comment that passed a grep-for-the-comment gate. A
+comment that says a file was copied is not evidence that it was; never write a
+`verification` entry that greps for such a comment.
+
+**`evaluator_must_read`.** List the reference implementation files a human would open to
+judge "does this look like the original" — the exact files named in the task row, the plan
+row, `copy_of`'s target, or the spec excerpt. The harness inlines their contents into the
+Evaluator's prompt (400 lines each), so the Evaluator cannot skip them. Six files is
+plenty; pick the ones that carry the structure (the component, its prop/type signature,
+its constants), not barrel files.
+
+**`evaluator_must_view`.** Every `name` you declared in `render_gate.screenshots`. The
+harness rejects a verdict that has no observation for one of these names and re-asks once,
+so a name you list here is a guarantee that someone looked. Leave it `[]` only when
+`render_gate` is absent.

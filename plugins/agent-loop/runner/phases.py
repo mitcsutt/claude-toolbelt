@@ -349,6 +349,23 @@ def evaluator_tier(cfg, task) -> str:
     return "standard"
 
 
+def recipe_text(cfg) -> str:
+    """The `Render:` recipe as prompt text for the Scout."""
+    recipe = getattr(cfg, "render", None) or {}
+    if not recipe:
+        return ("(no render recipe is configured for this repo — leave render_gate null "
+                "and say so in scout_notes)")
+    lines = []  # type: List[str]
+    for key in ("start", "ready", "command"):
+        if recipe.get(key):
+            lines.append("- %s: %s" % (key, recipe[key]))
+    if recipe.get("ui_globs"):
+        lines.append("- ui_globs: %s" % " ".join(recipe["ui_globs"]))
+    for ref in recipe.get("reference", []):
+        lines.append("- reference screenshot %s: %s" % (ref.get("name", ""), ref.get("path", "")))
+    return "\n".join(lines)
+
+
 def run_scout(ctx: TickContext, validation_errors: Optional[List[str]] = None
               ) -> Tuple[PhaseResult, Optional[contract_mod.Contract], List[str]]:
     """Dispatch the Scout, then load and validate the contract it wrote."""
@@ -362,6 +379,7 @@ def run_scout(ctx: TickContext, validation_errors: Optional[List[str]] = None
                    "spec_excerpt": spec_excerpt(ctx.cfg, ctx.task),
                    "learnings_digest": learnings_digest(ctx.loop_dir),
                    "knowledge": knowledge_text(ctx.loop_dir),
+                   "render_recipe": recipe_text(ctx.cfg),
                    "validation_errors": errors_block})
     path = os.path.join(ctx.runtime_dir, "sprint-%s.json" % ctx.task.id)
     try:

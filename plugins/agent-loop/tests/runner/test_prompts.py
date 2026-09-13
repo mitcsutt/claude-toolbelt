@@ -131,7 +131,8 @@ class TestRenderPrompt(unittest.TestCase):
         known = {"loop_dir", "worktree", "task_row", "contract_json", "must_read_blocks",
                  "screenshots", "gate_outputs", "diff", "learnings_digest", "knowledge",
                  "spec_excerpt", "checkpoint", "minutes_left", "validation_errors",
-                 "tdd_note", "evaluator_findings", "verdict", "segment"}
+                 "tdd_note", "evaluator_findings", "verdict", "segment",
+                 "render_recipe"}
         for name in NAMES:
             for token in re.findall(r"\{\{(\w+)\}\}", body(name)):
                 self.assertIn(token, known, "%s uses undocumented {{%s}}" % (name, token))
