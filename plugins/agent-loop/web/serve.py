@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 # Roles whose tier overrides may appear in LOOP_CONFIG.md.
 ROLES = ("Planner", "Scout", "Worker", "Evaluator")
@@ -1125,6 +1126,34 @@ def _loop_name(loop_dir):
     return os.path.basename(os.path.normpath(loop_dir))
 
 
+# What the dashboard is allowed to render from $LOOP_DIR/artifacts/.
+_ARTIFACT_TYPES = {".png": "image/png", ".jpg": "image/jpeg",
+                   ".jpeg": "image/jpeg", ".webp": "image/webp"}
+_MAX_ARTIFACT_BYTES = 8 << 20
+
+
+def artifact_path(loop_dir, store, tick, name):
+    """Absolute path of a recorded screenshot, or None. Pure except for stat().
+
+    The query string never becomes a path: (tick, name) is a key into the index
+    the `artifact` events built. The path that comes back is still untrusted --
+    the Scout writes screenshot paths into the contract (spec 5.3) -- so it is
+    realpath-resolved (collapsing `..` and following symlinks) and must land
+    inside $LOOP_DIR/artifacts/, with an extension the dashboard can render.
+    """
+    rel = store.artifact_ix.get((tick, name))
+    if not rel:
+        return None
+    root = os.path.realpath(os.path.join(loop_dir, "artifacts"))
+    full = os.path.realpath(rel if os.path.isabs(rel)
+                            else os.path.join(loop_dir, rel))
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    if os.path.splitext(full)[1].lower() not in _ARTIFACT_TYPES:
+        return None
+    return full if os.path.isfile(full) else None
+
+
 class Supervisor:
     """Owns the run.sh lifecycle and the PAUSE-file control surface.
 
@@ -1362,6 +1391,35 @@ def _make_handler(state):
                         time.sleep(1)
                 except (BrokenPipeError, ConnectionResetError):
                     return
+            elif self.path.startswith("/api/artifact"):
+                q = parse_qs(urlparse(self.path).query)
+                try:
+                    tick = int((q.get("tick") or [""])[0])
+                except ValueError:
+                    tick = None
+                name = (q.get("name") or [""])[0]
+                full = artifact_path(state.sup.loop_dir, state.store, tick, name)
+                if full is None:
+                    self._send_json({"error": "not found"}, 404)
+                    return
+                try:
+                    size = os.path.getsize(full)
+                    if size > _MAX_ARTIFACT_BYTES:
+                        self._send_json({"error": "artifact too large"}, 413)
+                        return
+                    with open(full, "rb") as f:
+                        blob = f.read()
+                except OSError:
+                    self._send_json({"error": "not found"}, 404)
+                    return
+                ctype = _ARTIFACT_TYPES[os.path.splitext(full)[1].lower()]
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(blob)))
+                # A retried tick can rewrite the same (tick, name).
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(blob)
             else:
                 self._send_json({"error": "not found"}, 404)
 

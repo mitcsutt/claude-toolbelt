@@ -808,6 +808,81 @@ class TestArtifactAndDecisionFold(unittest.TestCase):
         self.assertEqual(snap["decisions"][-1]["decision"], "defer")
 
 
+class TestArtifactPath(unittest.TestCase):
+    """The query string is a lookup key, never a path. Recorded paths are
+    untrusted: the Scout writes them into the contract."""
+
+    def _dir(self, events):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "artifacts", "T60"), exist_ok=True)
+        with open(os.path.join(d, "artifacts", "T60", "shot.png"), "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n")
+        return d, mk(events, loop_dir=d)
+
+    def test_resolves_a_recorded_relative_path(self):
+        d, store = self._dir([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "shot", "path": "artifacts/T60/shot.png"},
+        ])
+        got = serve.artifact_path(d, store, 4, "shot")
+        self.assertEqual(got, os.path.realpath(
+            os.path.join(d, "artifacts", "T60", "shot.png")))
+
+    def test_unknown_key_is_none(self):
+        d, store = self._dir([{"t": 1, "seq": 1, "type": "tick_start", "tick": 4}])
+        self.assertIsNone(serve.artifact_path(d, store, 4, "shot"))
+        self.assertIsNone(serve.artifact_path(d, store, 99, "shot"))
+
+    def test_traversal_out_of_the_artifacts_dir_is_refused(self):
+        d, store = self._dir([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "escape", "path": "artifacts/T60/../../LOOP_CONFIG.md"},
+        ])
+        with open(os.path.join(d, "LOOP_CONFIG.md"), "w") as f:
+            f.write("Worktree: /x\n")
+        self.assertIsNone(serve.artifact_path(d, store, 4, "escape"))
+
+    def test_absolute_path_outside_the_loop_dir_is_refused(self):
+        d, store = self._dir([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "abs", "path": "/etc/hosts"},
+        ])
+        self.assertIsNone(serve.artifact_path(d, store, 4, "abs"))
+
+    def test_symlink_out_of_the_artifacts_dir_is_refused(self):
+        d, store = self._dir([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "link", "path": "artifacts/T60/link.png"},
+        ])
+        outside = os.path.join(tempfile.mkdtemp(), "secret.png")
+        with open(outside, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n")
+        os.symlink(outside, os.path.join(d, "artifacts", "T60", "link.png"))
+        self.assertIsNone(serve.artifact_path(d, store, 4, "link"))
+
+    def test_non_image_extension_is_refused(self):
+        d, store = self._dir([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "sh", "path": "artifacts/T60/evil.sh"},
+        ])
+        with open(os.path.join(d, "artifacts", "T60", "evil.sh"), "w") as f:
+            f.write("rm -rf /\n")
+        self.assertIsNone(serve.artifact_path(d, store, 4, "sh"))
+
+    def test_recorded_but_deleted_file_is_none(self):
+        d, store = self._dir([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "gone", "path": "artifacts/T60/gone.png"},
+        ])
+        self.assertIsNone(serve.artifact_path(d, store, 4, "gone"))
+
+
 class TestBuildSnapshot(unittest.TestCase):
     def test_snapshot_names_the_log_file_it_tailed(self):
         d = tempfile.mkdtemp()
