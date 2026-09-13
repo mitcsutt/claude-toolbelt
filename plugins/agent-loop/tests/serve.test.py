@@ -344,7 +344,8 @@ def mk(events, loop_dir=None):
 
 def live(**kw):
     """Default liveness: harness up, heartbeat fresh, a tick in flight."""
-    base = {"pause": False, "harness_pid": 4812, "harness_pid_alive": True,
+    base = {"pause": False, "stop": False, "harness_pid": 4812,
+            "harness_pid_alive": True,
             "harness_started_at": 900, "heartbeat_age_s": 1,
             "tick_pid": 4999, "tick_pid_alive": True, "tick_no": 7,
             "tick_started_at": None, "tick_timeout_s": 1800,
@@ -452,6 +453,22 @@ class TestDeriveStatus(unittest.TestCase):
         ], pause=True)
         self.assertEqual(s["state"], "pausing")
         self.assertIn("stops after tick 7", s["why"])
+
+    def test_stop_file_is_pausing_like_pause(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], pause=True, stop=True)
+        self.assertEqual(s["state"], "pausing")
+        self.assertIn("stop requested", s["why"])
+
+    def test_stop_file_outliving_a_dead_harness_is_paused(self):
+        s = status_of([
+            {"t": 90, "type": "loop_start"},
+            {"t": 100, "type": "tick_start", "tick": 7},
+        ], pause=True, stop=True, harness_pid_alive=False)
+        self.assertEqual(s["state"], "paused")
+        self.assertIn("STOP present", s["why"])
 
     def test_paused_terminal(self):
         s = status_of([
@@ -958,18 +975,44 @@ class TestSupervisorGuards(unittest.TestCase):
         self.assertIsNone(res)
         self.assertEqual(len(sup.spawned), 1)
 
-    def test_stop_sigterms_the_recorded_harness(self):
+    def test_stop_writes_the_stop_sentinel_for_a_live_harness(self):
         sup, d = self._sup(pid=777)
         killed = []
         orig_alive, orig_kill = serve.process_alive, os.kill
         serve.process_alive = lambda pid, must_contain=None: True
         os.kill = lambda pid, sig: killed.append((pid, sig))
         try:
-            sup.stop()
+            res = sup.stop()
         finally:
             serve.process_alive, os.kill = orig_alive, orig_kill
-        self.assertEqual(killed, [(777, serve.signal.SIGTERM)])
-        self.assertTrue(os.path.exists(os.path.join(d, "runtime", "PAUSE")))
+        self.assertIsNone(res)
+        self.assertEqual(killed, [])          # the runner stops itself; no signal from here
+        self.assertTrue(os.path.exists(os.path.join(d, "runtime", "STOP")))
+        self.assertFalse(os.path.exists(os.path.join(d, "runtime", "PAUSE")))
+
+    def test_stop_refuses_when_no_harness_is_alive(self):
+        sup, d = self._sup(pid=777)
+        orig = serve.process_alive
+        serve.process_alive = lambda pid, must_contain=None: False
+        try:
+            res = sup.stop()
+        finally:
+            serve.process_alive = orig
+        self.assertEqual(res, {"error": "no live harness to stop"})
+        self.assertFalse(os.path.exists(os.path.join(d, "runtime", "STOP")))
+
+    def test_resume_clears_a_stop_left_by_a_previous_run(self):
+        sup, d = self._sup(pid=777)
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        open(os.path.join(d, "runtime", "STOP"), "w").close()
+        orig = serve.process_alive
+        serve.process_alive = lambda pid, must_contain=None: False
+        try:
+            self.assertIsNone(sup.resume())
+        finally:
+            serve.process_alive = orig
+        self.assertFalse(os.path.exists(os.path.join(d, "runtime", "STOP")))
+        self.assertEqual(len(sup.spawned), 1)
 
 
 class TestSpawnEnvironment(unittest.TestCase):
@@ -1124,6 +1167,15 @@ class TestLivenessFiles(unittest.TestCase):
         self.assertFalse(lv["harness_pid_alive"])      # ...but this is not a run.sh
         self.assertEqual(lv["harness_started_at"], 900)
 
+    def test_stop_sentinel_sets_both_flags(self):
+        d = tempfile.mkdtemp()
+        rt = os.path.join(d, "runtime")
+        os.makedirs(rt, exist_ok=True)
+        open(os.path.join(rt, "STOP"), "w").close()
+        lv = serve.liveness(d, 1000)
+        self.assertTrue(lv["stop"])
+        self.assertTrue(lv["pause"])       # STOP is a strictly stronger PAUSE
+
     def test_garbage_heartbeat_is_none(self):
         d = self._dir()
         with open(os.path.join(d, "runtime", "HEARTBEAT"), "w") as f:
@@ -1152,10 +1204,10 @@ class TestSupervisor(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(d, "runtime", "PAUSE")))
         self.assertEqual(len(sup.spawned), 1)
 
-    def test_stop_creates_pause(self):
+    def test_stop_refuses_without_a_harness_json(self):
         sup, d = self._sup()
-        sup.stop()
-        self.assertTrue(os.path.exists(os.path.join(d, "runtime", "PAUSE")))
+        self.assertEqual(sup.stop(), {"error": "no live harness to stop"})
+        self.assertFalse(os.path.exists(os.path.join(d, "runtime", "STOP")))
 
     def test_pause_path(self):
         sup, d = self._sup()

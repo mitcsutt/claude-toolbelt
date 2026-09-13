@@ -18,7 +18,6 @@ import hashlib
 import json
 import os
 import re
-import signal
 import subprocess
 import sys
 import threading
@@ -631,7 +630,9 @@ def liveness(loop_dir, now):
     hpid = harness.get("pid")
     tpid = tick.get("pid")
     return {
-        "pause": os.path.exists(os.path.join(rt, "PAUSE")),
+        "pause": (os.path.exists(os.path.join(rt, "PAUSE"))
+                  or os.path.exists(os.path.join(rt, "STOP"))),
+        "stop": os.path.exists(os.path.join(rt, "STOP")),
         "harness_pid": hpid,
         "harness_pid_alive": process_alive(hpid, "run.sh") if hpid else False,
         "harness_started_at": harness.get("start_epoch"),
@@ -876,7 +877,8 @@ def derive_status(store, live, now, stall_s=300, hb_interval=10):
     # 4. the harness is gone (dead pid, or a heartbeat older than 3 intervals)
     if not live.get("harness_pid_alive") or hb is None or hb > 3 * hb_interval:
         if live.get("pause"):
-            return out("paused", None, "PAUSE present, harness not running")
+            what = "STOP" if live.get("stop") else "PAUSE"
+            return out("paused", None, "%s present, harness not running" % what)
         pid = live.get("harness_pid")
         why = "harness pid %s not running" % (pid if pid else "?")
         if hb is not None:
@@ -885,8 +887,11 @@ def derive_status(store, live, now, stall_s=300, hb_interval=10):
             why += " · no heartbeat file"
         return out("crashed", (now - hb) if hb is not None else None, why)
 
-    # 5. PAUSE requested, harness still finishing the tick
+    # 5. PAUSE or STOP requested, harness still finishing the phase
     if live.get("pause"):
+        if live.get("stop"):
+            return out("pausing", live.get("tick_started_at"),
+                       "stop requested — ends at the next phase boundary")
         tick = live.get("tick_no") or store.cur_tick
         return out("pausing", live.get("tick_started_at"),
                    "stops after tick %s" % (tick if tick is not None else "?"))
@@ -1098,6 +1103,10 @@ class Supervisor:
     def pause_path(self):
         return os.path.join(self.runtime_dir, "PAUSE")
 
+    @property
+    def stop_path(self):
+        return os.path.join(self.runtime_dir, "STOP")
+
     def pause_exists(self):
         return os.path.exists(self.pause_path)
 
@@ -1121,6 +1130,11 @@ class Supervisor:
             return {"error": "harness pid %d is alive" % pid}
         return None
 
+    def _refuse_unless_live(self):
+        if self.harness_pid() is None:
+            return {"error": "no live harness to stop"}
+        return None
+
     def _spawn(self):
         env = dict(os.environ)
         env["LOOP_DIR"] = self.loop_dir
@@ -1130,9 +1144,22 @@ class Supervisor:
         env["LOOP_DASHBOARD"] = "off"
         run_sh = os.path.join(self.plugin_root, "run.sh")
         # Own session: a dashboard crash or Ctrl-C must never take the loop down.
-        # Stop still works — it SIGTERMs the pid in harness.json, not our child.
+        # Stop still works — it writes runtime/STOP, which the harness reads
+        # between phases whether or not it is our child.
         self.proc = subprocess.Popen(
             ["bash", run_sh], cwd=self.worktree, env=env, start_new_session=True)
+
+    def _clear_sentinels(self):
+        """Remove both stop sentinels before (re)starting a harness.
+
+        A STOP left by the previous run would otherwise make the new harness
+        exit at its first phase boundary, which reads as "the loop died again".
+        """
+        for path in (self.pause_path, self.stop_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     def start(self):
         with self._lock:
@@ -1141,10 +1168,7 @@ class Supervisor:
                 return refusal
             if self.child_alive():
                 return None
-            try:
-                os.remove(self.pause_path)
-            except OSError:
-                pass
+            self._clear_sentinels()
             if not self.no_spawn:
                 self._spawn()
             return None
@@ -1160,32 +1184,27 @@ class Supervisor:
             refusal = self._refuse_if_live()
             if refusal:
                 return refusal
-            try:
-                os.remove(self.pause_path)
-            except OSError:
-                pass
+            self._clear_sentinels()
             if not self.no_spawn and not self.child_alive():
                 self._spawn()
             return None
 
     def stop(self):
-        """Request a clean stop: PAUSE, then SIGTERM whoever owns the harness.
+        """Request an immediate stop by writing runtime/STOP.
 
-        The owner is usually not our child (the sidecar case, or an attached
-        dashboard), so the pid comes from harness.json; our own child is the
-        fallback.
+        The v3 runner checks STOP between phases: it SIGTERMs the phase in
+        flight (a Worker gets its wrap-up continuation first), writes
+        CHECKPOINT.json and exits 0 — so a stop lands within minutes instead
+        of at the end of a 30-minute tick, and no signal is sent from here.
+        Refused when no harness is alive: a sentinel nobody reads only arms a
+        trap for the next launch, and the button is disabled in that state.
         """
         with self._lock:
+            refusal = self._refuse_unless_live()
+            if refusal:
+                return refusal
             os.makedirs(self.runtime_dir, exist_ok=True)
-            open(self.pause_path, "w").close()
-            pid = self.harness_pid()
-            if pid is not None:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except OSError:
-                    pass
-            elif self.child_alive():
-                self.proc.terminate()
+            open(self.stop_path, "w").close()
             return None
 
 
