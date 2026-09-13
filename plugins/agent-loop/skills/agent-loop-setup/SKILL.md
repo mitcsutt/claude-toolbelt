@@ -7,7 +7,7 @@ description: Use to bootstrap an autonomous coding loop for refactors, new featu
 
 Bootstrap an autonomous coding loop. This is the **interactive** half of the v2 mechanism: you (with the human in the room) prepare a set of artefacts inside a git worktree, then hand off to a bash harness.
 
-The runtime half is **not** an interactive skill. `run.sh` is a bash orchestrator that re-invokes a **fresh headless `claude` tick per task** (each tick reads `tick-prompt.md`). There is no self-scheduling, no in-session wakeup, and no persistent agent — every task gets a clean context. Your job here is to leave behind enough state (config + plan + scaffold) that a stateless tick can pick up the next task and make progress.
+The runtime half is **not** an interactive skill. `run.sh` is a bash orchestrator that re-invokes a **fresh headless `claude` tick per task** (each phase gets a small role brief from `runner/prompts/` and returns JSON the harness validates). There is no self-scheduling, no in-session wakeup, and no persistent agent — every task gets a clean context. Your job here is to leave behind enough state (config + plan + scaffold) that a stateless tick can pick up the next task and make progress.
 
 This skill is the **only** place where questions are asked of the human. Once `run.sh` is running, the loop is autonomous and headless — it cannot ask for clarification. Front-load everything here.
 
@@ -83,13 +83,18 @@ Write `$LOOP_DIR/LOOP_CONFIG.md` from `templates/LOOP_CONFIG.md`. Use the AskUse
 4. **Verification pipeline** — multi-select from `lint`, `tsc`, `build`, `test`, `e2e` (`multiSelect: true`). Listed order is execution order. Write space-separated, e.g. `lint tsc build test`.
 5. **Limits** — the harness reads one `Limits:` line of `key=value` pairs. `tick_timeout`
    (default `1800`) is the outer per-tick sanity cap and the value the dashboard displays;
-   the real budgets are per phase: `scout_timeout=480 worker_timeout=1500 wrapup_timeout=300
+   the real budgets are per-phase: `scout_timeout=480 worker_timeout=1500 wrapup_timeout=300
    eval_timeout=480 judge_timeout=360 planner_timeout=900 gate_cmd_timeout=600`, plus
    `worker_resume_max=1` (how many times a timed-out Worker is resumed from its checkpoint
    before the Judge escalates or splits), `worker_budget_usd=6`, and `max_attempts=3` (the
    hard cap on attempts for one task, resumes and escalations included). All seconds except
    the last two. Omitted keys take those defaults, so most users leave the line as the
-   template ships it.
+   template ships it. These per-phase defaults are provisional — after a segment has run,
+   `python3 -m runner.calibrate <run-dir>` prints a suggested `Limits:` line from that
+   segment's own phase durations, to paste in for the next one. There is still **no cost,
+   iteration, or wall-clock budget for the run** — the loop runs until the plan is done or
+   it hits your subscription's usage window, at which point the harness reads the reset
+   time and auto-waits, then resumes.
 
    There is still **no cost, iteration, or wall-clock budget for the run**. The loop runs
    until the plan is done or it hits your subscription's usage window — at which point the
@@ -179,7 +184,17 @@ Write `$LOOP_DIR/LOOP_CONFIG.md` from `templates/LOOP_CONFIG.md`. Use the AskUse
     warning in `$LOOP_DIR/LOOP_LEARNINGS.md` `## Patterns` as "no render recipe — UI tasks
     are verified by code presence only."
 
-**Model tiers.** The template ships `Orchestrator model: sonnet` — the orchestrator (the per-tick spine) now defaults to a **standard** model (Sonnet) rather than inheriting the user's Claude default. Rationale: the spine only coordinates, runs the verification gate, and dispatches role subagents; all heavy reasoning (plan decomposition, quality/workaround judgement) is delegated to the most-capable Planner/Evaluator subagents, so running the spine on a top-tier model every tick is pure cost (it was ~90% of observed spend). Leave the line as-is for cheap-by-default; blank it to inherit the Claude default, or name any alias to override. The per-role `Planner/Scout/Worker/Evaluator tier:` lines are unaffected — they still pick a tier per role (see `tick-prompt.md` §16). The `Evaluator tier:` line now ships **blank**: the Evaluator's tier is governed per-task by `tick-prompt.md` §10 (mechanical→skip, complex→most-capable, default→standard). Setting a tier here is a ceiling for `| complex` reviews only — it will NOT force the most-capable tier onto every task (a flat pin previously did exactly that, costing ~30 most-capable Evaluator runs in one observed loop). Leave it blank unless you have a reason to cap complex-review spend.
+13. **Tiers** — free text, one line; take the default from the `Tiers:` line `templates/LOOP_CONFIG.md` ships and do not retype the aliases here, because that line is the **only** place the plugin names a model. Every phase asks for a tier (`cheap | standard | most-capable`) and the harness resolves it here at dispatch, as a `--model` flag rather than a request inside a prompt. Swapping a frontier model in is a one-word edit to this line. Write `Tiers: cheap=<alias> standard=<alias> most-capable=<alias>`.
+
+    Where the leverage sits, and why: the Scout defaults to **standard**, not cheap — the contract is the highest-leverage document in the tick, and in the analysed run the three defective contracts were all written by the cheap tier. The Judge, Planner and Reviewer run most-capable because they are the only phases making judgement calls. The Learner runs cheap. A Worker's second attempt is escalated one tier **by the harness**, not by asking a model to escalate itself.
+
+14. **Decision policy** — single-select, default `autonomous`:
+    - `autonomous` — before marking a task `[!]`, halting, or raising needs-human, the harness dispatches a **Judge** phase. Under this policy the Judge may widen a constraint the Scout invented, escalate a tier, split an oversized task, and pick a default for a question the spec is silent on. Every such choice is appended to `$LOOP_DIR/LOOP_DECISIONS.md` with the alternatives it rejected, so you can ratify or reverse it in the morning. It still defers when the spec forbids the change, when the change touches a forbidden path sourced from the plan or spec, and when two Judge decisions on the same task have already failed.
+    - `conservative` — the Judge may still widen, escalate and split, but a question the spec is silent on is deferred to `LOOP_CLEANUP.md` for a human, exactly as 2.x did.
+
+    Tell the user the tradeoff in one sentence: in the analysed run all three `LOOP_CLEANUP.md` items were decidable from disk, and one of them stopped the loop for a human overnight over a `forbidden` entry the Scout had invented itself. `autonomous` trades a longer morning read for fewer stopped nights. Write `Decision policy: autonomous` (or `conservative`).
+
+**No orchestrator.** v3 has no LLM spine: the harness is a Python state machine that reads the plan, picks tasks, runs commands, enforces the allow-list and commits, and each phase is a separate `claude -p` process with its own model, timeout, turn cap and usage record. There is nothing left to explain about an "orchestrator model" — `Orchestrator model:` stays in the template as an inert key so a config written by 2.x still parses, and is ignored. Tier policy lives entirely in the `Tiers:` line and the per-role tier keys (item 13).
 
 ### Step 3: Planning (adaptive by size)
 
@@ -197,7 +212,7 @@ Plan once, here, with the human. The harness cannot ask questions later, so this
    - **Task sizing:** each task is describable in **2-3 sentences**. Bigger than that → split it.
    - **Dependency ordering:** order tasks/segments so each only depends on earlier ones. A stateless tick picks the next task whose dependencies are done.
    - **Verifiable acceptance criteria:** every task and every segment states a concrete, checkable done-condition (a test that passes, a command that exits 0, a file that exists), because a headless tick has no human to judge "good enough".
-   - **Clone-heavy plan warning.** The loop's sweet spot is *independent, novel-per-task* work. When the brainstormed plan is dominated by near-verbatim clones (the same template across many sibling types that differ only in a small substitution set), warn the user: clone work re-pays context per task and a naive plan forbids DRY (one run spent ~35% of wall-clock cloning, with a copy-paste bug shipping). The loop now handles this via `clone_of` tasks + lean reference contracts (tick-prompt §3/§6), but flag it so the user can confirm that is the intended shape rather than, say, one parameterised component built once. Surface the count of suspected clone-families in the setup summary.
+   - **Clone-heavy plan warning.** The loop's sweet spot is *independent, novel-per-task* work. When the brainstormed plan is dominated by near-verbatim clones (the same template across many sibling types that differ only in a small substitution set), warn the user: clone work re-pays context per task and a naive plan forbids DRY (one run spent ~35% of wall-clock cloning, with a copy-paste bug shipping). The loop now handles this via `clone_of` tasks + lean reference contracts, but flag it so the user can confirm that is the intended shape rather than, say, one parameterised component built once. Surface the count of suspected clone-families in the setup summary.
 
    Write `$LOOP_DIR/LOOP_PLAN.md` accordingly: full task list for `single`; segment headers (`## Segment 1`, `## Segment 2`, …) with the first segment's tasks enumerated and later segments as PLAN-tick placeholders for `segmented`.
 
@@ -238,16 +253,17 @@ Plan once, here, with the human. The harness cannot ask questions later, so this
 Under `$LOOP_DIR/` (the runtime subdir was already created in Step 1.5), create:
 
 1. **`$LOOP_DIR/LOOP_LEARNINGS.md`** — from the template (running notes the harness/ticks append cross-task learnings to). This is **per-run**: it always starts empty from the template, never seeded from prior runs.
-2. **`.claude/loop/KNOWLEDGE.md`** — the **persistent, cross-run** knowledge file. It lives at `$(dirname "$LOOP_DIR")/KNOWLEDGE.md` — the **SIBLING** of the per-run `$LOOP_DIR`, NOT inside it, so it is shared across every run and survives them. Repo-scoped and committed/tracked (it sits under `.claude/loop/`, outside any per-run dir and not under the gitignored `$LOOP_DIR/runtime/`). It is **NOT seeded into the run and is NOT per-run** — it accumulates durable, generalized patterns across *all* loop runs in this repo, is read per task by the Scout, and is auto-promoted into at loop close by `/agent-loop-postmortem`. Create it **only if it does not already exist** (an existing file from a prior run must be preserved untouched): write a `# Loop Knowledge` header plus a `## Patterns (durable, cross-run; auto-promoted at loop close)` section (the `templates/LOOP_KNOWLEDGE.md` template is the canonical seed). The harness (`run.sh`) also creates it on first run if missing, so this is belt-and-braces.
+2. **`.claude/loop/KNOWLEDGE.md`** — the **persistent, cross-run** knowledge file. It lives at `$(dirname "$LOOP_DIR")/KNOWLEDGE.md` — the **SIBLING** of the per-run `$LOOP_DIR`, NOT inside it, so it is shared across every run and survives them. Repo-scoped and committed/tracked (it sits under `.claude/loop/`, outside any per-run dir and not under the gitignored `$LOOP_DIR/runtime/`). It is **NOT seeded into the run and is NOT per-run** — it accumulates durable, generalized patterns across *all* loop runs in this repo, is read per task by the Scout, and is auto-promoted into at loop close by `/agent-loop-postmortem`. Create it **only if it does not already exist** (an existing file from a prior run must be preserved untouched): write a `# Loop Knowledge` header plus a `## Patterns (durable, cross-run; auto-promoted at loop close)` section (the `templates/LOOP_KNOWLEDGE.md` template is the canonical seed). **Setup is the only thing that creates this file** — the harness reads it per task and the postmortem promotes into it, but neither will create it, so a run scaffolded without it simply has no cross-run knowledge.
 3. **`$LOOP_DIR/LOOP_LOG.jsonl`** — empty file (`touch`). Each line is one JSON tick event.
 4. **`$LOOP_DIR/LOOP_USAGE.jsonl`** — empty file (`touch`). The harness appends per-tick cost/usage here for the post-run record.
 5. **`$LOOP_DIR/LOOP_CLEANUP.md`** — header `# Loop Cleanup — manual follow-up tasks` plus an empty `- [ ]` placeholder line.
+6. **`$LOOP_DIR/LOOP_DECISIONS.md`** — header `# Loop Decisions — settled without a human, for review` and nothing else. The Judge appends to it; under `Decision policy: conservative` it may stay empty, which is fine. Tracked and committed (it is the audit trail for everything the loop decided on its own).
 
 The durable `$LOOP_DIR/` artefacts are tracked (Step 1.5); `$LOOP_DIR/runtime/` and the machine-generated logs/ledgers/reports are ignored via the nested `$LOOP_DIR/.gitignore`. Create the branch and commit the durable artefacts plus the design docs (scope `git add` precisely — never `-A`; the `.gitignore` excludes `runtime/` and the log/ledger files, so a `git add "$LOOP_DIR"` will not pick them up):
 
 ```bash
 git checkout -b agent-loop-<topic>
-git add "$LOOP_DIR/.gitignore" "$LOOP_DIR/LOOP_CONFIG.md" "$LOOP_DIR/LOOP_PLAN.md" "$LOOP_DIR/LOOP_LEARNINGS.md" "$LOOP_DIR/LOOP_CLEANUP.md"
+git add "$LOOP_DIR/.gitignore" "$LOOP_DIR/LOOP_CONFIG.md" "$LOOP_DIR/LOOP_PLAN.md" "$LOOP_DIR/LOOP_LEARNINGS.md" "$LOOP_DIR/LOOP_CLEANUP.md" "$LOOP_DIR/LOOP_DECISIONS.md"
 # Ledgers/logs (LOOP_LOG.jsonl, LOOP_USAGE.jsonl, run.log, events.jsonl) are intentionally omitted —
 # they are gitignored and read from disk by the postmortem, not from git history.
 git add "$(dirname "$LOOP_DIR")/KNOWLEDGE.md"   # persistent cross-run knowledge (.claude/loop/KNOWLEDGE.md) — only newly created here; if it already exists this stages nothing new
@@ -270,7 +286,7 @@ cd <Worktree> && LOOP_DIR=.claude/loop/<run-id> bash "${CLAUDE_PLUGIN_ROOT}/run.
 
 **Attach with `/agent-loop`.** In any Claude Code session on this repo, `/agent-loop` reports harness/tick health from the runtime files, prints the dashboard URL, and arms a persistent incident monitor on `events.jsonl` — so that session is woken (and runs `/agent-loop-medic` interactively) when the loop raises a needs-human incident or ends for any reason other than done. It never starts the harness. Attaching is optional: with `Medic: auto` the harness triages its own incidents headless and leaves `runtime/NEEDS_HUMAN.md` when it gives up.
 
-**Stopping and resuming.** `touch $LOOP_DIR/runtime/PAUSE` stops the loop after the in-flight tick (it writes `runtime/CHECKPOINT.json`); press ⟳ Resume in the dashboard (it deletes the file and relaunches), or delete the file and re-run the launch command — tick numbers continue, never restart at 1. Exit codes: 0 done/paused/rate-limit-exit · 1 halt/error · 2 needs-human (read `runtime/NEEDS_HUMAN.md`, fix the cause, re-run) · 3 lock-conflict (another harness owns this `LOOP_DIR`; its pid is printed — stop that one first, never start a second). Standalone `serve.py` (`python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py"`) keeps its ▶ Start / ⟳ Resume / ⏸ Pause / ■ Stop buttons for headed use, but Start/Resume refuse while `runtime/harness.json` names a live pid.
+**Stopping and resuming.** `touch $LOOP_DIR/runtime/PAUSE` stops the loop after the **phase** in flight (it writes `runtime/CHECKPOINT.json`); `touch $LOOP_DIR/runtime/STOP` — or **Stop now** in the dashboard — SIGTERMs that phase first (a Worker gets a wrap-up continuation so its checkpoint is current) and then behaves identically, so a stop lands in minutes rather than at the end of a 30-minute tick. Press ⟳ Resume in the dashboard (it deletes **both** sentinels and relaunches), or delete them and re-run the launch command — tick numbers continue, never restart at 1. Exit codes: 0 done/paused/rate-limit-exit · 1 halt/error · 2 needs-human (read `runtime/NEEDS_HUMAN.md`, fix the cause, re-run) · 3 lock-conflict (another harness owns this `LOOP_DIR`; its pid is printed — stop that one first, never start a second). Standalone `serve.py` (`python3 "${CLAUDE_PLUGIN_ROOT}/web/serve.py"`) keeps its ▶ Start / ⟳ Resume / ⏸ Pause / ■ Stop buttons for headed use, but Start/Resume refuse while `runtime/harness.json` names a live pid.
 
 - `<Worktree>` is the absolute path recorded in `$LOOP_DIR/LOOP_CONFIG.md`.
 - `<run-id>` is the `<date>-<topic>` slug resolved in Step 1.5; pass `LOOP_DIR` so the harness writes/reads every artefact under that single per-run dir.
@@ -285,10 +301,12 @@ Loop is configured.
 
 Worktree:     <absolute worktree path>
 Branch:       agent-loop-<topic>
-Run dir:      .claude/loop/<run-id>  (config/plan/learnings/cleanup committed/tracked; runtime/ + logs/ledgers gitignored)
+Run dir:      .claude/loop/<run-id>  (config/plan/learnings/cleanup/decisions committed/tracked; runtime/ + logs/ledgers gitignored)
 Granularity:  single | segmented (Segment count: N)
 Verification: <pipeline>
-Limits:       tick_timeout (per-tick rabbit-hole cap; usage window is the real ceiling — loop auto-waits on it)
+Limits:       tick_timeout (outer per-tick cap) + a per-phase wall for every phase; usage window is the real ceiling — loop auto-waits on it
+Tiers:        cheap=<alias> standard=<alias> most-capable=<alias>  (the only place a model is named)
+Decision:     autonomous | conservative  (autonomous: the Judge settles what it can and logs it to LOOP_DECISIONS.md)
 Dashboard:    auto | off   (auto: a terminal launch spawns a sidecar when no dashboard is alive; /agent-loop's detached dashboard is adopted either way)
 Medic:        auto | notify | off  (model: <alias or inherited>; auto = headless /agent-loop-medic, max 3/run, then NEEDS_HUMAN.md + exit 2)
 Render:       <recipe | none>   (none = no tick ever opens the product; UI tasks are code-presence checks only)
@@ -296,8 +314,9 @@ Render:       <recipe | none>   (none = no tick ever opens the product; UI tasks
 To start:   /agent-loop   → it asks: start from there, or a terminal command (▶ Start in the dashboard also works)
             (terminal alternative: cd <Worktree> && LOOP_DIR=.claude/loop/<run-id> bash "<plugin-root>/run.sh" — in its own terminal; it adopts a live dashboard)
 To attach:  /agent-loop   (health from runtime files, one detached dashboard, arms the incident monitor)
-To pause:   touch .claude/loop/<run-id>/runtime/PAUSE   (the in-flight tick finishes, writes runtime/CHECKPOINT.json, then the harness stops)
-To resume:  delete .claude/loop/<run-id>/runtime/PAUSE and re-run the start command (tick numbering continues — never restarts at 1)
+To pause:   touch .claude/loop/<run-id>/runtime/PAUSE   (the phase in flight finishes, writes runtime/CHECKPOINT.json, then the harness stops)
+To stop:    touch .claude/loop/<run-id>/runtime/STOP    (or Stop now in the dashboard — the phase in flight is SIGTERMed, so it lands in minutes)
+To resume:  delete BOTH sentinels and re-run the start command (tick numbering continues — never restarts at 1)
 To close:   /agent-loop-postmortem
 ```
 

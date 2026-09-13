@@ -148,6 +148,52 @@ for k in start ready command ui_globs reference; do
   grep -qE "^#[[:space:]]+$k:" "$TMPL"; assert_true $? "template documents the Render sub-key $k"
 done
 grep -qE '^Render:' "$TMPL"; assert_false $? "template must not ship an ACTIVE Render: block"
-# R3: `Decision policy:`, `Tiers:` and the Limits line are plan D's to write here.
+# --- v3: tiers, decision policy, per-phase limits, new row tags ---
+has 'Tiers:'
+has 'cheap='
+has 'most-capable='
+has 'Decision policy'
+has 'autonomous'
+has 'conservative'
+has 'LOOP_DECISIONS.md'
+grep -qE '^1?[0-9]+\. \*\*Decision policy\*\*' "$F"; assert_true $? "setup wizard has a numbered Decision policy question"
+grep -qE '^1?[0-9]+\. \*\*Tiers\*\*' "$F"; assert_true $? "setup wizard has a numbered Tiers question"
+# The orchestrator-model EXPLANATION is gone: v3 has no LLM spine to explain.
+# (Plan D's own blanket `orchestrator (model|...)` grep cannot work: the
+# replacement paragraph has to name the key to say it is inert. These pin the
+# thing that actually matters — the only surviving mention is the compat note.)
+grep -qiE 'orchestrator \(the per-tick|coordination \+ verification spine' "$F"
+assert_false $? "setup drops the v2 orchestrator-model rationale"
+grep -qF '**No orchestrator.**' "$F"; assert_true $? "setup states plainly that v3 has no orchestrator"
+grep -qiE 'orchestrator model.*(inert|ignored)' "$F"; assert_true $? "Orchestrator model: survives only as an inert 2.x compat key"
+grep -qF 'tick-prompt' "$F"; assert_false $? "setup no longer points at tick-prompt.md"
+# Per-phase budgets replace the single tick wall.
+has 'worker_resume_max'
+has 'per-phase'
+
+# Template: tiers map, decision policy, the spec 4.2 limit defaults, no orchestrator prose.
+grep -qE '^Tiers: cheap=haiku standard=sonnet most-capable=opus$' "$TMPL"; assert_true $? "template ships the default tier map"
+grep -qE '^Decision policy: autonomous$' "$TMPL"; assert_true $? "template defaults to Decision policy: autonomous"
+for k in tick_timeout=1800 scout_timeout=480 worker_timeout=1500 wrapup_timeout=300 eval_timeout=480 judge_timeout=360 planner_timeout=900 gate_cmd_timeout=600 worker_resume_max=1 worker_budget_usd=6 max_attempts=3; do
+  grep -qF "$k" "$TMPL"; assert_true $? "template Limits carries $k"
+done
+grep -qiE '^# The orchestrator' "$TMPL"; assert_false $? "template drops the orchestrator-model paragraph"
+grep -qE '^Orchestrator model:' "$TMPL"; assert_true $? "Orchestrator model: kept as an inert key so 2.x configs parse"
+# Exactly one place in the plugin names a model, and it is the Tiers line.
+# A bare alias only: `claude-sonnet-4-6` inside a full model id is an example of
+# what the usage canonicalizer normalizes, not a model this plugin chooses, so a
+# hyphen on either side disqualifies the match.
+ALIAS_RE='(^|[^-[:alnum:]])(haiku|sonnet|opus)([^-[:alnum:]]|$)'
+# Resolve the plugin root: `$HERE/..` leaves "/tests/.." in every path below it,
+# which the /tests/ filter would then strip, silently matching nothing.
+PLUGIN="$(cd "$HERE/.." && pwd)"
+n_alias="$(grep -rlE "$ALIAS_RE" "$PLUGIN" --include='*.md' --include='*.py' --include='*.sh' --include='*.json' | grep -v '/tests/' | wc -l | tr -d ' ')"
+[ "$n_alias" -eq 1 ]; assert_true $? "only templates/LOOP_CONFIG.md names a model alias (got $n_alias files)"
+
+# Plan template: the four new row tags.
+PLANT="$HERE/../templates/LOOP_PLAN.md"
+for tag in 'no-ui' 'copy_of' 'blocked_by' 'split_of'; do
+  grep -qF "$tag" "$PLANT"; assert_true $? "plan template documents the $tag row tag"
+done
 
 assert_summary
