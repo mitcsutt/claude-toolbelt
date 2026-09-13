@@ -24,7 +24,9 @@ Plan: docs/plan.md
 Dashboard: off   # no sidecar
 Medic: notify
 Medic model: mid
-Render: ui_globs=apps/*/src/**,packages/ui/**
+Render:
+  command: cypress run --spec {route}
+  ui_globs: apps/*/src/** packages/ui/**
 Planner tier: most-capable
 Scout tier: standard
 Worker tier: standard
@@ -91,10 +93,14 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual("", c.role_tiers["evaluator"])
         self.assertEqual("cheap", c.role_tiers["learner"])
 
-    def test_render_line_yields_ui_globs(self):
+    def test_render_block_yields_command_and_ui_globs(self):
         c = config.load_config(write(FULL))
         self.assertEqual(["apps/*/src/**", "packages/ui/**"], c.render["ui_globs"])
-        self.assertIn("ui_globs=", c.render["raw"])
+        self.assertEqual("cypress run --spec {route}", c.render["command"])
+
+    def test_render_block_does_not_swallow_the_key_after_it(self):
+        c = config.load_config(write(FULL))
+        self.assertEqual("most-capable", c.role_tiers["planner"])
 
     def test_defaults_when_everything_is_absent(self):
         c = config.load_config(write(MINIMAL))
