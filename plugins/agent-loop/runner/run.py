@@ -809,9 +809,16 @@ def resolve_paths() -> dict:
 def write_checkpoint(h: Harness, tick: int, reason: str) -> None:
     eligible = h.plan.eligible() if h.plan else []
     segments = h.plan.segments() if h.plan else []
+    # A task left `[~]` is what resumes first -- the boot rule settles it before
+    # anything eligible is picked up -- but `eligible()` only returns pending
+    # rows, so reporting its head here answers the wrong question. A pause
+    # mid-task would name "?" for the very task the loop was working on, which
+    # is the one thing the operator and the Resume button need to know.
+    doing = [t for t in (h.plan.tasks() if h.plan else []) if t.state == "doing"]
+    next_task = (doing or eligible)
     util.write_json(os.path.join(h.runtime_dir, "CHECKPOINT.json"),
                     {"t": int(time.time()), "stopped_after_tick": tick,
-                     "next_task": eligible[0].id if eligible else "?",
+                     "next_task": next_task[0].id if next_task else "?",
                      "segment": segments[-1].name if segments else "?",
                      "note": "%s requested; resume by re-running the launch command "
                              "or clicking Resume" % reason})
@@ -1170,6 +1177,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     loop_dir = paths["loop_dir"]
     runtime_dir = paths["runtime_dir"]
     os.makedirs(runtime_dir, exist_ok=True)
+    # A dir created fresh at schema 3 runs no migration, so nothing else would
+    # ever create artifacts/, LOOP_DECISIONS.md or the per-run .gitignore.
+    migrate.ensure_layout(loop_dir)
     log = Log(os.path.join(loop_dir, "harness.log"))
     # Read the 1.x liveness evidence BEFORE this process writes anything.
     legacy_live = migrate.legacy_harness_live(loop_dir)
