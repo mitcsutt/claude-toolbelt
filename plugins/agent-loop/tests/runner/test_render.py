@@ -79,7 +79,14 @@ class RenderGateTest(unittest.TestCase):
         artifacts = [f for (t, f) in self.ctx.events.emitted if t == "artifact"]
         self.assertEqual(len(artifacts), 1)
         self.assertEqual(artifacts[0]["name"], "orgunits-list")
-        self.assertEqual(artifacts[0]["path"], dest)
+        # The event's path is relative to the loop dir, NOT the absolute/cwd
+        # path this process happens to have. A real launch uses a RELATIVE
+        # LOOP_DIR (`LOOP_DIR=.claude/loop/<run-id> bash run.sh`), so an
+        # emitter-relative path is meaningless to serve.py, which abspaths its
+        # own loop_dir -- every screenshot 404s. See test_artifact_path_reads
+        # _what_render_writes in tests/serve.test.py for the other half.
+        self.assertEqual(artifacts[0]["path"],
+                         os.path.join("artifacts", "T60", "orgunits-list.png"))
         self.assertEqual(artifacts[0]["task"], "T60")
         self.assertEqual(artifacts[0]["tick"], 7)
 

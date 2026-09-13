@@ -874,6 +874,32 @@ class TestArtifactPath(unittest.TestCase):
             f.write("rm -rf /\n")
         self.assertIsNone(serve.artifact_path(d, store, 4, "sh"))
 
+    def test_artifact_path_reads_what_render_writes(self):
+        """The two halves must agree on what `path` is relative to.
+
+        A real launch is `LOOP_DIR=.claude/loop/<run-id> bash run.sh`, so the
+        runner's loop_dir is RELATIVE while serve.py abspaths its own. If the
+        artifact event carried an emitter-relative path, joining it onto the
+        absolute loop_dir would double the prefix and every screenshot in the
+        dashboard would 404. render.py records `artifacts/<T>/<name>.png`.
+        """
+        wt = tempfile.mkdtemp()
+        rel_loop = os.path.join(".claude", "loop", "run-x")
+        loop_abs = os.path.join(wt, rel_loop)
+        os.makedirs(os.path.join(loop_abs, "artifacts", "T1"))
+        shot = os.path.join(loop_abs, "artifacts", "T1", "home.png")
+        with open(shot, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n")
+        store = mk([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 1},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 1, "task": "T1",
+             "name": "home",
+             # exactly what render.py emits, for a relative LOOP_DIR
+             "path": os.path.join("artifacts", "T1", "home.png")},
+        ], loop_dir=loop_abs)
+        self.assertEqual(serve.artifact_path(loop_abs, store, 1, "home"),
+                         os.path.realpath(shot))
+
     def test_recorded_but_deleted_file_is_none(self):
         d, store = self._dir([
             {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
