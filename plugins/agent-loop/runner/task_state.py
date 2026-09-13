@@ -24,6 +24,43 @@ DONE_SUFFIX = ":done"
 _WORK_INDEX = PHASES.index("WORK")
 
 
+# `load` is the one function here whose whole contract is tolerating a file this
+# module did not write — a hand-edit by the medic, a foreign writer, a future
+# version with a changed type. A wrong type must degrade to the empty value, not
+# raise: this runs on the crash path, where an unhandled TypeError is the harness
+# dying at the moment it is supposed to be recovering.
+def _as_str(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_records(value: Any) -> List[Dict[str, Any]]:
+    """A list of attempt records; anything that is not a record is dropped."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _as_strs(value: Any) -> List[str]:
+    """A list of paths. A bare string is NOT iterated into characters."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _as_str_map(value: Any) -> Dict[str, str]:
+    """role -> session id. A non-string id becomes "", i.e. nothing to resume."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): _as_str(item) for key, item in value.items()}
+
+
 def state_path(runtime_dir: str, task_id: str) -> str:
     return os.path.join(runtime_dir, "task-%s.json" % task_id)
 
@@ -48,20 +85,26 @@ class TaskState:
     # ---------------------------------------------------------------- loading
     @classmethod
     def load(cls, runtime_dir: str, task_id: str) -> "TaskState":
-        """The recorded state, or an empty one. A malformed file is an empty one."""
+        """The recorded state, or an empty one.
+
+        A malformed file is an empty one — unparseable, or well-formed JSON
+        carrying the wrong types. `task_id` is authoritative: we located the file
+        by that name, so a `task` field disagreeing with it is stale data about a
+        file we already found, and must never redirect where `save()` writes.
+        """
         raw = util.read_json(state_path(runtime_dir, task_id))
         if not isinstance(raw, dict):
             return cls(task=task_id, runtime_dir=runtime_dir)
         return cls(
-            task=raw.get("task") or task_id,
+            task=task_id,
             runtime_dir=runtime_dir,
-            phase=raw.get("phase", "") or "",
-            attempt=int(raw.get("attempt") or 0),
-            attempts=list(raw.get("attempts") or []),
-            session_ids=dict(raw.get("session_ids") or {}),
-            contract=raw.get("contract", "") or "",
-            artifacts=list(raw.get("artifacts") or []),
-            updated=int(raw.get("updated") or 0),
+            phase=_as_str(raw.get("phase")),
+            attempt=_as_int(raw.get("attempt")),
+            attempts=_as_records(raw.get("attempts")),
+            session_ids=_as_str_map(raw.get("session_ids")),
+            contract=_as_str(raw.get("contract")),
+            artifacts=_as_strs(raw.get("artifacts")),
+            updated=_as_int(raw.get("updated")),
         )
 
     @property
@@ -129,6 +172,17 @@ class TaskState:
                 "session": result.session_id or "", "killed": bool(result.killed)})
             if result.session_id:
                 self.session_ids[result.phase] = result.session_id
+        self.save()
+
+    # ------------------------------------------------------- document fields
+    def set_contract(self, path: str) -> None:
+        """Point the record at its contract and persist it immediately.
+
+        §14 names `contract` a document field, so a plain `state.contract = …`
+        that waits for the next mutator to flush loses the pointer to a crash in
+        between. Write-through, exactly like `add_artifact`.
+        """
+        self.contract = path
         self.save()
 
     def add_artifact(self, path: str) -> None:
