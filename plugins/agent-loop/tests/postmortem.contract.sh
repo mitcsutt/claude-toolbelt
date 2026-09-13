@@ -36,4 +36,16 @@ if [ -f "$LEARN" ]; then
 fi
 # Plan 4 Task 7: Step 4 promotes durable invariants into KNOWLEDGE
 grep -qiE 'promote.*invariant|invariants.*KNOWLEDGE|## Invariants' "$F"; assert_true $? "Step 4 must promote durable invariants into KNOWLEDGE.md"
+# --- v3 ---
+has 'LOOP_DECISIONS.md'
+has 'ratify'
+has 'reverse'
+has 'artifacts/'
+has 'screenshot'
+has 'task-<T>.json'
+grep -qiE 'by_model.*(every|each) tick|no (missing|unattributed) tick' "$F"; assert_true $? "usage comes from tick_end.by_model for every tick"
+grep -qiE 'phase' "$F"; assert_true $? "postmortem reports per-phase, not per-subagent, usage"
+# The v2 caveat stays, marked as history — a v2 ledger read by a v3 postmortem still has it.
+has 'parent) process only'
+
 assert_summary
