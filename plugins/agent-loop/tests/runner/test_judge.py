@@ -127,5 +127,284 @@ class TestBuildInput(unittest.TestCase):
         self.assertEqual(inp.tier, "most-capable")
 
 
+
+class _PolicyBase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.policy = getattr(self, "POLICY", "autonomous")
+        self.cfg, self.plan, self.loop_dir, self.runtime = cfixtures.make_loop(
+            self.tmp, policy=self.policy)
+        self.ctx = cfixtures.make_ctx(self.cfg, self.plan, self.loop_dir, self.runtime)
+        self.contract = cfixtures.make_contract()
+        self.inp = judge.build_input(self.ctx, self.contract,
+                                     judge.Failure(kind="gate", detail="tsc failed"))
+
+    def decision(self, **over):
+        d = {"decision": "widen", "classification": "self-imposed",
+             "rationale": "the blocking constraint is scout-sourced",
+             "instruction": "", "alternatives": ["defer to a human"],
+             "reversal": "drop the allow_list entry",
+             "changes": {"allow_list_add": [], "forbidden_remove": [],
+                         "default_choice": "", "blocks": [], "sub_rows": [],
+                         "tier": "", "extend_cap_s": 0}}
+        changes = over.pop("changes", {})
+        d.update(over)
+        d["changes"].update(changes)
+        return d
+
+
+class TestValidateDecision(_PolicyBase):
+    def test_widening_a_scout_sourced_constraint_is_allowed(self):
+        d = self.decision(changes={
+            "forbidden_remove": ["packages/api/src/requests/activepipe/index.ts"],
+            "allow_list_add": ["packages/api/src/requests/activepipe/index.ts"]})
+        self.assertEqual(judge.validate_decision(d, self.inp), [])
+
+    def test_widening_a_plan_sourced_constraint_is_rejected(self):
+        d = self.decision(changes={"forbidden_remove": ["apps/frontend/**"]})
+        errors = judge.validate_decision(d, self.inp)
+        self.assertTrue(any("plan-sourced" in e for e in errors), errors)
+
+    def test_allow_list_add_under_a_plan_forbidden_glob_is_rejected(self):
+        d = self.decision(changes={"allow_list_add": ["apps/frontend/src/App.tsx"]})
+        errors = judge.validate_decision(d, self.inp)
+        self.assertTrue(any("apps/frontend/**" in e for e in errors), errors)
+
+    def test_removing_a_constraint_the_contract_does_not_have_is_rejected(self):
+        d = self.decision(changes={"forbidden_remove": ["packages/api/nope.ts"]})
+        errors = judge.validate_decision(d, self.inp)
+        self.assertTrue(any("not in the contract" in e for e in errors), errors)
+
+    def test_widen_without_changes_is_rejected(self):
+        errors = judge.validate_decision(self.decision(), self.inp)
+        self.assertTrue(any("widen" in e for e in errors), errors)
+
+    def test_unknown_decision_and_classification_are_rejected(self):
+        errors = judge.validate_decision(
+            self.decision(decision="improvise"), self.inp)
+        self.assertTrue(any("unknown decision" in e for e in errors), errors)
+        errors = judge.validate_decision(
+            self.decision(decision="defer", classification="vibes"), self.inp)
+        self.assertTrue(any("classification" in e for e in errors), errors)
+
+    def test_default_choice_allowed_under_autonomous(self):
+        d = self.decision(decision="retry", classification="open",
+                          changes={"default_choice": "place it under internal/"})
+        self.assertEqual(judge.validate_decision(d, self.inp), [])
+
+    def test_third_decision_is_forced_to_defer_or_halt(self):
+        cfixtures.seed_attempt(self.runtime, "T60", 1, "gate:tsc",
+                               judge={"decision": "widen"})
+        cfixtures.seed_attempt(self.runtime, "T60", 2, "gate:tsc",
+                               judge={"decision": "escalate"})
+        inp = judge.build_input(self.ctx, self.contract,
+                                judge.Failure(kind="gate", detail="tsc failed"))
+        errors = judge.validate_decision(
+            self.decision(decision="retry", classification="capability"), inp)
+        self.assertTrue(any("only defer or halt" in e for e in errors), errors)
+        self.assertEqual(judge.validate_decision(
+            self.decision(decision="defer", classification="open",
+                          changes={"default_choice": "x"}), inp), [])
+        self.assertEqual(judge.validate_decision(
+            self.decision(decision="halt", classification="open"), inp), [])
+
+
+class TestJudgedTier(_PolicyBase):
+    """Spec §6 step 2 and §11 item 4: the Judge picks the tier, the harness
+    only bounds it. There is no ladder anywhere in the runner."""
+
+    def test_escalate_must_name_a_tier_above_the_current_one(self):
+        self.assertTrue(any("above standard" in e for e in judge.validate_decision(
+            self.decision(decision="escalate", classification="capability",
+                          changes={"tier": "standard"}), self.inp)))
+        self.assertTrue(any("above standard" in e for e in judge.validate_decision(
+            self.decision(decision="escalate", classification="capability",
+                          changes={"tier": "cheap"}), self.inp)))
+        self.assertEqual(judge.validate_decision(
+            self.decision(decision="escalate", classification="capability",
+                          changes={"tier": "most-capable"}), self.inp), [])
+
+    def test_escalate_without_a_tier_is_rejected(self):
+        errors = judge.validate_decision(
+            self.decision(decision="escalate", classification="capability"),
+            self.inp)
+        self.assertTrue(any("changes.tier" in e for e in errors), errors)
+
+    def test_escalate_from_the_top_of_the_ladder_is_impossible(self):
+        self.ctx.tier = "most-capable"
+        inp = judge.build_input(self.ctx, self.contract,
+                                judge.Failure(kind="gate", detail="tsc failed"))
+        errors = judge.validate_decision(
+            self.decision(decision="escalate", classification="capability",
+                          changes={"tier": "most-capable"}), inp)
+        self.assertTrue(any("no tier above" in e for e in errors), errors)
+
+    def test_an_unknown_tier_is_rejected(self):
+        errors = judge.validate_decision(
+            self.decision(decision="retry", classification="capability",
+                          changes={"tier": "opus"}), self.inp)
+        self.assertTrue(any("unknown tier" in e for e in errors),
+                        "tiers, never model names")
+
+    def test_resume_keeps_the_same_tier_and_needs_a_session_and_budget(self):
+        errors = judge.validate_decision(
+            self.decision(decision="resume", classification="capability",
+                          changes={"tier": "standard"}), self.inp)
+        self.assertTrue(any("session" in e for e in errors), errors)
+
+        self.ctx.last_session = "sid-1"
+        inp = judge.build_input(self.ctx, self.contract,
+                                judge.Failure(kind="worker-incomplete", detail=""))
+        self.assertEqual(judge.validate_decision(
+            self.decision(decision="resume", classification="capability",
+                          changes={"tier": "standard"}), inp), [])
+
+        self.ctx.resume_count = 1              # worker_resume_max is 1
+        spent = judge.build_input(self.ctx, self.contract,
+                                  judge.Failure(kind="worker-incomplete", detail=""))
+        self.assertTrue(any("resume budget" in e for e in judge.validate_decision(
+            self.decision(decision="resume", classification="capability",
+                          changes={"tier": "standard"}), spent)))
+
+    def test_cap_extension_is_bounded_and_once_per_task(self):
+        self.assertTrue(any("exceeds the phase default" in e
+                            for e in judge.validate_decision(
+                                self.decision(decision="retry",
+                                              classification="capability",
+                                              changes={"extend_cap_s": 1501}),
+                                self.inp)))
+        ok = self.decision(decision="retry", classification="capability",
+                           changes={"extend_cap_s": 600})
+        self.assertEqual(judge.validate_decision(ok, self.inp), [])
+
+        cfixtures.seed_attempt(self.runtime, "T60", 1, "worker-incomplete:",
+                               judge={"decision": "resume",
+                                      "changes": {"extend_cap_s": 600}})
+        inp = judge.build_input(self.ctx, self.contract,
+                                judge.Failure(kind="gate", detail="tsc failed"))
+        self.assertTrue(inp.cap_extended)
+        self.assertTrue(any("already used its one cap extension" in e
+                            for e in judge.validate_decision(ok, inp)))
+
+    def test_the_last_attempt_accepts_only_split_defer_or_halt(self):
+        self.ctx.attempt = 3                   # max_attempts defaults to 3
+        inp = judge.build_input(self.ctx, self.contract,
+                                judge.Failure(kind="gate", detail="tsc failed"))
+        errors = judge.validate_decision(
+            self.decision(decision="escalate", classification="capability",
+                          changes={"tier": "most-capable"}), inp)
+        self.assertTrue(any("is the last" in e for e in errors), errors)
+        self.assertEqual(judge.validate_decision(
+            self.decision(decision="split", classification="capability",
+                          changes={"sub_rows": ["- [ ] Build the mixin",
+                                                "- [ ] Register the mixin"]}),
+            inp), [])
+
+
+class TestConservativePolicy(_PolicyBase):
+    POLICY = "conservative"
+
+    def test_default_choice_is_rejected(self):
+        d = self.decision(decision="retry", classification="open",
+                          changes={"default_choice": "place it under internal/"})
+        errors = judge.validate_decision(d, self.inp)
+        self.assertTrue(any("autonomous" in e for e in errors), errors)
+
+    def test_widen_and_escalate_still_allowed(self):
+        d = self.decision(changes={
+            "forbidden_remove": ["packages/api/src/requests/activepipe/index.ts"]})
+        self.assertEqual(judge.validate_decision(d, self.inp), [])
+        self.assertEqual(judge.validate_decision(
+            self.decision(decision="escalate", classification="capability",
+                          changes={"tier": "most-capable"}), self.inp), [])
+
+
+class TestDecide(_PolicyBase):
+    def _run(self, payload):
+        from unittest import mock
+        from runner.claude_proc import PhaseResult
+        result = PhaseResult(
+            phase="judge", model="opus", rc=0, killed=False, timed_out=False,
+            session_id="sid-judge", transcript_path=None, started=1, ended=2,
+            result_text="Here is my call.\n\n```json\n%s\n```\n" % json.dumps(payload),
+            usage_by_model={}, tool_calls=2, last_activity=2)
+        with mock.patch.object(judge.claude_proc, "run_phase",
+                               return_value=result) as spawn:
+            return judge.decide(self.ctx, self.inp), spawn
+
+    def test_valid_decision_passes_through_and_runs_at_most_capable(self):
+        out, spawn = self._run({
+            "decision": "widen", "classification": "self-imposed",
+            "rationale": "scout invented it", "alternatives": ["halt"],
+            "reversal": "revert the contract",
+            "changes": {"forbidden_remove":
+                        ["packages/api/src/requests/activepipe/index.ts"]}})
+        self.assertEqual(out["decision"], "widen")
+        self.assertEqual(out["rejected"], [])
+        self.assertEqual(out["changes"]["allow_list_add"], [])
+        self.assertEqual(out["changes"]["sub_rows"], [])
+        self.assertEqual(out["changes"]["tier"], "")
+        self.assertEqual(out["changes"]["extend_cap_s"], 0)
+        self.assertEqual(out["_phase"].session_id, "sid-judge")
+        kwargs = spawn.call_args[1]
+        self.assertEqual(kwargs["model"], "opus")
+        self.assertEqual(kwargs["phase"], "judge")
+        self.assertEqual(kwargs["timeout_s"], 360, "judge_timeout")
+        self.assertIn("P-ORG-001", kwargs["prompt"])
+        self.assertIn("autonomous", kwargs["prompt"])
+        self.assertIn("attempt 1 of 3", kwargs["prompt"])
+        self.assertIn("one cap extension of up to 1500 s", kwargs["prompt"])
+
+    def test_rejected_decision_is_downgraded_to_defer(self):
+        out, _ = self._run({
+            "decision": "widen", "classification": "self-imposed",
+            "rationale": "I want the composition root",
+            "changes": {"forbidden_remove": ["apps/frontend/**"]}})
+        self.assertEqual(out["decision"], "defer")
+        self.assertTrue(any("plan-sourced" in e for e in out["rejected"]))
+        self.assertIn("I want the composition root", out["rationale"])
+        self.assertEqual(out["changes"]["forbidden_remove"], [])
+
+    def test_malformed_output_defers(self):
+        from unittest import mock
+        from runner.claude_proc import PhaseResult
+        result = PhaseResult(phase="judge", model="opus", rc=0, killed=False,
+                             timed_out=False, session_id="s", transcript_path=None,
+                             started=1, ended=2, result_text="no json here",
+                             usage_by_model={}, tool_calls=0, last_activity=2)
+        with mock.patch.object(judge.claude_proc, "run_phase", return_value=result):
+            out = judge.decide(self.ctx, self.inp)
+        self.assertEqual(out["decision"], "defer")
+        self.assertEqual(out["classification"], "open")
+        self.assertTrue(any("malformed" in e for e in out["rejected"]))
+
+
+class TestSubRowGrammar(_PolicyBase):
+    def test_sub_rows_are_titles_that_the_harness_numbers(self):
+        self.assertEqual(judge.validate_sub_rows(
+            "T60", ["- [ ] Build the organisationalUnits mixin",
+                    "- [ ] Register it in the composition root"]), [])
+        self.assertTrue(judge.validate_sub_rows("T60", ["- [ ] only one"]))
+        self.assertTrue(any("must not name a task id" in e
+                            for e in judge.validate_sub_rows(
+                                "T60", ["- [ ] T60a Build the mixin",
+                                        "- [ ] T60b Register it"])),
+                        "lettered ids are gone: serve.py's id regex is \\bT\\d+\\b")
+        self.assertTrue(any("must not name a task id" in e
+                            for e in judge.validate_sub_rows(
+                                "T60", ["- [ ] T74 Build the mixin",
+                                        "- [ ] T75 Register it"])),
+                        "Plan.split allocates the numbers, not the Judge")
+        self.assertTrue(any("grammar" in e for e in judge.validate_sub_rows(
+            "T60", ["no checkbox", "- [ ] Register it"])))
+        self.assertTrue(any("duplicate" in e for e in judge.validate_sub_rows(
+            "T60", ["- [ ] Build the mixin", "- [ ] build the mixin"])))
+
+    def test_split_decision_without_sub_rows_is_rejected(self):
+        errors = judge.validate_decision(
+            self.decision(decision="split", classification="capability"), self.inp)
+        self.assertTrue(any("sub_rows" in e for e in errors), errors)
+
 if __name__ == "__main__":
     unittest.main()
