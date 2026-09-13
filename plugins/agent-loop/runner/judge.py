@@ -5,14 +5,15 @@ the Judge downstream of every phase it reviews). `run.py` imports both.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from . import contract as contract_mod, util
-from .config import phase_limit
+from . import claude_proc, contract as contract_mod, phases, util
+from .config import TIER_ORDER, model_for, next_tier, phase_limit
 from .task_state import TaskState
 
 MAX_GATE_LINES = 80
@@ -211,3 +212,274 @@ def build_input(ctx, contract, failure: Failure) -> JudgeInput:
         resumes_left=max(0, resume_max - used),
         boot_evidence="",          # Task 8 fills this for boot-reconcile
     )
+
+
+# --------------------------------------------------------------------------
+# the decision: vocabulary, policy validation, dispatch
+# --------------------------------------------------------------------------
+DECISIONS = ("retry", "escalate", "widen", "resume", "revert-and-retry",
+             "split", "defer", "halt")
+BOOT_DECISIONS = ("resume", "retry", "revert-and-retry", "defer")
+# Spec §7's classification enum, in full. This is the single definition in the
+# runner: `run.CLASSIFICATIONS` aliases it, so the two can never disagree.
+CLASSIFICATIONS = ("self-imposed", "spec-answered", "capability", "open")
+# The tier vocabulary is config's, not a second copy: a tier list that drifted
+# from `config.TIER_ORDER` would validate decisions `model_for` then refuses.
+TIERS = TIER_ORDER
+SUB_ROW_RE = re.compile(r"^- \[ \] (?P<title>\S.*)$")
+SUB_ROW_ID_RE = re.compile(r"^T\d+[a-z]?\b")
+
+
+def path_covered(path: str, pattern: str) -> bool:
+    """True when `pattern` (a contract forbidden entry) covers `path`."""
+    if path == pattern:
+        return True
+    if fnmatch.fnmatch(path, pattern):
+        return True
+    base = pattern.rstrip("*").rstrip("/")
+    return bool(base) and path.startswith(base + "/")
+
+
+def validate_sub_rows(parent_id: str, rows: List[str]) -> List[str]:
+    """Sub rows are titles; `Plan.split` allocates the ids (interfaces doc).
+
+    serve.py's id regex is `\\bT\\d+\\b`, so a lettered id like `T60a` would
+    vanish from the dashboard. The harness therefore allocates the next free
+    numeric ids and appends `| split_of: <parent>` itself, and the Judge is not
+    allowed to name an id at all.
+    """
+    errors = []
+    rows = rows or []
+    if len(rows) < 2:
+        errors.append("split needs at least two sub_rows, got %d" % len(rows))
+    seen = []
+    for row in rows:
+        m = SUB_ROW_RE.match((row or "").strip())
+        if not m:
+            errors.append("sub row breaks the plan grammar "
+                          "`- [ ] <title>`: %r" % row)
+            continue
+        title = m.group("title").strip()
+        if SUB_ROW_ID_RE.match(title):
+            errors.append("sub row must not name a task id (%s): the harness "
+                          "allocates the next free numeric ids and appends "
+                          "`| split_of: %s`" % (title.split()[0], parent_id))
+            continue
+        if "split_of:" in title:
+            errors.append("sub row must not carry `| split_of:`; the harness "
+                          "appends it: %r" % row)
+        key = title.lower()
+        if key in seen:
+            errors.append("duplicate sub row title %r" % title)
+        seen.append(key)
+    return errors
+
+
+def validate_decision(decision: dict, inp: JudgeInput) -> List[str]:
+    """[] means the harness will do what the Judge said. Spec §7 policy."""
+    errors = []
+    d = (decision or {}).get("decision")
+    if d not in DECISIONS:
+        return ["unknown decision %r (expected one of %s)" % (d, "|".join(DECISIONS))]
+    if decision.get("classification") not in CLASSIFICATIONS:
+        errors.append("missing or unknown classification %r (expected one of %s)"
+                      % (decision.get("classification"), "|".join(CLASSIFICATIONS)))
+
+    boot = inp.failure.startswith("boot-reconcile")
+    if boot and d not in BOOT_DECISIONS:
+        errors.append("boot reconciliation accepts only %s, not %r (spec §14)"
+                      % ("|".join(BOOT_DECISIONS), d))
+    if d == "revert-and-retry" and not boot:
+        errors.append("revert-and-retry exists only for boot reconciliation "
+                      "(spec §14); this failure is %s" % inp.failure)
+
+    changes = decision.get("changes") or {}
+    by_path = dict((f["path"], f["source"]) for f in inp.forbidden)
+
+    for p in changes.get("forbidden_remove") or []:
+        if p not in by_path:
+            errors.append("forbidden_remove %s is not in the contract's "
+                          "forbidden list" % p)
+        elif by_path[p] != "scout":
+            errors.append("forbidden_remove %s is %s-sourced; only scout-sourced "
+                          "constraints may be widened" % (p, by_path[p]))
+
+    for p in changes.get("allow_list_add") or []:
+        for entry in inp.forbidden:
+            if entry["source"] in ("plan", "spec") and path_covered(p, entry["path"]):
+                errors.append("allow_list_add %s is covered by the %s-sourced "
+                              "forbidden entry %s"
+                              % (p, entry["source"], entry["path"]))
+
+    if changes.get("default_choice") and inp.policy != "autonomous":
+        errors.append("default_choice is only allowed under "
+                      "`Decision policy: autonomous` (this loop is %s)" % inp.policy)
+
+    if d == "widen" and not (changes.get("allow_list_add")
+                             or changes.get("forbidden_remove")):
+        errors.append("widen with neither allow_list_add nor forbidden_remove "
+                      "changes nothing")
+    if d == "split":
+        errors.extend(validate_sub_rows(inp.task_id, changes.get("sub_rows")))
+
+    # --- the judged tier, and the bounds the harness keeps (spec §6, §7) ---
+    tier = changes.get("tier") or ""
+    if tier and tier not in TIERS:
+        errors.append("unknown tier %r (expected one of %s); `changes.tier` "
+                      "names a tier, never a model" % (tier, "|".join(TIERS)))
+    if d == "escalate":
+        if not tier:
+            errors.append("escalate must name changes.tier; this attempt ran "
+                          "at %s" % inp.tier)
+        elif tier in TIERS and inp.tier in TIERS:
+            if next_tier(inp.tier) == inp.tier:
+                errors.append("there is no tier above %s; split or defer "
+                              "instead" % inp.tier)
+            elif TIERS.index(tier) <= TIERS.index(inp.tier):
+                errors.append("escalate must name a tier above %s; %s is not"
+                              % (inp.tier, tier))
+
+    if d == "resume" and not boot:
+        if not inp.resume_session:
+            errors.append("resume needs a session to resume; none was captured")
+        if inp.resumes_left <= 0:
+            errors.append("the resume budget (worker_resume_max) is spent for %s"
+                          % inp.task_id)
+
+    try:
+        extend = int(changes.get("extend_cap_s") or 0)
+    except (TypeError, ValueError):
+        extend = -1
+        errors.append("extend_cap_s must be a whole number of seconds")
+    if extend > 0:
+        if extend > inp.cap_default_s:
+            errors.append("extend_cap_s %ds exceeds the phase default %ds"
+                          % (extend, inp.cap_default_s))
+        if inp.cap_extended:
+            errors.append("%s has already used its one cap extension"
+                          % inp.task_id)
+        if d not in ("retry", "widen", "escalate", "resume"):
+            errors.append("extend_cap_s means nothing on a %s decision" % d)
+    elif extend < 0:
+        errors.append("extend_cap_s must not be negative")
+
+    if inp.attempt >= inp.max_attempts and d not in ("split", "defer", "halt"):
+        errors.append("attempt %d of %d is the last (max_attempts); only split, "
+                      "defer or halt remain" % (inp.attempt, inp.max_attempts))
+
+    if judge_decision_count(inp.attempts) >= 2 and d not in ("defer", "halt"):
+        errors.append("two Judge decisions on %s have already failed; "
+                      "only defer or halt remain" % inp.task_id)
+    return errors
+
+
+def _normalize(decision: dict) -> dict:
+    out = dict(decision or {})
+    out.setdefault("rationale", "")
+    out.setdefault("instruction", "")
+    out.setdefault("alternatives", [])
+    out.setdefault("reversal", "")
+    out.setdefault("rejected", [])
+    changes = dict(out.get("changes") or {})
+    for key, empty in (("allow_list_add", []), ("forbidden_remove", []),
+                       ("default_choice", ""), ("blocks", []), ("sub_rows", []),
+                       ("tier", ""), ("extend_cap_s", 0)):
+        changes.setdefault(key, empty)
+    out["changes"] = changes
+    return out
+
+
+def _defer(reasons: List[str], original: dict) -> dict:
+    """A refused decision is recorded verbatim and downgraded, never obeyed."""
+    original = original or {}
+    classification = original.get("classification")
+    return _normalize({
+        "decision": "defer",
+        "classification": classification if classification in CLASSIFICATIONS else "open",
+        "rationale": "Judge decision refused by policy: %s. Original rationale: %s"
+                     % ("; ".join(reasons), one_line(original.get("rationale"))),
+        "instruction": "",
+        "alternatives": list(original.get("alternatives") or []),
+        "reversal": "reverse nothing - no file was changed; decide the question "
+                    "in LOOP_CLEANUP.md and re-run the task",
+        "rejected": reasons,
+        "changes": {"blocks": list((original.get("changes") or {}).get("blocks") or [])},
+    })
+
+
+def _budget_text(inp: JudgeInput) -> str:
+    """The bounds, in one sentence, so the Judge never proposes a refused call."""
+    bits = ["attempt %d of %d" % (inp.attempt, inp.max_attempts),
+            "the last Worker ran at tier `%s`" % inp.tier,
+            "the worker cap default is %d s" % inp.cap_default_s,
+            ("this task's one cap extension is already spent" if inp.cap_extended
+             else "one cap extension of up to %d s is still available"
+                  % inp.cap_default_s),
+            "%d resume(s) left in the budget" % inp.resumes_left,
+            ("session %s can be resumed" % inp.resume_session
+             if inp.resume_session else "there is no session to resume")]
+    if inp.attempt >= inp.max_attempts:
+        bits.append("this is the last attempt, so only split, defer or halt "
+                    "will be accepted")
+    return "; ".join(bits) + "."
+
+
+def decide(ctx, inp: JudgeInput) -> dict:
+    """Run the Judge phase and return a decision the harness is allowed to apply."""
+    prompt = phases.render_prompt(
+        "judge",
+        loop_dir=ctx.loop_dir,
+        worktree=ctx.cfg.worktree,
+        policy=inp.policy,
+        tier=inp.tier,
+        budget=_budget_text(inp),
+        boot_evidence=(inp.boot_evidence
+                       or "(not a boot reconciliation — ignore this section)"),
+        failure=inp.failure,
+        task_row=inp.task_row,
+        contract_json=inp.contract_json,
+        forbidden=json.dumps(inp.forbidden, indent=2),
+        gate_outputs="\n\n".join(inp.gate_outputs) or "(no gate output)",
+        verdict=json.dumps(inp.verdict, indent=2) if inp.verdict else "{}",
+        checkpoint=inp.checkpoint or "(no checkpoint)",
+        spec_excerpt="\n\n".join(inp.excerpts)
+                     or "(no plan or spec line names this task)",
+        cleanup=inp.cleanup_text.strip() or "(empty)",
+        attempts=json.dumps(inp.attempts, indent=2),
+    )
+    tier = ctx.cfg.role_tiers.get("judge") or "most-capable"
+    result = claude_proc.run_phase(
+        phase="judge",
+        model=model_for(ctx.cfg, tier),
+        prompt=prompt,
+        cwd=ctx.cfg.worktree,
+        timeout_s=phase_limit(ctx.cfg, "judge"),
+        max_turns=20,
+        max_budget_usd=None,
+        env=dict(os.environ),
+        events=ctx.events,
+        tick=ctx.tick,
+        role="judge",
+        activity_path=os.path.join(ctx.runtime_dir, "last-activity"),
+        allowed_tools=["Read", "Grep", "Glob"],
+    )
+
+    # `parse_json_block` RAISES on a reply with no usable block -- it does not
+    # return None. A Judge that produced nothing usable must defer, not take the
+    # harness down with it: this phase runs precisely when the loop is already
+    # in trouble, and an uncaught exception here would lose the tick as well.
+    try:
+        raw = phases.parse_json_block(result.result_text, phase="judge") or {}
+    except phases.JsonBlockError as exc:
+        raw = {}
+        malformed = str(exc)
+    else:
+        malformed = ""
+    if not raw.get("decision"):
+        out = _defer(["the Judge returned malformed output (no decision json "
+                      "block)%s" % (": %s" % malformed if malformed else "")], raw)
+    else:
+        errors = validate_decision(raw, inp)
+        out = _defer(errors, raw) if errors else _normalize(raw)
+    out["_phase"] = result
+    return out
