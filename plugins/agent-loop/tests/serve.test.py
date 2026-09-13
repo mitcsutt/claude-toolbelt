@@ -724,6 +724,90 @@ class TestEventStore(unittest.TestCase):
         self.assertEqual(store.count, 0)
 
 
+class TestArtifactAndDecisionFold(unittest.TestCase):
+    """v3 event types: artifacts belong to the tick, decisions to the run."""
+
+    def test_artifacts_fold_into_the_current_tick(self):
+        store = mk([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "orgunits-list", "path": "artifacts/T60/orgunits-list.png"},
+            {"t": 3, "seq": 3, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "orgunits-empty", "path": "artifacts/T60/orgunits-empty.png"},
+        ])
+        self.assertEqual(store.artifacts, [
+            {"name": "orgunits-list", "path": "artifacts/T60/orgunits-list.png"},
+            {"name": "orgunits-empty", "path": "artifacts/T60/orgunits-empty.png"},
+        ])
+
+    def test_a_new_tick_clears_the_previous_tick_artifacts(self):
+        store = mk([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "a", "path": "artifacts/T60/a.png"},
+            {"t": 3, "seq": 3, "type": "tick_start", "tick": 5},
+        ])
+        self.assertEqual(store.artifacts, [])
+        # ...but the index keeps them addressable for a page still showing tick 4
+        self.assertEqual(store.artifact_ix[(4, "a")], "artifacts/T60/a.png")
+
+    def test_artifact_without_a_name_or_path_is_ignored(self):
+        store = mk([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "name": "a"},
+            {"t": 3, "seq": 3, "type": "artifact", "tick": 4, "path": "x.png"},
+        ])
+        self.assertEqual(store.artifacts, [])
+
+    def test_decisions_survive_tick_boundaries(self):
+        store = mk([
+            {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
+            {"t": 2, "seq": 2, "type": "decision", "task": "T60",
+             "decision": "widen", "classification": "self-imposed"},
+            {"t": 3, "seq": 3, "type": "resume", "task": "T60", "attempt": 2},
+            {"t": 4, "seq": 4, "type": "tick_start", "tick": 5},
+            {"t": 5, "seq": 5, "type": "split", "task": "T60",
+             "into": ["T74", "T75"]},
+        ])
+        self.assertEqual([d["type"] for d in store.decisions],
+                         ["decision", "resume", "split"])
+        self.assertEqual(store.decisions[0]["decision"], "widen")
+        self.assertEqual(store.decisions[0]["classification"], "self-imposed")
+        self.assertEqual(store.decisions[1]["decision"], "resume")   # type is the default
+        self.assertEqual(store.decisions[1]["attempt"], 2)
+        self.assertEqual(store.decisions[2]["into"], ["T74", "T75"])
+
+    def test_decisions_are_capped(self):
+        evs = [{"t": 1, "seq": 1, "type": "tick_start", "tick": 1}]
+        for i in range(serve._MAX_DECISIONS + 25):
+            evs.append({"t": 2, "seq": i + 2, "type": "decision",
+                        "task": "T%d" % i, "decision": "retry"})
+        store = mk(evs)
+        self.assertEqual(len(store.decisions), serve._MAX_DECISIONS)
+        self.assertEqual(store.decisions[-1]["task"],
+                         "T%d" % (serve._MAX_DECISIONS + 24))
+
+    def test_none_of_the_new_types_becomes_a_lifecycle_event(self):
+        for typ in ("artifact", "decision", "resume", "split"):
+            self.assertNotIn(typ, serve.LIFECYCLE_TYPES)
+
+    def test_snapshot_carries_artifacts_and_decisions(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runtime"), exist_ok=True)
+        store = mk([
+            {"t": 1, "seq": 1, "type": "loop_start"},
+            {"t": 2, "seq": 2, "type": "tick_start", "tick": 4},
+            {"t": 3, "seq": 3, "type": "artifact", "tick": 4, "task": "T60",
+             "name": "a", "path": "artifacts/T60/a.png"},
+            {"t": 4, "seq": 4, "type": "decision", "task": "T60",
+             "decision": "defer", "classification": "open"},
+        ], loop_dir=d)
+        snap = serve.build_snapshot(d, store, live(), {"state": "running"}, NOW)
+        self.assertEqual(snap["current"]["artifacts"],
+                         [{"name": "a", "path": "artifacts/T60/a.png"}])
+        self.assertEqual(snap["decisions"][-1]["decision"], "defer")
+
+
 class TestBuildSnapshot(unittest.TestCase):
     def test_snapshot_names_the_log_file_it_tailed(self):
         d = tempfile.mkdtemp()
