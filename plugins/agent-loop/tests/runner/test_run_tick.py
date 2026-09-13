@@ -125,6 +125,13 @@ class Base(unittest.TestCase):
             util.write_json(os.path.join(self.runtime, "sprint-%s.json" % task_id), data)
         return write
 
+    def rename(self, src, dst):
+        """A side effect that renames one tracked file to another name."""
+        def go():
+            subprocess.run(["git", "mv", src, dst], cwd=self.wt, check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return go
+
     def worker_edit(self, path="src/a.ts", text="export const parse = () => 1\n"):
         def write():
             full = os.path.join(self.wt, path)
@@ -839,3 +846,86 @@ class TestSandboxBaseline(Base):
         run.execute_tick(self.h, 1, self.h.plan.task("T1"))
         self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "stray.ts")),
                          "a genuine Worker stray survived the sandbox")
+
+
+class TestSandboxIsARecordedPhase(Base):
+    """A kill during the sandbox must not read as a kill inside WORK.
+
+    Spec §14 lists SANDBOX in PHASES and `execute_tick`'s own sequence names
+    it, but nothing recorded it — so `phase` stayed `WORK` for the whole
+    containment step. The boot rule sends a `WORK`-in-flight task to `wrapup`,
+    which spends a second Worker budget, and it would do so on top of a tree
+    whose stray-revert never finished.
+    """
+
+    def test_the_state_file_shows_work_finishing_before_the_sandbox_starts(self):
+        seen = []
+        real = run.sandbox
+
+        def watched(h, contract):
+            seen.append(task_state.TaskState.load(self.runtime, "T1").phase)
+            return real(h, contract)
+
+        run.sandbox = watched
+        try:
+            self.patch({
+                "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                           "side_effect": self.contract_writer(
+                               allow_list=["src/w.ts"],
+                               success_criteria=["src/w.ts exists"])}],
+                "worker": [{"text": block({"status": "complete", "summary": ""}),
+                            "side_effect": self.worker_edit("src/w.ts", "x\n")}],
+                "evaluator": [{"text": block({"verdict": "PASS", "summary": "ok"})}],
+                "learner": [{"text": block({"learnings": []})}]})
+            run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        finally:
+            run.sandbox = real
+
+        self.assertEqual(["SANDBOX"], seen,
+                         "the sandbox ran while the state file still said %r" % seen)
+
+    def test_the_worker_and_the_sandbox_are_both_recorded(self):
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(
+                           allow_list=["src/w.ts"],
+                           success_criteria=["src/w.ts exists"])}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.worker_edit("src/w.ts", "x\n")}],
+            "evaluator": [{"text": block({"verdict": "PASS", "summary": "ok"})}],
+            "learner": [{"text": block({"learnings": []})}]})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        doc = json.loads(util.read_text(
+            os.path.join(self.runtime, "task-T1.json")))
+        phases_seen = [pr["phase"] for pr in doc["attempts"][-1]["phase_results"]]
+        self.assertIn("worker", [p.lower() for p in phases_seen])
+
+
+class TestRenameContainment(Base):
+    """A rename is one operation; containment must undo all of it.
+
+    `changed_paths` reports both names so each can be judged against the
+    allow_list separately -- correct for deciding what is a stray, wrong for
+    deciding what to undo. A Worker renaming a sanctioned file to an
+    unsanctioned name makes only the destination a stray, and reverting that
+    alone leaves the tree with neither name: the destination deleted, the
+    source still renamed away.
+    """
+
+    def test_renaming_a_sanctioned_file_out_of_scope_restores_it(self):
+        self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(
+                           allow_list=["src/a.ts"],
+                           success_criteria=["src/a.ts exists"])}],
+            "worker": [{"text": block({"status": "complete", "summary": ""}),
+                        "side_effect": self.rename("src/a.ts", "src/escaped.ts")}],
+            "evaluator": [{"text": block({"verdict": "PASS", "summary": "ok"})}],
+            "learner": [{"text": block({"learnings": []})}]})
+        run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+
+        self.assertFalse(os.path.exists(os.path.join(self.wt, "src", "escaped.ts")),
+                         "the unsanctioned destination survived the sandbox")
+        self.assertTrue(os.path.exists(os.path.join(self.wt, "src", "a.ts")),
+                        "the sanctioned source was left renamed away — the tree "
+                        "has neither name, which the Worker never asked for")

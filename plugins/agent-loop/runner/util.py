@@ -45,8 +45,19 @@ def read_json(path: str) -> Optional[Any]:
 
 
 def read_text(path: str, default: str = "") -> str:
+    """The file's text, or `default` when it cannot be read as text at all.
+
+    `errors="replace"` rather than a bare open: every caller here reads a file
+    some other process wrote -- a log, a plan, a config, a transcript -- and a
+    single undecodable byte would otherwise raise UnicodeDecodeError out of a
+    function whose whole contract is "returns a string, never raises". That
+    surfaced for real on the crash-recovery path, where a truncated write left
+    invalid UTF-8 in a log the migration had to read before it could do
+    anything. Substituting the bad bytes keeps every other line legible, which
+    is what a harness reading someone else's half-written file actually wants.
+    """
     try:
-        with open(path) as f:
+        with open(path, errors="replace") as f:
             return f.read()
     except OSError:
         return default

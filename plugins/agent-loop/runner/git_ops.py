@@ -11,7 +11,7 @@ import fnmatch
 import os
 import re
 import subprocess
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from . import util
 
@@ -74,6 +74,29 @@ def changed_paths(cwd: str) -> List[str]:
         else:
             paths.append(_unquote(rest))
     return paths
+
+
+def rename_pairs(cwd: str) -> List[Tuple[str, str]]:
+    """Every (source, destination) the working tree reports as one rename.
+
+    `changed_paths` flattens both names so each can be judged against the
+    allow_list on its own, which is right for deciding what is a stray and
+    wrong for deciding what to undo: a rename is ONE operation. Renaming an
+    allow-listed file to a name outside the list makes only the destination a
+    stray, and reverting that alone deletes the new name while leaving the old
+    one deleted -- the tree ends up with neither, which is not a state the
+    Worker ever asked for.
+    """
+    _, out = _git(cwd, ["status", "--porcelain", "-uall"])
+    pairs = []
+    for line in out.splitlines():
+        if len(line) < 4:
+            continue
+        rest = line[3:]
+        if " -> " in rest:
+            src, dst = rest.split(" -> ", 1)
+            pairs.append((_unquote(src), _unquote(dst)))
+    return pairs
 
 
 def _covered(path: str, patterns: List[str]) -> bool:
