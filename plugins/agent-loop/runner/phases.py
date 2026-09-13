@@ -46,10 +46,14 @@ class JsonBlockError(ValueError):
 class TickContext:
     """Everything a phase function needs about the tick it belongs to.
 
-    Fields are exactly these eight — plan B's re-ask path and plan C's resume
-    path both depend on this shape, so nothing is added, renamed or reordered
-    here; plan C appends `resume_session`, `resume_count`, `last_session` on
-    its own subclass or call site, not here.
+    The first eight fields are plan A's and are never renamed or reordered —
+    plan B's re-ask path depends on that shape. The five after them are plan C's
+    (interfaces doc, Cross-plan notes): they are defaulted and trailing, so every
+    existing construction site still works. `tier` is the tier THIS attempt runs
+    at, armed by the Judge's `changes.tier` and never derived from the attempt
+    number (spec §11 item 4); `resume_count` is assigned from
+    `TaskState.resumes_spent()` when the attempt opens, never counted
+    independently, or `worker_resume_max` would bound nothing.
     """
     cfg: Any
     plan: Any
@@ -59,6 +63,11 @@ class TickContext:
     events: Any
     tick: int
     attempt: int = 1
+    resume_session: Optional[str] = None
+    resume_count: int = 0
+    last_session: Optional[str] = None
+    tier: Optional[str] = None
+    extend_cap_s: int = 0
 
 
 def render_prompt(name: str, **variables: Any) -> str:
