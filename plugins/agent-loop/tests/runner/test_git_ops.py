@@ -95,6 +95,53 @@ class TestRevert(unittest.TestCase):
         git_ops.revert(self.d, ["drop.ts"])
         self.assertTrue(os.path.exists(os.path.join(self.d, "keep.ts")))
 
+    def test_a_staged_rename_outside_the_allow_list_is_fully_undone(self):
+        write(self.d, "old.ts", "x\n")
+        sh(self.d, "git", "add", "old.ts")
+        sh(self.d, "git", "commit", "-q", "-m", "add old")
+        sh(self.d, "git", "mv", "old.ts", "new.ts")
+        git_ops.revert(self.d, ["old.ts", "new.ts"])
+        with open(os.path.join(self.d, "old.ts")) as f:
+            self.assertEqual("x\n", f.read())
+        self.assertFalse(os.path.exists(os.path.join(self.d, "new.ts")))
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=self.d,
+                                stdout=subprocess.PIPE).stdout.decode()
+        self.assertEqual("", status)
+
+    def test_a_non_ascii_untracked_stray_is_reported_and_deleted(self):
+        write(self.d, "naïve.ts", "x\n")
+        self.assertIn("naïve.ts", git_ops.changed_paths(self.d))
+        git_ops.revert(self.d, ["naïve.ts"])
+        self.assertFalse(os.path.exists(os.path.join(self.d, "naïve.ts")))
+
+    def test_a_non_ascii_tracked_modification_is_reverted(self):
+        write(self.d, "naïve.ts", "orig\n")
+        sh(self.d, "git", "add", "naïve.ts")
+        sh(self.d, "git", "commit", "-q", "-m", "add naive")
+        write(self.d, "naïve.ts", "vandalised\n")
+        git_ops.revert(self.d, ["naïve.ts"])
+        with open(os.path.join(self.d, "naïve.ts")) as f:
+            self.assertEqual("orig\n", f.read())
+
+    def test_an_absolute_path_is_skipped(self):
+        outside = tempfile.mkdtemp()
+        victim = os.path.join(outside, "victim.ts")
+        with open(victim, "w") as f:
+            f.write("keep\n")
+        git_ops.revert(self.d, [victim])
+        with open(victim) as f:
+            self.assertEqual("keep\n", f.read())
+
+    def test_a_dotdot_escape_path_is_skipped(self):
+        outside = tempfile.mkdtemp()
+        victim = os.path.join(outside, "victim.ts")
+        with open(victim, "w") as f:
+            f.write("keep\n")
+        rel = os.path.join("..", os.path.basename(outside), "victim.ts")
+        git_ops.revert(self.d, [rel])
+        with open(victim) as f:
+            self.assertEqual("keep\n", f.read())
+
 
 class TestCommit(unittest.TestCase):
     def setUp(self):
