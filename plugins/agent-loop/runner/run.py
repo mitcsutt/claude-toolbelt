@@ -512,6 +512,22 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
                    {"Loop-Status": "progress"})
 
     contract = None
+    if resume == "wrapup":
+        # A wrap-up resume spends a real Worker (below, with the checkpoint note
+        # as its findings), so it is bounded by `worker_resume_max` -- spec §11
+        # item 4 puts that limit in the harness's hands. `gate` is exempt: it
+        # skips the Worker entirely, which is the whole point of that branch.
+        cap = int(h.cfg.limits.get("worker_resume_max",
+                                   config.DEFAULT_LIMITS["worker_resume_max"]))
+        if state.resumes_spent() >= cap:
+            h.log("%s: worker_resume_max=%d already spent, so this kill starts a "
+                  "fresh attempt from SCOUT rather than resuming a Worker again — "
+                  "resuming forever inside one attempt would bound nothing."
+                  % (task.id, cap))
+            resume = "scout"
+        else:
+            h.log("%s: resuming a killed Worker (resume %d of %d)"
+                  % (task.id, state.resumes_spent() + 1, cap))
     if resume in ("gate", "wrapup"):
         # The contract the killed attempt was working to is still on disk, and it
         # is the only thing that makes the partial work in the tree legible.

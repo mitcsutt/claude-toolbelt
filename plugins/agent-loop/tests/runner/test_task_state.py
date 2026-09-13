@@ -275,3 +275,58 @@ class TestBootResume(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestResumeBound(Base):
+    """`worker_resume_max` is the only thing bounding a resumed Worker.
+
+    A resume continues an attempt rather than opening one, so `max_attempts`
+    never sees it. Spec §14 fixes this document's keys, so the count is derived
+    from the WORK entries already in the current attempt: the first is the
+    original dispatch, every one after it is a resume.
+    """
+
+    def work(self, state):
+        state.begin_phase("WORK")
+        state.end_phase(self.result(phase="WORK"))
+
+    def test_the_original_dispatch_is_not_counted_as_a_resume(self):
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        self.work(state)
+        self.assertEqual(0, state.resumes_spent())
+
+    def test_each_further_worker_in_the_same_attempt_is_a_resume(self):
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        self.work(state)
+        self.work(state)
+        self.assertEqual(1, state.resumes_spent())
+        self.work(state)
+        self.assertEqual(2, state.resumes_spent())
+
+    def test_a_new_attempt_starts_the_resume_budget_again(self):
+        """A fresh attempt is a fresh Worker budget; `max_attempts` bounds those."""
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        self.work(state)
+        self.work(state)
+        state.end_attempt("needs-work")
+        state.begin_attempt("standard")
+        self.work(state)
+        self.assertEqual(0, state.resumes_spent())
+
+    def test_it_survives_a_reload_because_it_is_read_off_disk(self):
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        self.work(state)
+        self.work(state)
+        self.assertEqual(1, TaskState.load(self.rt, "T60").resumes_spent())
+
+    def test_a_garbled_phase_results_entry_does_not_raise(self):
+        """This is read on the crash path, so it must not add a failure mode."""
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        state.attempts[-1]["phase_results"] = ["not a dict", {"phase": None}]
+        state.save()
+        self.assertEqual(0, TaskState.load(self.rt, "T60").resumes_spent())
