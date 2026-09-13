@@ -406,5 +406,132 @@ class TestSubRowGrammar(_PolicyBase):
             self.decision(decision="split", classification="capability"), self.inp)
         self.assertTrue(any("sub_rows" in e for e in errors), errors)
 
+
+class TestApply(_PolicyBase):
+    def setUp(self):
+        _PolicyBase.setUp(self)
+        cfixtures.git_init(self.cfg.worktree)
+        self.contract_path = cfixtures.write_contract(self.ctx, self.contract)
+
+    def test_widen_mutates_the_contract_and_records_the_decision(self):
+        from runner.contract import load_contract
+        action = judge.apply(self.ctx, self.contract, judge._normalize({
+            "decision": "widen", "classification": "self-imposed",
+            "rationale": "the blocking constraint is the Scout's own",
+            "instruction": "register the mixin in index.ts, do not re-create it",
+            "alternatives": ["halt and ask a human, as the 2026-09-11 run did"],
+            "reversal": "delete the allow_list entry from runtime/sprint-T60.json",
+            "changes": {
+                "forbidden_remove": ["packages/api/src/requests/activepipe/index.ts"],
+                "allow_list_add": ["packages/api/src/requests/activepipe/index.ts"]}}))
+        self.assertEqual(action, "retry")
+
+        saved = load_contract(self.contract_path)
+        self.assertIn("packages/api/src/requests/activepipe/index.ts",
+                      saved.allow_list)
+        self.assertEqual([f.path for f in saved.forbidden], ["apps/frontend/**"])
+        self.assertIn("register the mixin in index.ts", saved.scout_notes)
+        self.assertIn("follow T59's precedent", saved.scout_notes)
+
+        text = cfixtures.read(os.path.join(self.loop_dir, "LOOP_DECISIONS.md"))
+        self.assertRegex(
+            text,
+            r"(?m)^## \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ T60 — widen \(self-imposed\)$")
+        self.assertIn("- **Rationale:** the blocking constraint is the Scout's own",
+                      text)
+        self.assertIn("- **Alternatives:** halt and ask a human", text)
+        self.assertIn("- **Reverse:** delete the allow_list entry", text)
+        self.assertIn("allow_list += packages/api/src/requests/activepipe/index.ts",
+                      text)
+
+        evs = [e for e in cfixtures.read_events(self.loop_dir)
+               if e["type"] == "decision"]
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["task"], "T60")
+        self.assertEqual(evs[0]["decision"], "widen")
+        self.assertEqual(evs[0]["classification"], "self-imposed")
+
+    def test_escalate_and_resume_inject_the_instruction_only(self):
+        from runner.contract import load_contract
+        for decision, expected in (("escalate", "escalate"), ("resume", "resume")):
+            action = judge.apply(self.ctx, self.contract, judge._normalize({
+                "decision": decision, "classification": "capability",
+                "rationale": "same tier twice", "instruction": "use the mixin chain",
+                "alternatives": ["split"], "reversal": "none needed",
+                "changes": {}}))
+            self.assertEqual(action, expected)
+        saved = load_contract(self.contract_path)
+        self.assertEqual(saved.allow_list, self.contract.allow_list)
+        self.assertEqual(saved.scout_notes.count("use the mixin chain"), 2)
+
+    def test_the_judged_tier_and_cap_extension_are_armed_on_the_context(self):
+        action = judge.apply(self.ctx, self.contract, judge._normalize({
+            "decision": "resume", "classification": "capability",
+            "rationale": "steady file-by-file progress, simply out of clock",
+            "instruction": "", "alternatives": ["escalate to most-capable"],
+            "reversal": "none needed; the cap returns to its default next task",
+            "changes": {"tier": "standard", "extend_cap_s": 600}}))
+        self.assertEqual(action, "resume")
+        self.assertEqual(self.ctx.tier, "standard",
+                         "the Judge's tier, not a ladder step")
+        self.assertEqual(self.ctx.extend_cap_s, 600,
+                         "apply hands the extended cap to the next run_worker")
+        text = cfixtures.read(os.path.join(self.loop_dir, "LOOP_DECISIONS.md"))
+        self.assertIn("worker cap extended by 600s", text)
+        self.assertIn("next attempt runs at tier standard", text)
+
+    def test_escalate_arms_the_tier_the_judge_named(self):
+        judge.apply(self.ctx, self.contract, judge._normalize({
+            "decision": "escalate", "classification": "capability",
+            "rationale": "no progress in two attempts",
+            "instruction": "", "alternatives": ["split"], "reversal": "none",
+            "changes": {"tier": "most-capable"}}))
+        self.assertEqual(self.ctx.tier, "most-capable")
+
+    def test_defer_writes_cleanup_blocks_downstream_and_marks_the_task(self):
+        from runner.plan import Plan
+        action = judge.apply(self.ctx, self.contract, judge._normalize({
+            "decision": "defer", "classification": "open",
+            "rationale": "the spec does not say where the mixin is registered",
+            "alternatives": ["guess the composition root"],
+            "reversal": "clear blocked_by on T61 and re-run T60",
+            "changes": {"default_choice": "register it in internal/index.ts",
+                        "blocks": ["T61"]}}))
+        self.assertEqual(action, "defer")
+
+        cleanup = cfixtures.read(os.path.join(self.loop_dir, "LOOP_CLEANUP.md"))
+        self.assertIn("## T60", cleanup)
+        self.assertIn("(open)", cleanup)
+        self.assertIn("**Proposed default:** register it in internal/index.ts",
+                      cleanup)
+        self.assertIn("**Blocks:** T61", cleanup)
+
+        reloaded = Plan.load(os.path.join(self.loop_dir, "LOOP_PLAN.md"))
+        t60 = [t for t in reloaded.tasks() if t.id == "T60"][0]
+        t61 = [t for t in reloaded.tasks() if t.id == "T61"][0]
+        self.assertEqual(t60.state, "blocked")
+        self.assertEqual(t61.blocked_by, ["T60"])
+        self.assertIn("| blocked_by: T60", t61.raw)
+        eligible = [t.id for t in reloaded.eligible()]
+        self.assertNotIn("T61", eligible)
+        self.assertIn("T62", eligible)
+
+    def test_halt_marks_the_task_and_returns_halt(self):
+        from runner.plan import Plan
+        action = judge.apply(self.ctx, self.contract, judge._normalize({
+            "decision": "halt", "classification": "open",
+            "rationale": "continuing would drop uncommitted work",
+            "alternatives": ["defer"], "reversal": "resume the loop",
+            "changes": {}}))
+        self.assertEqual(action, "halt")
+        reloaded = Plan.load(os.path.join(self.loop_dir, "LOOP_PLAN.md"))
+        self.assertEqual(
+            [t for t in reloaded.tasks() if t.id == "T60"][0].state, "blocked")
+
+    def test_mark_blocked_refuses_without_a_decision(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            judge.mark_blocked(self.ctx, {})
+        self.assertIn("without a Judge decision", str(ctx.exception))
+
 if __name__ == "__main__":
     unittest.main()
