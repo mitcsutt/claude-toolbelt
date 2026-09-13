@@ -1,6 +1,7 @@
 import _path  # noqa: F401
 import importlib.util
 import os
+import shutil
 import tempfile
 import unittest
 from dataclasses import dataclass
@@ -330,3 +331,42 @@ class TestResumeBound(Base):
         state.attempts[-1]["phase_results"] = ["not a dict", {"phase": None}]
         state.save()
         self.assertEqual(0, TaskState.load(self.rt, "T60").resumes_spent())
+
+
+class TestResumesSpentCountsRealWorkerPhases(unittest.TestCase):
+    """Regression: the count must match what the harness actually records.
+
+    `end_phase(result)` stores `result.phase` — the PhaseResult's name, which is
+    `worker` (and `worker-wrapup`), not the state-machine's `WORK`. Matching on
+    equality made `resumes_spent()` return 0 for every real dispatch, so
+    `worker_resume_max` bounded nothing in production while the unit tests
+    passed on a hand-built `phase="WORK"` no production path ever produces.
+    """
+
+    def setUp(self):
+        self.rt = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.rt)
+
+    def dispatch(self, state, phase):
+        state.begin_phase("WORK")
+        state.end_phase(PhaseResult(phase=phase, model="sonnet"))
+
+    def test_production_phase_names_are_counted(self):
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        self.dispatch(state, "worker")
+        self.assertEqual(0, state.resumes_spent(), "the first dispatch is not a resume")
+        self.dispatch(state, "worker-wrapup")
+        self.assertEqual(1, state.resumes_spent(),
+                         "a wrap-up is a Worker turn on the same budget (§14 has "
+                         "no WRAPUP phase, so it is recorded and counted as work)")
+        self.dispatch(state, "worker")
+        self.assertEqual(2, state.resumes_spent())
+
+    def test_other_phases_are_not_counted(self):
+        state = TaskState.load(self.rt, "T60")
+        state.begin_attempt("standard")
+        for phase in ("scout", "evaluator", "judge", "learner"):
+            state.begin_phase(phase.upper())
+            state.end_phase(PhaseResult(phase=phase, model="sonnet"))
+        self.assertEqual(0, state.resumes_spent())

@@ -147,3 +147,83 @@ def git_init(worktree):
 def _write(path, text):
     with open(path, "w") as fh:
         fh.write(text)
+
+
+class RecordingLog(object):
+    """Stands in for `run.Log`: callable, with a `feed`, and quiet in a test run."""
+
+    def __init__(self):
+        self.lines = []
+
+    def __call__(self, message):
+        self.lines.append(message)
+
+    def feed(self, message):
+        self.lines.append(message)
+
+    def text(self):
+        return "\n".join(self.lines)
+
+
+def make_harness(cfg, plan, loop_dir, runtime):
+    """A real `run.Harness` over the fixture loop.
+
+    `sandbox` and every other containment path needs the Harness, not a bare
+    TickContext: it is what carries the pre-existing-work baseline (captured in
+    `__post_init__`), the protected loop-dir paths and the log. Building a real
+    one here is what keeps the tests honest about that.
+    """
+    from runner import run as runner_run
+    from runner.events import UsageLog
+    events = EventLog(os.path.join(loop_dir, "events.jsonl"),
+                      os.path.join(runtime, "tickseq"))
+    return runner_run.Harness(
+        cfg=cfg,
+        plugin_root=PLUGIN_ROOT,
+        loop_dir=loop_dir,
+        runtime_dir=runtime,
+        worktree=cfg.worktree,
+        config_path=os.path.join(loop_dir, "LOOP_CONFIG.md"),
+        plan_path=os.path.join(loop_dir, "LOOP_PLAN.md"),
+        events=events,
+        usage=UsageLog(os.path.join(loop_dir, "LOOP_USAGE.jsonl")),
+        log=RecordingLog(),
+        plan=plan,
+    )
+
+
+def stub_result(payload, model="sonnet"):
+    """A stream-json transcript whose `result` text carries a fenced json block."""
+    text = "```json\n" + json.dumps(payload) + "\n```"
+    lines = [
+        json.dumps({"type": "assistant",
+                    "message": {"id": "msg_1", "model": model,
+                                "content": [{"type": "text", "text": "ok"}],
+                                "usage": {"input_tokens": 10, "output_tokens": 5}}}),
+        json.dumps({"type": "result", "subtype": "success", "is_error": False,
+                    "result": text}),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def stub_claude(tmp, files):
+    """Put the scripted stub on PATH as `claude`. Returns env overrides.
+
+    `files` maps script file names ("001.jsonl", "001.sleep", "002.exit",
+    "001.sh") to their contents, per the stub protocol in the interfaces doc.
+    The stub and its invocation counter live under `tmp`, which is NOT the
+    worktree (that is `tmp/wt`): a counter inside the worktree is a stray the
+    sandbox reverts, and the stub then replays reply 001 forever.
+    """
+    bindir = os.path.join(tmp, "bin")
+    script = os.path.join(tmp, "stub-script")
+    os.makedirs(bindir)
+    os.makedirs(script)
+    os.symlink(os.path.join(PLUGIN_ROOT, "tests", "fixtures", "claude"),
+               os.path.join(bindir, "claude"))
+    for name, body in files.items():
+        _write(os.path.join(script, name), body)
+    return {"PATH": bindir + os.pathsep + os.environ.get("PATH", ""),
+            "STUB_SCRIPT": script,
+            "STUB_LOG": os.path.join(tmp, "stub.log"),
+            "STUB_DELAY": "0"}

@@ -139,7 +139,8 @@ class TaskState:
         """
         record = self.last_attempt() or {}
         works = [pr for pr in record.get("phase_results", [])
-                 if isinstance(pr, dict) and str(pr.get("phase", "")).upper() == "WORK"]
+                 if isinstance(pr, dict)
+                 and str(pr.get("phase", "")).upper().startswith("WORK")]
         return max(0, len(works) - 1)
 
     def begin_attempt(self, tier: str) -> Dict[str, Any]:

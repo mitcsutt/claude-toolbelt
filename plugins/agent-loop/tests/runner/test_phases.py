@@ -94,18 +94,29 @@ class Base(unittest.TestCase):
 
 class TestTiers(Base):
     def test_worker_tier_is_the_configured_one_and_never_a_ladder(self):
-        self.assertEqual("standard", phases.worker_tier(self.cfg))
+        self.assertEqual("standard", phases.worker_tier(self.ctx()))
+        self.assertEqual("standard", phases.worker_tier(self.ctx(attempt=3)),
+                         "the attempt number is not an input (spec §11 item 4)")
         self.cfg.role_tiers["worker"] = "cheap"
-        self.assertEqual("cheap", phases.worker_tier(self.cfg))
+        self.assertEqual("cheap", phases.worker_tier(self.ctx()))
 
     def test_an_explicit_tier_overrides_the_configured_one(self):
-        # The seam plan C's Judge uses (changes.tier). Nothing in plan A calls it.
-        self.assertEqual("most-capable", phases.worker_tier(self.cfg, "most-capable"))
+        # The seam plan C's Judge uses (changes.tier).
+        self.assertEqual("most-capable",
+                         phases.worker_tier(self.ctx(), "most-capable"))
+
+    def test_the_tier_the_judge_armed_on_the_context_is_used(self):
+        ctx = self.ctx()
+        ctx.tier = "most-capable"
+        self.assertEqual("most-capable", phases.worker_tier(ctx))
 
     def test_a_garbage_tier_from_either_source_falls_back_to_standard(self):
         self.cfg.role_tiers["worker"] = "turbo"
-        self.assertEqual("standard", phases.worker_tier(self.cfg))
-        self.assertEqual("standard", phases.worker_tier(self.cfg, "turbo"))
+        self.assertEqual("standard", phases.worker_tier(self.ctx()))
+        self.assertEqual("standard", phases.worker_tier(self.ctx(), "turbo"))
+        ctx = self.ctx()
+        ctx.tier = "turbo"
+        self.assertEqual("standard", phases.worker_tier(ctx))
 
     def test_evaluator_tier_is_governed_by_the_task_class(self):
         self.assertEqual("standard", phases.evaluator_tier(self.cfg, self.plan.task("T3")))
@@ -260,14 +271,51 @@ class TestWorker(Base):
         phases.run_worker(self.ctx(), contract)
         self.assertIn("test-driven-development", rec.calls[0]["prompt"])
 
-    def test_wrapup_and_resume_are_plan_c(self):
+    def test_the_wrapup_is_bounded_and_runs_on_the_given_session(self):
+        """Spec §6 step 1: 8 turns, the wrapup budget, the same session."""
         self.write_contract()
         contract = cmod.load_contract(os.path.join(self.runtime, "sprint-T3.json"))
-        self.patch([{"text": ""}])
-        with self.assertRaises(NotImplementedError):
-            phases.run_worker(self.ctx(), contract, wrapup=True)
-        with self.assertRaises(NotImplementedError):
-            phases.run_worker(self.ctx(), contract, resume_session="sess-1")
+        rec = self.patch([{"text": block({"status": "partial", "summary": "s"})}])
+        res, payload = phases.run_worker(self.ctx(), contract, wrapup=True,
+                                         resume_session="sess-9")
+        call = rec.calls[0]
+        self.assertEqual(call["phase"], "worker-wrapup")
+        self.assertEqual(call["resume_session"], "sess-9")
+        self.assertEqual(call["max_turns"], 8)
+        self.assertEqual(call["timeout_s"], config.phase_limit(self.cfg, "wrapup"),
+                         "not the gate default that the phase name would derive")
+        self.assertIn("You are out of time", call["prompt"])
+        self.assertEqual(res.phase, "worker-wrapup")
+        self.assertEqual(payload, {},
+                         "the payload is worker-result.json, which the stubbed "
+                         "phase never wrote")
+
+    def test_a_resume_continues_the_session_with_the_minutes_left(self):
+        self.write_contract()
+        contract = cmod.load_contract(os.path.join(self.runtime, "sprint-T3.json"))
+        util.write_json(os.path.join(self.runtime, "worker-result.json"),
+                        {"task": "T3", "status": "partial",
+                         "checkpoint": "finish parse()"})
+        rec = self.patch([{"text": block({"status": "partial", "summary": "s"})}])
+        res, payload = phases.run_worker(self.ctx(), contract,
+                                         resume_session="sess-9")
+        call = rec.calls[0]
+        self.assertEqual(call["phase"], "worker", "a resume is a Worker turn")
+        self.assertEqual(call["resume_session"], "sess-9")
+        self.assertEqual(call["max_turns"], 0, "no turn cap on real work")
+        self.assertIn("finish parse()", call["prompt"])
+        self.assertIn("minutes", call["prompt"])
+        self.assertEqual(payload["checkpoint"], "finish parse()")
+
+    def test_the_judges_cap_extension_lengthens_the_worker_phase(self):
+        self.write_contract()
+        contract = cmod.load_contract(os.path.join(self.runtime, "sprint-T3.json"))
+        ctx = self.ctx()
+        ctx.extend_cap_s = 600
+        rec = self.patch([{"text": block({"status": "complete", "summary": ""})}])
+        phases.run_worker(ctx, contract)
+        self.assertEqual(rec.calls[0]["timeout_s"],
+                         config.phase_limit(self.cfg, "worker") + 600)
 
 
 class TestEvaluator(Base):
