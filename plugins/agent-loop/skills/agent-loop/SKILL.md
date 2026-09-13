@@ -30,10 +30,12 @@ if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && ps -o command= -p "$pid" | gre
 grep '"type":"loop_end"' "$LOOP_DIR/events.jsonl" | tail -1                                   # last exit, if any
 grep '"type":"incident"' "$LOOP_DIR/events.jsonl" | tail -3                                   # recent incidents
 [ -f "$R/NEEDS_HUMAN.md" ] && cat "$R/NEEDS_HUMAN.md"
+[ -f "$LOOP_DIR/LOOP_DECISIONS.md" ] && tail -20 "$LOOP_DIR/LOOP_DECISIONS.md"                # autonomous Judge decisions
+tail -12 "$LOOP_DIR/harness.log" 2>/dev/null                                                  # the harness's own lines
 s=$(cat "$R/schema" 2>/dev/null); [ -n "$s" ] && echo "schema $s" || { [ -f "$R/tickseq" ] && echo "schema 1 (pre-2.0 layout; run.sh migrates it on the next launch)"; }
 ```
 
-Report in one block: harness alive/dead (pid, heartbeat age), tick in flight (tick number, elapsed vs `timeout_s`), the last `loop_end` reason and detail, any `NEEDS_HUMAN.md`. A dead harness whose last event is not a `loop_end` crashed — say so plainly. `run.log` is forensic only; never derive state from its text. Include the schema line: **schema 1** means the dir was started by a pre-2.0 plugin and `run.sh` will migrate it on the next launch (Step 5 says how to prepare). The migration is the harness's job, never yours: never write `runtime/schema` and never delete the old 1.x lock file. `migration` events in `events.jsonl` show when a past launch upgraded the dir.
+Report in one block: harness alive/dead (pid, heartbeat age), tick in flight (tick number, elapsed vs `timeout_s`), the last `loop_end` reason and detail, any `NEEDS_HUMAN.md`. A dead harness whose last event is not a `loop_end` crashed — say so plainly. `harness.log` is forensic only; never derive state from its text — a phase's full transcript lives in the session JSONL its `phase_end` event names, not in the loop dir. (A loop dir last written by 2.x has a `run.log` instead; same rule.) Also report the tail of `$LOOP_DIR/LOOP_DECISIONS.md`: under `Decision policy: autonomous` the Judge widens Scout-invented constraints, escalates tiers, splits oversized tasks and picks a default where the spec is silent, and every one of those lands here with its alternatives. These are decisions a human **ratifies or reverses after the fact**, not blockers — say how many are new since the last attach, and offer to walk them. `LOOP_CLEANUP.md` remains the queue of things the Judge *refused* to decide. Include the schema line: **schema 1** means the dir was started by a pre-2.0 plugin and `run.sh` will migrate it on the next launch (Step 5 says how to prepare). The migration is the harness's job, never yours: never write `runtime/schema` and never delete the old 1.x lock file. `migration` events in `events.jsonl` show when a past launch upgraded the dir.
 
 ## Step 3: Ensure exactly one dashboard — it is the launcher
 
@@ -46,6 +48,15 @@ Report in one block: harness alive/dead (pid, heartbeat age), tick in flight (ti
 
   It prints `{"type":"dashboard-started","url":"http://127.0.0.1:PORT","pid":N,"reused":false}` — surface the URL. `--detach` launches the server in its own process session, so it **survives this Claude session closing**; a second `--detach` on the same loop dir prints the same banner with `"reused": true` and launches nothing. Never start it as a read-only observer here: this dashboard's ▶ Start / ⟳ Resume must be able to launch the harness. A harness later launched from a terminal **adopts** this dashboard (same URL) instead of spawning a sidecar.
 - `{"type":"dashboard-failed", …}` means the child never registered; show its `log_tail` and stop.
+
+### Stopping it: Pause vs Stop now
+
+Two sentinels, both read by the harness at every phase boundary; neither kills anything mid-write.
+
+- **Pause** (`⏸` in the dashboard, `POST /api/pause`, or `touch <loop-dir>/runtime/PAUSE`) — the harness finishes the **phase** in flight, writes `runtime/CHECKPOINT.json`, emits `paused`, exits 0.
+- **Stop now** (`Stop now` in the dashboard, or `POST /api/stop`) — writes `runtime/STOP`. The harness SIGTERMs the phase in flight (a Worker gets its wrap-up continuation first, so its checkpoint is current), then behaves exactly as Pause. This is the one to reach for when a phase is burning budget on the wrong thing: it lands in minutes, not at the end of the tick.
+
+`/api/stop` refuses with HTTP 409 (`no live harness to stop`) when nothing is running — a sentinel nobody reads would only stop the *next* launch. The dashboard shows `PAUSING` for both sentinels. Resume (`⟳`, `POST /api/resume`, or deleting the file) removes **both** sentinels before relaunching; if you stop the loop by hand, delete `runtime/STOP` as well as `runtime/PAUSE` or the next launch exits immediately.
 
 ## Step 4: Arm the incident monitor
 
@@ -90,7 +101,7 @@ Mention in the question text that **▶ Start / ⟳ Resume in the dashboard** is
 curl -s -X POST "<url>/api/resume"      # /api/start if runtime/tickseq does not exist yet
 ```
 
-Both endpoints delete `runtime/PAUSE` and spawn `run.sh` as a child of the detached dashboard — not of this session — with the sidecar disabled, so there is still exactly one dashboard. Both refuse with HTTP 409 while `runtime/harness.json` names a live harness; a 409 body names the live pid — report it, do not retry. Confirm within ~5 s that `runtime/harness.json` appeared and its pid passes the Step 2 liveness test, and report the tick number from the first `tick_start`.
+Both endpoints delete `runtime/PAUSE` and `runtime/STOP` and spawn `run.sh` as a child of the detached dashboard — not of this session — with the sidecar disabled, so there is still exactly one dashboard. Both refuse with HTTP 409 while `runtime/harness.json` names a live harness; a 409 body names the live pid — report it, do not retry. Confirm within ~5 s that `runtime/harness.json` appeared and its pid passes the Step 2 liveness test, and report the tick number from the first `tick_start`.
 
 **Option 2 — print the launch command; never run it yourself, in the foreground or the background of this session:**
 
