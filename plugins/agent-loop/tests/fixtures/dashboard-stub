@@ -3,9 +3,14 @@
 # the real observer does, then stays alive so the harness has a pid to supervise and
 # to kill on exit. Wired in via LOOP_DASHBOARD_CMD.
 #
-# `exec` replaces this shell with `sleep` rather than running it as a child: the
-# real dashboard is one process with no children, and a test that simulates an
-# external kill (`kill -9` on just this pid, the way an OOM killer or a crash
-# would) must not orphan a grandchild `sleep` that nothing then reaps.
+# `exec -a` replaces this shell with `sleep` rather than running it as a child
+# (the real dashboard is one process with no children, so a test that
+# simulates an external kill on just this pid must not orphan a grandchild
+# `sleep` that nothing then reaps), while pinning argv[0] to this script's own
+# name so `ps -o command=` still shows "dashboard-stub" for the process's
+# entire life. sidecar.py records that name as the identity marker at spawn
+# time and checks the live process against it before ever signalling a pid
+# read back from disk -- a plain `exec sleep 3600` would erase the very
+# marker that check depends on the moment it execs.
 printf '%s\n' '{"type":"dashboard-started","url":"http://127.0.0.1:1","loop_dir":"x"}'
-exec sleep 3600
+exec -a dashboard-stub sleep 3600
