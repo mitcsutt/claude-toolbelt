@@ -69,4 +69,17 @@ hasnt 'run.log`-derived'
 hasnt 'LOOP_MIGRATE_FORCE=1'
 has 'runtime/schema'
 
+# v3: the incident carries the tick's phase timeline and the medic must read it
+has '`phases`'
+has '{phase, model, started, ended, rc, session}'
+has 'name the phase that consumed the budget'
+grep -qE '^\| `phase-timeout` \|' "$F"; assert_true $? "decision table has a row for phase-timeout"
+grep -qE '^\| `judge-loop` \|' "$F"; assert_true $? "decision table has a row for judge-loop"
+has 'kind` + `phase` + `task`'
+has 'LOOP_DECISIONS.md'
+# v3: the per-task state file, not the v2 attempts file
+has 'runtime/task-<TASK>.json'
+if grep -q 'attempts-' "$F"; then rc=1; else rc=0; fi
+assert_true $rc "the skill names no attempts-<T>.json (replaced by task-<T>.json)"
+
 assert_summary

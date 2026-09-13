@@ -205,20 +205,30 @@ under() { [ "$1" -lt "$2" ]; }
 under "$elapsed" 40; assert_true $? "STOP killed the phase instead of waiting it out (${elapsed}s)"
 isfile "$WT/$LD/runtime/CHECKPOINT.json"; assert_true $? "STOP writes a checkpoint"
 
-# ---------------------------------- Worker timeout still reports its spend
+# ------------- Worker timeout: the runner wraps up and judges, it does not escalate
 setup_case
 contract_for 001 T1
 reply 002 '{"status":"partial","summary":"ran out of time"}'
 printf '60\n' > "$STUB/002.sleep"
+# 003 is the wrap-up on the killed session; 004 is the Judge it is handed to.
+reply 003 '{"status":"partial","summary":"checkpoint written"}'
+reply 004 '{"decision":"defer","classification":"capability","rationale":"one phase budget was not enough and the checkpoint shows no progress","instruction":"","alternatives":["resume the session"],"reversal":"clear the [!] on T1","changes":{}}'
 sed -i.bak 's/worker_timeout=30/worker_timeout=2/' "$WT/$LD/LOOP_CONFIG.md"
 rm -f "$WT/$LD/LOOP_CONFIG.md.bak"
 ( cd "$WT" && MEDIC_MAX_PER_RUN=0 bash "$RUN" >/dev/null 2>&1 )
-assert_eq "2" "$?" "a Worker timeout with no medic ends in needs-human"
-assert_eq "phase-timeout" "$(ev incident .kind | head -1)" "the timeout is an incident"
+rc=$?
+# Spec §8: a timeout the runner resolves is an EVENT, not an incident. v2 woke a
+# human here; v3 runs the wrap-up, keeps the checkpoint and asks the Judge.
+assert_eq "" "$(ev incident .kind | head -1)" "a resolved Worker timeout raises no incident"
+assert_eq "wrapup" "$(jq -r 'select(.type=="resume") | .kind' "$WT/$LD/events.jsonl" | head -1)" \
+  "the timeout is recorded as a wrap-up resume event"
+assert_eq "worker-wrapup" "$(jq -r 'select(.type=="role_start" and .role=="worker-wrapup") | .role' "$WT/$LD/events.jsonl" | head -1)" \
+  "the wrap-up phase actually ran"
+assert_eq "defer" "$(ev decision .decision | tail -1)" "the Judge decided what happens next"
+assert_eq "1" "$rc" "a deferral with nothing else eligible halts rather than needing a human"
 grep -q '"by_model"' "$WT/$LD/events.jsonl"; assert_true $? "tick_end still carries by_model after a kill"
 assert_eq "1" "$(jq -r 'select(.type=="tick_end") | (.by_model | length)' "$WT/$LD/events.jsonl")" \
   "the killed tick attributes the spend it did incur"
-isfile "$WT/$LD/runtime/NEEDS_HUMAN.md"; assert_true $? "NEEDS_HUMAN.md is written"
 
 # ------------ NEEDS_WORK goes to the Judge, which re-dispatches at the SAME tier
 setup_case

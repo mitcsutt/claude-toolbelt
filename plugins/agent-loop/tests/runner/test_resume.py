@@ -255,5 +255,46 @@ class TestResumeAttempt(_StubBase):
                          "attempt number (spec §6 step 2)")
         self.assertEqual(results[0].model, "opus")
 
+
+class TestIncidentPhases(_StubBase):
+    def script(self):
+        return {"001.sh": writes_worker_result(self.runtime, "partial", "half"),
+                "001.sleep": "20",
+                "002.jsonl": cfixtures.stub_result(
+                    {"status": "partial", "summary": "out of time"})}
+
+    def test_phase_timeout_incident_carries_the_timeline(self):
+        from runner import incidents
+        self.cfg.limits["worker_resume_max"] = 0
+        self.ctx.last_session = "sid-1"
+        results, _ = runner_run.run_worker_attempt(self.h, self.ctx, self.contract)
+
+        files = [f for f in os.listdir(self.runtime)
+                 if f.startswith("incident-") and f.endswith(".json")]
+        self.assertEqual(len(files), 1, files)
+        data = json.load(open(os.path.join(self.runtime, files[0])))
+        self.assertEqual(data["kind"], "phase-timeout")
+        self.assertEqual(data["severity"], "warn")
+        self.assertEqual([p["phase"] for p in data["phases"]],
+                         ["worker", "worker-wrapup"])
+        self.assertEqual(data["phases"][0]["rc"], results[0].rc)
+        self.assertEqual(data["phases"][0]["session"], results[0].session_id)
+        self.assertIn("model", data["phases"][0])
+        self.assertIn("started", data["phases"][0])
+        self.assertTrue(callable(incidents.raise_incident))
+
+    def test_a_timeout_the_runner_resolves_raises_no_incident(self):
+        """Spec §8: most medic runs disappear because the runner handles the
+        overrun itself — wrap-up, checkpoint, Judge. Only a spent budget is an
+        incident, and even then only `warn`."""
+        self.cfg.limits["worker_resume_max"] = 1
+        runner_run.run_worker_attempt(self.h, self.ctx, self.contract)
+        files = [f for f in os.listdir(self.runtime)
+                 if f.startswith("incident-") and f.endswith(".json")]
+        self.assertEqual(files, [])
+        kinds = [e["kind"] for e in cfixtures.read_events(self.loop_dir)
+                 if e["type"] == "resume"]
+        self.assertEqual(kinds, ["wrapup"], "it is an event instead")
+
 if __name__ == "__main__":
     unittest.main()
