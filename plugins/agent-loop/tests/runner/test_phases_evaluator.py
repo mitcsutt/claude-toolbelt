@@ -147,17 +147,17 @@ class EvaluatorInputTest(unittest.TestCase):
     def test_screenshot_paths_and_the_read_instruction_reach_the_prompt(self):
         rec = self.patch(Recorder([verdict_json([
             {"name": "nav", "observation": "icons"},
-            {"name": "rise-nav", "observation": "icons"},
+            {"name": "app-nav", "observation": "icons"},
         ])]))
         c = make_contract([], ["nav"])
         phases.run_evaluator(
             self.ctx, c, "diff", [],
             [{"name": "nav", "path": "/a/nav.png"},
-             {"name": "rise-nav", "path": "/b/rise.png", "kind": "reference"}],
+             {"name": "app-nav", "path": "/b/app.png", "kind": "reference"}],
         )
         prompt = rec.prompts[0]
         self.assertIn("/a/nav.png", prompt)
-        self.assertIn("/b/rise.png", prompt)
+        self.assertIn("/b/app.png", prompt)
         self.assertIn("reference", prompt)
 
     def test_the_screenshot_block_itself_carries_the_read_instruction(self):
@@ -165,7 +165,7 @@ class EvaluatorInputTest(unittest.TestCase):
         # those against the whole prompt would pass with an empty block.
         block = phases._screenshots_block(
             [{"name": "nav", "path": "/a/nav.png"},
-             {"name": "rise-nav", "path": "/b/rise.png", "kind": "reference"}])
+             {"name": "app-nav", "path": "/b/app.png", "kind": "reference"}])
         self.assertIn("/a/nav.png", block)
         self.assertIn("nav", block)
         self.assertIn("reference", block)

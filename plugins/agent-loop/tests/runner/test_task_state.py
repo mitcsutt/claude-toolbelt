@@ -93,13 +93,13 @@ class TestShape(Base):
         state.begin_attempt("standard")
         state.begin_phase("WORK")
         state.end_phase(self.result(session="sess-w"))
-        state.add_artifact("artifacts/T60/orgunits.png")
+        state.add_artifact("artifacts/T60/widgets.png")
         state.end_attempt("needs-work")
         back = TaskState.load(self.rt, "T60")
         self.assertEqual(state.phase, back.phase)
         self.assertEqual(1, back.attempt)
         self.assertEqual("sess-w", back.session_ids["worker"])
-        self.assertEqual(["artifacts/T60/orgunits.png"], back.artifacts)
+        self.assertEqual(["artifacts/T60/widgets.png"], back.artifacts)
         self.assertEqual("needs-work", back.attempts[0]["outcome"])
 
 

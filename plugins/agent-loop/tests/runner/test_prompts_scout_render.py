@@ -58,14 +58,14 @@ class RecipeTextTest(unittest.TestCase):
             "ready": "http://127.0.0.1:5273/",
             "command": "cypress run --spec {route} --env screenshot={screenshot}",
             "ui_globs": ["apps/*/src/**/*.tsx"],
-            "reference": [{"name": "rise-nav", "path": "docs/rise-nav.png"}],
+            "reference": [{"name": "app-nav", "path": "docs/app-nav.png"}],
         })
         text = phases.recipe_text(cfg)
         self.assertIn("pnpm dev", text)
         self.assertIn("http://127.0.0.1:5273/", text)
         self.assertIn("{route}", text)
         self.assertIn("apps/*/src/**/*.tsx", text)
-        self.assertIn("rise-nav", text)
+        self.assertIn("app-nav", text)
 
 
 if __name__ == "__main__":

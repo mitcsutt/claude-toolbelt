@@ -163,8 +163,8 @@ class TestContractNormalisation(Base):
         path = self.contract("T70", {
             "task": "T70",
             "success_criteria": [
-                "packages/api/src/requests/orgUnits.ts exports listOrgUnits"],
-            "allow_list": ["packages/api/src/requests/orgUnits.ts"],
+                "packages/api/src/requests/widgets.ts exports listWidgets"],
+            "allow_list": ["packages/api/src/requests/widgets.ts"],
             "forbidden": ["apps/frontend/**"],
             "verification": ["pnpm turbo run lint"],
         })

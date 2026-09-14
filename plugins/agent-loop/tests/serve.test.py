@@ -731,13 +731,13 @@ class TestArtifactAndDecisionFold(unittest.TestCase):
         store = mk([
             {"t": 1, "seq": 1, "type": "tick_start", "tick": 4},
             {"t": 2, "seq": 2, "type": "artifact", "tick": 4, "task": "T60",
-             "name": "orgunits-list", "path": "artifacts/T60/orgunits-list.png"},
+             "name": "widgets-list", "path": "artifacts/T60/widgets-list.png"},
             {"t": 3, "seq": 3, "type": "artifact", "tick": 4, "task": "T60",
-             "name": "orgunits-empty", "path": "artifacts/T60/orgunits-empty.png"},
+             "name": "widgets-empty", "path": "artifacts/T60/widgets-empty.png"},
         ])
         self.assertEqual(store.artifacts, [
-            {"name": "orgunits-list", "path": "artifacts/T60/orgunits-list.png"},
-            {"name": "orgunits-empty", "path": "artifacts/T60/orgunits-empty.png"},
+            {"name": "widgets-list", "path": "artifacts/T60/widgets-list.png"},
+            {"name": "widgets-empty", "path": "artifacts/T60/widgets-empty.png"},
         ])
 
     def test_a_new_tick_clears_the_previous_tick_artifacts(self):

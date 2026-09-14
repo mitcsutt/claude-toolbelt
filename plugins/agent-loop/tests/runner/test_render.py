@@ -63,22 +63,22 @@ class RenderGateTest(unittest.TestCase):
 
     def test_screenshot_is_archived_and_an_artifact_event_is_emitted(self):
         c = make_contract(
-            [WRITE_PNG % "orgunits.png"],
-            [{"name": "orgunits-list", "path": "shots/orgunits.png"}],
+            [WRITE_PNG % "widgets.png"],
+            [{"name": "widgets-list", "path": "shots/widgets.png"}],
         )
         results, shots = render_mod.run_render_gate(self.ctx, c)
 
         self.assertTrue(gate_mod.all_ok(results), [r.rc for r in results])
-        dest = os.path.join(self.ctx.loop_dir, "artifacts", "T60", "orgunits-list.png")
+        dest = os.path.join(self.ctx.loop_dir, "artifacts", "T60", "widgets-list.png")
         self.assertTrue(os.path.exists(dest), "screenshot not archived to %s" % dest)
         with open(dest, "rb") as fh:
             self.assertEqual(fh.read(len(PNG_MAGIC)), PNG_MAGIC)
-        self.assertEqual(shots, [{"name": "orgunits-list", "path": dest}])
+        self.assertEqual(shots, [{"name": "widgets-list", "path": dest}])
         self.assertFalse(os.path.exists(dest + ".tmp"), "atomic copy left its temp file")
 
         artifacts = [f for (t, f) in self.ctx.events.emitted if t == "artifact"]
         self.assertEqual(len(artifacts), 1)
-        self.assertEqual(artifacts[0]["name"], "orgunits-list")
+        self.assertEqual(artifacts[0]["name"], "widgets-list")
         # The event's path is relative to the loop dir, NOT the absolute/cwd
         # path this process happens to have. A real launch uses a RELATIVE
         # LOOP_DIR (`LOOP_DIR=.claude/loop/<run-id> bash run.sh`), so an
@@ -86,7 +86,7 @@ class RenderGateTest(unittest.TestCase):
         # own loop_dir -- every screenshot 404s. See test_artifact_path_reads
         # _what_render_writes in tests/serve.test.py for the other half.
         self.assertEqual(artifacts[0]["path"],
-                         os.path.join("artifacts", "T60", "orgunits-list.png"))
+                         os.path.join("artifacts", "T60", "widgets-list.png"))
         self.assertEqual(artifacts[0]["task"], "T60")
         self.assertEqual(artifacts[0]["tick"], 7)
 
@@ -98,25 +98,25 @@ class RenderGateTest(unittest.TestCase):
     def test_failing_render_command_fails_the_gate_and_skips_the_copy(self):
         c = make_contract(
             ["exit 3"],
-            [{"name": "orgunits-list", "path": "shots/orgunits.png"}],
+            [{"name": "widgets-list", "path": "shots/widgets.png"}],
         )
         results, shots = render_mod.run_render_gate(self.ctx, c)
         self.assertFalse(gate_mod.all_ok(results))
         self.assertEqual(shots, [])
 
     def test_missing_screenshot_is_a_failure_with_a_clear_message(self):
-        c = make_contract(["true"], [{"name": "orgunits-list", "path": "shots/orgunits.png"}])
+        c = make_contract(["true"], [{"name": "widgets-list", "path": "shots/widgets.png"}])
         results, shots = render_mod.run_render_gate(self.ctx, c)
 
         self.assertFalse(gate_mod.all_ok(results))
         self.assertEqual(shots, [])
         failing = [r for r in results if r.rc != 0]
         self.assertEqual(len(failing), 1)
-        self.assertEqual(failing[0].cmd, "screenshot:orgunits-list")
+        self.assertEqual(failing[0].cmd, "screenshot:widgets-list")
         with open(failing[0].output_path) as fh:
             body = fh.read()
-        self.assertIn("orgunits-list", body)
-        self.assertIn("shots/orgunits.png", body)
+        self.assertIn("widgets-list", body)
+        self.assertIn("shots/widgets.png", body)
         self.assertIn("not found", body)
 
     def test_no_render_gate_is_a_no_op(self):
@@ -131,17 +131,17 @@ class ReferenceScreenshotTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         ctx = make_ctx(tmp)
         os.makedirs(os.path.join(ctx.cfg.worktree, "docs", "reference"))
-        present = os.path.join(ctx.cfg.worktree, "docs", "reference", "rise.png")
+        present = os.path.join(ctx.cfg.worktree, "docs", "reference", "app.png")
         with open(present, "wb") as fh:
             fh.write(PNG_MAGIC)
         ctx.cfg.render = {"reference": [
-            {"name": "rise-customers", "path": "docs/reference/rise.png"},
+            {"name": "app-customers", "path": "docs/reference/app.png"},
             {"name": "gone", "path": "docs/reference/gone.png"},
         ]}
         refs = render_mod.reference_screenshots(ctx.cfg)
         self.assertEqual(
             refs,
-            [{"name": "rise-customers", "path": present, "kind": "reference"}],
+            [{"name": "app-customers", "path": present, "kind": "reference"}],
         )
 
 

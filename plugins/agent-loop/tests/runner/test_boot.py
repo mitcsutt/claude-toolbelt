@@ -48,9 +48,9 @@ class _BootBase(unittest.TestCase):
                                         self.runtime)
         self.kept = os.path.join(
             self.cfg.worktree,
-            "packages/api/src/requests/activepipe/internal/organisationalUnits.ts")
+            "packages/api/src/requests/acme/internal/widgets.ts")
         self.stray = os.path.join(self.cfg.worktree, "apps/frontend/App.tsx")
-        for path, body in ((self.kept, "export const orgUnits = 1\n"),
+        for path, body in ((self.kept, "export const widgets = 1\n"),
                            (self.stray, "// outside the allow_list\n")):
             os.makedirs(os.path.dirname(path))
             with open(path, "w") as fh:
@@ -64,7 +64,7 @@ class TestBootEvidence(_BootBase):
     def test_the_dirty_tree_is_split_by_the_allow_list(self):
         body = judge.boot_evidence(self.ctx, self.contract)
         self.assertIn("inside allow_list", body)
-        self.assertIn("organisationalUnits.ts", body)
+        self.assertIn("widgets.ts", body)
         self.assertIn("outside allow_list", body)
         self.assertIn("apps/frontend/App.tsx", body)
 
@@ -98,7 +98,7 @@ class TestBootEvidence(_BootBase):
         with mock.patch.object(judge, "decide", side_effect=capture):
             judge.boot_reconcile(self.ctx, self.contract)
         self.assertIn("apps/frontend/App.tsx", seen["evidence"])
-        self.assertIn("organisationalUnits.ts", seen["evidence"])
+        self.assertIn("widgets.ts", seen["evidence"])
         self.assertFalse(os.path.exists(self.stray), "and only then reverted")
 
 
