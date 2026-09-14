@@ -691,7 +691,7 @@ def apply(ctx, contract, decision: dict, evidence: str = "",
         sha = git_ops.commit(
             ctx.cfg.worktree, [plan_path],
             "loop: split %s → %s" % (ctx.task.id, ",".join(new_ids)),
-            {"Loop-Status": "skipped", "Loop-Task": ctx.task.id})
+            {"Loop-Status": "skipped", "Loop-Task": ctx.task.id}, force=True)
         applied.append("plan split into %s" % ", ".join(new_ids))
         ctx.events.emit("split", tick=ctx.tick, task=ctx.task.id, into=new_ids,
                         sha=sha)

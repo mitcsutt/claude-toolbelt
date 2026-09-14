@@ -204,11 +204,18 @@ def head_sha(cwd: str) -> str:
     return out.strip() if rc == 0 else ""
 
 
-def commit(cwd: str, paths: List[str], subject: str, trailers: Dict[str, str]) -> str:
-    """Stage exactly `paths`, commit, return the sha (or "" when nothing staged)."""
+def commit(cwd: str, paths: List[str], subject: str, trailers: Dict[str, str],
+           force: bool = False) -> str:
+    """Stage exactly `paths`, commit, return the sha (or "" when nothing staged).
+
+    `force` adds `-f` so loop bookkeeping files (LOOP_PLAN.md, LOOP_CLEANUP.md)
+    commit even though the run dir is gitignored (`.claude/loop/*/`). Product
+    commits leave it False so an ignored source path is still refused.
+    """
     if not paths:
         return ""
-    _git(cwd, ["add", "--"] + list(paths))
+    add = ["add", "-f", "--"] if force else ["add", "--"]
+    _git(cwd, add + list(paths))
     rc, _ = _git(cwd, ["diff", "--cached", "--quiet"], check=False)
     if rc == 0:
         return ""                              # staged set is identical to HEAD
