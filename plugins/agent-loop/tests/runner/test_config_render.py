@@ -14,14 +14,14 @@ from runner import config as config_mod  # noqa: E402
 
 BASE = """# Loop Config
 Started: 2026-09-13T00:00:00Z
-Goal: rebuild the internal app
+Goal: rebuild the webapp
 Loop type: new-feature
 Granularity: segmented
 TDD mode: none
 Verification pipeline: lint tsc build test
 Limits: tick_timeout=1800 scout_timeout=480
 Blocker policy: continue-independent
-Branch: agent-loop-internal
+Branch: agent-loop-webapp
 Worktree: /tmp/wt
 Spec: docs/superpowers/specs/x-design.md
 Plan: docs/superpowers/plans/x.md
@@ -33,12 +33,12 @@ Decision policy: autonomous
 """
 
 RECIPE = """Render:
-  start: pnpm --filter @repo/internal dev --port 5273
+  start: pnpm --filter @repo/webapp dev --port 5273
   ready: http://127.0.0.1:5273/
   # a comment inside the block is ignored
   command: cypress run --spec {route} --env screenshot={screenshot}
   ui_globs: apps/*/src/**/*.tsx packages/ui/**/*.tsx
-  reference: rise-customers=docs/reference/rise-customers.png rise-header=docs/ref/h.png
+  reference: app-customers=docs/reference/app-customers.png app-header=docs/ref/h.png
 
 Segment count: 3
 """
@@ -58,7 +58,7 @@ class RenderBlockTest(unittest.TestCase):
 
     def test_full_block_parses_every_subkey(self):
         cfg = config_mod.load_config(write_cfg(BASE + RECIPE))
-        self.assertEqual(cfg.render["start"], "pnpm --filter @repo/internal dev --port 5273")
+        self.assertEqual(cfg.render["start"], "pnpm --filter @repo/webapp dev --port 5273")
         self.assertEqual(cfg.render["ready"], "http://127.0.0.1:5273/")
         self.assertEqual(
             cfg.render["command"],
@@ -71,15 +71,15 @@ class RenderBlockTest(unittest.TestCase):
         self.assertEqual(
             cfg.render["reference"],
             [
-                {"name": "rise-customers", "path": "docs/reference/rise-customers.png"},
-                {"name": "rise-header", "path": "docs/ref/h.png"},
+                {"name": "app-customers", "path": "docs/reference/app-customers.png"},
+                {"name": "app-header", "path": "docs/ref/h.png"},
             ],
         )
 
     def test_block_ends_at_the_next_unindented_key(self):
         cfg = config_mod.load_config(write_cfg(BASE + RECIPE))
         self.assertNotIn("Segment count", cfg.render)
-        self.assertEqual(cfg.branch, "agent-loop-internal")
+        self.assertEqual(cfg.branch, "agent-loop-webapp")
 
     def test_inline_value_is_taken_as_command(self):
         cfg = config_mod.load_config(write_cfg(BASE + "Render: cypress run --spec {route}\n"))
@@ -104,7 +104,7 @@ class UiGlobsFeedValidationTest(unittest.TestCase):
         c = contract_mod.Contract(
             task="T60",
             success_criteria=["the customers page renders"],
-            allow_list=["apps/internal/src/pages/Customers.tsx"],
+            allow_list=["apps/webapp/src/pages/Customers.tsx"],
             forbidden=[],
             verification=["pnpm lint"],
             render_gate=None,

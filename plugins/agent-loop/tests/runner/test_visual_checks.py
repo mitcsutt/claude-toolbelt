@@ -66,18 +66,18 @@ class VisualChecksTest(unittest.TestCase):
         self.assertEqual(render_mod.failure_kind(vis), "")
 
     def test_green_render_yields_screenshots_and_references(self):
-        ctx = make_ctx(self.tmp, render={"reference": [{"name": "rise", "path": "docs/rise.png"}]})
+        ctx = make_ctx(self.tmp, render={"reference": [{"name": "app", "path": "docs/app.png"}]})
         os.makedirs(os.path.join(ctx.cfg.worktree, "docs"))
-        with open(os.path.join(ctx.cfg.worktree, "docs", "rise.png"), "wb") as fh:
+        with open(os.path.join(ctx.cfg.worktree, "docs", "app.png"), "wb") as fh:
             fh.write(b"\x89PNG\r\n\x1a\n")
         c = make_contract(contract_mod.RenderGate(
             commands=[WRITE_PNG], screenshots=[{"name": "a", "path": "shots/a.png"}]))
         vis = render_mod.run_visual_checks(ctx, c)
         self.assertTrue(vis.ok, vis.failure_text)
         self.assertEqual([s["name"] for s in vis.screenshots], ["a"])
-        self.assertEqual([r["name"] for r in vis.references], ["rise"])
+        self.assertEqual([r["name"] for r in vis.references], ["app"])
         names = [s["name"] for s in render_mod.evaluator_screenshots(vis)]
-        self.assertEqual(names, ["a", "rise"])
+        self.assertEqual(names, ["a", "app"])
 
     def test_a_failing_render_makes_the_result_not_ok_with_the_output_path_named(self):
         ctx = make_ctx(self.tmp)

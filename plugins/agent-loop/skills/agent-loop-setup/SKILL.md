@@ -150,11 +150,11 @@ Write `$LOOP_DIR/LOOP_CONFIG.md` from `templates/LOOP_CONFIG.md`. Use the AskUse
 
     ```
     Render:
-      start: pnpm --filter @repo/internal dev --port 5273
+      start: pnpm --filter @repo/webapp dev --port 5273
       ready: http://127.0.0.1:5273/
       command: pnpm --filter @repo/integration cypress run --spec {route}
       ui_globs: apps/*/src/**/*.tsx packages/ui/**/*.tsx
-      reference: rise-customers=docs/reference/rise-customers.png
+      reference: app-customers=docs/reference/app-customers.png
     ```
 
     Cypress writes to `cypress/screenshots/<spec>/<title>.png`; tell the user the Scout

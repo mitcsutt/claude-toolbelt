@@ -22,8 +22,8 @@ def task(**kw):
 def contract(**kw):
     base = dict(
         task="T60",
-        success_criteria=["packages/api/src/requests/orgUnits.ts exports listOrgUnits"],
-        allow_list=["packages/api/src/requests/orgUnits.ts"],
+        success_criteria=["packages/api/src/requests/widgets.ts exports listWidgets"],
+        allow_list=["packages/api/src/requests/widgets.ts"],
         forbidden=[Forbidden(path="apps/frontend/**", source="plan")],
         verification=["pnpm turbo run lint --filter=@repo/api"],
         render_gate=None,
@@ -115,8 +115,8 @@ class TestBlockedByCleanup(unittest.TestCase):
 
 
 class TestRenderRequirement(unittest.TestCase):
-    UI = ["apps/internal/src/pages/OrgUnits.tsx"]
-    CRITERIA = ["apps/internal/src/pages/OrgUnits.tsx lists the org units"]
+    UI = ["apps/webapp/src/pages/Widgets.tsx"]
+    CRITERIA = ["apps/webapp/src/pages/Widgets.tsx lists the org units"]
 
     def test_a_ui_touching_allow_list_needs_a_render_gate(self):
         c = contract(allow_list=self.UI, success_criteria=self.CRITERIA)
@@ -131,8 +131,8 @@ class TestRenderRequirement(unittest.TestCase):
     def test_a_declared_render_gate_satisfies_it(self):
         c = contract(allow_list=self.UI, success_criteria=self.CRITERIA,
                      render_gate=RenderGate(commands=["pnpm cypress run"],
-                                            screenshots=[{"name": "orgunits",
-                                                          "path": "shots/orgunits.png"}]))
+                                            screenshots=[{"name": "widgets",
+                                                          "path": "shots/widgets.png"}]))
         self.assertEqual([], cmod.validate(c, task(), CFG, "", ["apps/*/src/**"]))
 
     def test_no_recipe_means_no_requirement(self):

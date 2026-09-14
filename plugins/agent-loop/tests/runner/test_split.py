@@ -9,7 +9,7 @@ from runner import judge
 from runner.plan import Plan
 
 # Titles only: the Judge never names an id, `Plan.split` allocates them.
-SUB_ROWS = ["- [ ] Build the organisationalUnits mixin",
+SUB_ROWS = ["- [ ] Build the widgets mixin",
             "- [ ] Register the mixin in the composition root"]
 
 

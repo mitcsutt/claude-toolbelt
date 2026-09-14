@@ -490,7 +490,7 @@ JSON"
 reply 001 '{"contract_path":"sprint-T1.json","notes":"ok"}'
 printf 'export const parse = () => 1\nexport const other = () => 2\nexport const third = () => 3\n' > "$WT/src/ref.ts"
 # w5 §5, verbatim in shape: the "copy" is a note saying it was copied.
-side 002 "printf '// TODO(rise-regression): copied from src/ref.ts\n' > \"$WT/src/a.ts\""
+side 002 "printf '// TODO(app-regression): copied from src/ref.ts\n' > \"$WT/src/a.ts\""
 reply 002 '{"status":"complete","summary":"copied it"}'
 # 003 is the Judge: the Evaluator is SKIPPED on a visual failure, exactly as it
 # is on a failed verification command.

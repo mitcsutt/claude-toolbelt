@@ -38,11 +38,11 @@ export function AppNavigationItem({ item }: { item: MenuItem }) {
 """
 
 # The real thing: same file, ported, with the import path swapped and one class changed.
-PORTED = REFERENCE.replace("@repo/ui", "@internal/ui").replace("gap-2", "gap-3")
+PORTED = REFERENCE.replace("@repo/ui", "@webapp/ui").replace("gap-2", "gap-3")
 
 # What the 2026-09-11 run actually shipped for the same task (w5 s5).
-COMMENT_ONLY = """// TODO(rise-regression): copied from apps/frontend/src/layouts/Header/Header.tsx
-// Keep in sync with the Rise implementation.
+COMMENT_ONLY = """// TODO(app-regression): copied from apps/frontend/src/layouts/Header/Header.tsx
+// Keep in sync with the App implementation.
 // See the parity matrix for the expected props.
 // This file intentionally reimplements the shape.
 // Regression note: icons are deferred.

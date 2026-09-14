@@ -7,7 +7,7 @@ from runner import config
 
 FULL = """# Loop Config
 Started: 2026-09-13T00:00:00Z
-Goal: port the internal app
+Goal: port the webapp
 Loop type: refactor
 Granularity: segmented
 TDD mode: tdd-per-task
@@ -49,7 +49,7 @@ class TestLoadConfig(unittest.TestCase):
         c = config.load_config(write(FULL))
         self.assertEqual("/tmp/wt", c.worktree)
         self.assertEqual("agent-loop-port", c.branch)
-        self.assertEqual("port the internal app", c.goal)
+        self.assertEqual("port the webapp", c.goal)
         self.assertEqual("segmented", c.granularity)
         self.assertEqual("tdd-per-task", c.tdd_mode)
         self.assertEqual(["lint", "tsc", "build", "test"], c.verification)

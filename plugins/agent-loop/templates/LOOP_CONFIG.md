@@ -77,8 +77,8 @@ Orchestrator model:
 # mandatory — a task touching those paths must carry a render_gate unless its plan row
 # is tagged `| no-ui`. `{route}` and `{screenshot}` are substituted per task by the Scout.
 # Render:
-#   start: pnpm --filter @repo/internal dev --port 5273
+#   start: pnpm --filter @repo/webapp dev --port 5273
 #   ready: http://127.0.0.1:5273/
 #   command: pnpm --filter @repo/integration cypress run --spec {route}
 #   ui_globs: apps/*/src/**/*.tsx packages/ui/**/*.tsx
-#   reference: rise-customers=docs/reference/rise-customers.png
+#   reference: app-customers=docs/reference/app-customers.png

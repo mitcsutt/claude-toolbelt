@@ -73,7 +73,7 @@ class TestBuildInput(unittest.TestCase):
                                 judge.Failure(kind="gate", detail="tsc failed"))
 
         self.assertEqual(inp.task_id, "T60")
-        self.assertIn("organisationalUnits", inp.task_row)
+        self.assertIn("widgets", inp.task_row)
         self.assertEqual(inp.policy, "autonomous")
         self.assertEqual(inp.failure, "gate: tsc failed")
 
@@ -96,7 +96,7 @@ class TestBuildInput(unittest.TestCase):
         sources = dict((f["path"], f["source"]) for f in inp.forbidden)
         self.assertEqual(sources["apps/frontend/**"], "plan")
         self.assertEqual(
-            sources["packages/api/src/requests/activepipe/index.ts"], "scout")
+            sources["packages/api/src/requests/acme/index.ts"], "scout")
 
         joined = "\n".join(inp.excerpts)
         self.assertEqual(len(inp.excerpts), 2, "one block per source document")
@@ -105,10 +105,10 @@ class TestBuildInput(unittest.TestCase):
 
     def test_parity_ids_come_from_the_task_row(self):
         self.assertEqual(judge.PARITY_RE.findall(
-            "- [~] T60 Add organisationalUnits REST mixin (P-ORG-001)"), ["P-ORG-001"])
+            "- [~] T60 Add widgets REST mixin (P-WID-001)"), ["P-WID-001"])
         inp = judge.build_input(self.ctx, cfixtures.make_contract(),
                                 judge.Failure(kind="needs-work", detail="criterion 2 unmet"))
-        self.assertIn("P-ORG-001", "\n".join(inp.excerpts))
+        self.assertIn("P-WID-001", "\n".join(inp.excerpts))
 
     def test_missing_optional_inputs_do_not_raise(self):
         inp = judge.build_input(self.ctx, cfixtures.make_contract(),
@@ -157,8 +157,8 @@ class _PolicyBase(unittest.TestCase):
 class TestValidateDecision(_PolicyBase):
     def test_widening_a_scout_sourced_constraint_is_allowed(self):
         d = self.decision(changes={
-            "forbidden_remove": ["packages/api/src/requests/activepipe/index.ts"],
-            "allow_list_add": ["packages/api/src/requests/activepipe/index.ts"]})
+            "forbidden_remove": ["packages/api/src/requests/acme/index.ts"],
+            "allow_list_add": ["packages/api/src/requests/acme/index.ts"]})
         self.assertEqual(judge.validate_decision(d, self.inp), [])
 
     def test_widening_a_plan_sourced_constraint_is_rejected(self):
@@ -313,7 +313,7 @@ class TestConservativePolicy(_PolicyBase):
 
     def test_widen_and_escalate_still_allowed(self):
         d = self.decision(changes={
-            "forbidden_remove": ["packages/api/src/requests/activepipe/index.ts"]})
+            "forbidden_remove": ["packages/api/src/requests/acme/index.ts"]})
         self.assertEqual(judge.validate_decision(d, self.inp), [])
         self.assertEqual(judge.validate_decision(
             self.decision(decision="escalate", classification="capability",
@@ -339,7 +339,7 @@ class TestDecide(_PolicyBase):
             "rationale": "scout invented it", "alternatives": ["halt"],
             "reversal": "revert the contract",
             "changes": {"forbidden_remove":
-                        ["packages/api/src/requests/activepipe/index.ts"]}})
+                        ["packages/api/src/requests/acme/index.ts"]}})
         self.assertEqual(out["decision"], "widen")
         self.assertEqual(out["rejected"], [])
         self.assertEqual(out["changes"]["allow_list_add"], [])
@@ -351,7 +351,7 @@ class TestDecide(_PolicyBase):
         self.assertEqual(kwargs["model"], "opus")
         self.assertEqual(kwargs["phase"], "judge")
         self.assertEqual(kwargs["timeout_s"], 360, "judge_timeout")
-        self.assertIn("P-ORG-001", kwargs["prompt"])
+        self.assertIn("P-WID-001", kwargs["prompt"])
         self.assertIn("autonomous", kwargs["prompt"])
         self.assertIn("attempt 1 of 3", kwargs["prompt"])
         self.assertIn("one cap extension of up to 1500 s", kwargs["prompt"])
@@ -383,7 +383,7 @@ class TestDecide(_PolicyBase):
 class TestSubRowGrammar(_PolicyBase):
     def test_sub_rows_are_titles_that_the_harness_numbers(self):
         self.assertEqual(judge.validate_sub_rows(
-            "T60", ["- [ ] Build the organisationalUnits mixin",
+            "T60", ["- [ ] Build the widgets mixin",
                     "- [ ] Register it in the composition root"]), [])
         self.assertTrue(judge.validate_sub_rows("T60", ["- [ ] only one"]))
         self.assertTrue(any("must not name a task id" in e
@@ -422,12 +422,12 @@ class TestApply(_PolicyBase):
             "alternatives": ["halt and ask a human, as the 2026-09-11 run did"],
             "reversal": "delete the allow_list entry from runtime/sprint-T60.json",
             "changes": {
-                "forbidden_remove": ["packages/api/src/requests/activepipe/index.ts"],
-                "allow_list_add": ["packages/api/src/requests/activepipe/index.ts"]}}))
+                "forbidden_remove": ["packages/api/src/requests/acme/index.ts"],
+                "allow_list_add": ["packages/api/src/requests/acme/index.ts"]}}))
         self.assertEqual(action, "retry")
 
         saved = load_contract(self.contract_path)
-        self.assertIn("packages/api/src/requests/activepipe/index.ts",
+        self.assertIn("packages/api/src/requests/acme/index.ts",
                       saved.allow_list)
         self.assertEqual([f.path for f in saved.forbidden], ["apps/frontend/**"])
         self.assertIn("register the mixin in index.ts", saved.scout_notes)
@@ -441,7 +441,7 @@ class TestApply(_PolicyBase):
                       text)
         self.assertIn("- **Alternatives:** halt and ask a human", text)
         self.assertIn("- **Reverse:** delete the allow_list entry", text)
-        self.assertIn("allow_list += packages/api/src/requests/activepipe/index.ts",
+        self.assertIn("allow_list += packages/api/src/requests/acme/index.ts",
                       text)
 
         evs = [e for e in cfixtures.read_events(self.loop_dir)
@@ -463,7 +463,7 @@ class TestApply(_PolicyBase):
             "instruction": "write counters.length as a read",
             "alternatives": ["defer to a human"], "reversal": "",
             "changes": {
-                "allow_list_add": ["packages/api/src/requests/activepipe/index.ts"],
+                "allow_list_add": ["packages/api/src/requests/acme/index.ts"],
                 "tier": "standard", "extend_cap_s": 600}}),
             evidence="allow_list is empty", persist=False)
         self.assertEqual(action, "retry")
@@ -600,7 +600,7 @@ class TestFailurePath(_PolicyBase):
                 "rationale": "scout-sourced constraint",
                 "alternatives": ["halt"], "reversal": "revert the contract",
                 "changes": {"forbidden_remove":
-                            ["packages/api/src/requests/activepipe/index.ts"]}}):
+                            ["packages/api/src/requests/acme/index.ts"]}}):
             action = runner_run.handle_failure(
                 self.h, self.ctx, self.contract, "gate", "tsc failed\nTS2339 line 4")
         self.assertEqual(action, "retry")
@@ -694,7 +694,7 @@ class TestFailurePath(_PolicyBase):
         self.assertIn("HUMAN.md", h.preexisting)
 
         inside = os.path.join(self.cfg.worktree, "packages", "api", "src",
-                              "requests", "activepipe", "internal")
+                              "requests", "acme", "internal")
         os.makedirs(inside)
         with open(os.path.join(inside, "half.ts"), "w") as fh:
             fh.write("// half a workaround the loop wrote\n")

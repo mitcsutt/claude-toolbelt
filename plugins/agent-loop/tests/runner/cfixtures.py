@@ -19,22 +19,22 @@ from runner.task_state import TaskState  # noqa: E402
 LOOP_PLAN_TEXT = """# Loop Plan
 
 ## Segment 1 - API
-- [~] T60 Add organisationalUnits REST mixin (P-ORG-001)
-- [ ] T61 Wire organisationalUnits into the customers page
-- [ ] T62 Cypress coverage for organisationalUnits
+- [~] T60 Add widgets REST mixin (P-WID-001)
+- [ ] T61 Wire widgets into the customers page
+- [ ] T62 Cypress coverage for widgets
 """
 
 DESIGN_PLAN_TEXT = """# Rebuild plan
 
-- T60 organisationalUnits REST: register the mixin in the composition root (P-ORG-001).
+- T60 widgets REST: register the mixin in the composition root (P-WID-001).
 - T61 depends on T60 landing first.
 """
 
 SPEC_TEXT = """# Design
 
-REST via ActivePipeApi internal mixins; ~12 mixins.
-T60 organisationalUnits is REST, composed as a dedicated internal mixin set.
-P-ORG-001 is resolved by registering the mixin in the composition root.
+REST via AcmeApi internal mixins; ~12 mixins.
+T60 widgets is REST, composed as a dedicated internal mixin set.
+P-WID-001 is resolved by registering the mixin in the composition root.
 """
 
 
@@ -74,11 +74,11 @@ def make_contract(task="T60"):
     return Contract(
         task=task,
         success_criteria=[
-            "packages/api/src/requests/activepipe/internal/organisationalUnits.ts exists"],
-        allow_list=["packages/api/src/requests/activepipe/internal/**"],
+            "packages/api/src/requests/acme/internal/widgets.ts exists"],
+        allow_list=["packages/api/src/requests/acme/internal/**"],
         forbidden=[
             Forbidden(path="apps/frontend/**", source="plan"),
-            Forbidden(path="packages/api/src/requests/activepipe/index.ts", source="scout"),
+            Forbidden(path="packages/api/src/requests/acme/index.ts", source="scout"),
         ],
         verification=["pnpm turbo run lint --filter=@repo/api"],
         render_gate=None, fidelity_source=[], evaluator_must_read=[],
