@@ -366,6 +366,29 @@ class TestContractRejection(Base):
             os.path.join(self.loop_dir, "LOOP_CLEANUP.md")))
         self.assertEqual("continue", outcome.verdict)
 
+    def test_a_retry_on_an_invalid_contract_still_writes_a_cleanup_entry(self):
+        """When the Judge answers retry/resume to an invalid contract the harness
+        overrides to a deferral (the Scout has had both tries). That override must
+        still write the LOOP_CLEANUP entry — otherwise a task is blocked with an
+        empty human follow-up list."""
+        rec = self.patch({
+            "scout": [{"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(allow_list=[])},
+                      {"text": block({"contract_path": "x", "notes": ""}),
+                       "side_effect": self.contract_writer(allow_list=[])}],
+            "worker": [],
+            "judge": self.judge_says("retry", "capability")})
+        outcome = run.execute_tick(self.h, 1, self.h.plan.task("T1"))
+        self.assertEqual(1, len([c for c in rec.calls if c["phase"] == "judge"]))
+        self.assertEqual("blocked",
+                         plan_mod.Plan.load(self.plan_path).task("T1").state)
+        cleanup = util.read_text(os.path.join(self.loop_dir, "LOOP_CLEANUP.md"))
+        self.assertIn("T1", cleanup,
+                      "the blocked task must name itself in LOOP_CLEANUP")
+        self.assertIn("allow_list", cleanup,
+                      "the cleanup entry must carry the validation evidence")
+        self.assertEqual("continue", outcome.verdict)
+
     def test_the_second_scout_is_told_what_was_wrong(self):
         rec = self.patch({
             "scout": [{"text": block({"contract_path": "x", "notes": ""}),
