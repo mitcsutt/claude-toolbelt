@@ -43,40 +43,32 @@ class TestValidateHappyPath(unittest.TestCase):
         self.assertEqual([], cmod.validate(contract(), task(), CFG, "", UI_GLOBS))
 
 
-class TestCriteriaPaths(unittest.TestCase):
-    def test_a_criterion_naming_a_path_outside_allow_list_is_an_error(self):
-        c = contract(success_criteria=["apps/frontend/src/Header.tsx gains the nav item"])
-        errs = cmod.validate(c, task(), CFG, "", UI_GLOBS)
-        self.assertEqual(1, len(errs))
-        self.assertIn("apps/frontend/src/Header.tsx", errs[0])
-        self.assertIn("allow_list", errs[0])
+class TestCriteriaAreNotPathScanned(unittest.TestCase):
+    """success_criteria is prose and verification is shell; neither is scanned
+    for paths outside allow_list. A criterion that genuinely needs a file
+    outside allow_list is caught at runtime by the gate + Judge-widen (proven in
+    run.e2e's widen scenario) — auditable and self-healing, unlike a static scan
+    that refused a legal contract on every task it was measured against
+    (braces in a prose example, a JSDoc delimiter, a read-only path in a grep)."""
 
-    def test_the_read_marker_exempts_a_reference_path(self):
-        c = contract(success_criteria=[
-            "matches apps/frontend/src/Header.tsx (read) in structure"])
-        self.assertEqual([], cmod.validate(c, task(), CFG, "", UI_GLOBS))
+    def _clean(self, **kw):
+        self.assertEqual([], cmod.validate(contract(**kw), task(), CFG, "", UI_GLOBS))
 
-    def test_a_verification_command_may_only_touch_allow_list_paths(self):
-        c = contract(verification=["pnpm vitest run apps/frontend/src/Header.test.tsx"])
-        errs = cmod.validate(c, task(), CFG, "", UI_GLOBS)
-        self.assertEqual(1, len(errs))
-        self.assertIn("apps/frontend/src/Header.test.tsx", errs[0])
+    def test_a_criterion_naming_a_path_outside_allow_list_is_allowed(self):
+        self._clean(
+            success_criteria=["apps/frontend/src/Header.tsx gains the nav item"])
 
-    def test_a_glob_in_allow_list_covers_the_files_under_it(self):
-        c = contract(allow_list=["packages/api/src/**"],
-                     success_criteria=["packages/api/src/requests/orgUnits.ts compiles"])
-        self.assertEqual([], cmod.validate(c, task(), CFG, "", UI_GLOBS))
+    def test_prose_braces_and_dotted_identifiers_are_allowed(self):
+        self._clean(success_criteria=[
+            'an in-file array of objects, e.g. { name: "Coffees", count: 12 }',
+            "the flag board.dataset.ready is set once counters.length rows exist"])
 
-    def test_bare_words_and_flags_are_not_path_tokens(self):
-        c = contract(verification=["pnpm turbo run lint check test --filter=@repo/api"])
-        self.assertEqual([], cmod.validate(c, task(), CFG, "", UI_GLOBS))
+    def test_a_jsdoc_delimiter_in_prose_is_allowed(self):
+        self._clean(success_criteria=["each export gains a /** ... */ block"])
 
-    def test_the_path_token_regex_matches_repo_paths_only(self):
-        for good in ("packages/api/src/x.ts", "apps/frontend/**", "a/b-c/d_e.tsx",
-                     "apps/*/src/**"):
-            self.assertTrue(cmod.PATH_TOKEN_RE.match(good), good)
-        for bad in ("lint", "--filter=@repo/api", "pnpm", "T60", "0.6"):
-            self.assertFalse(cmod.PATH_TOKEN_RE.match(bad), bad)
+    def test_read_only_repo_paths_inside_a_verification_grep_are_allowed(self):
+        self._clean(verification=[
+            "grep -q appendChild public/app.js && grep -q parse src/format.js"])
 
 
 class TestForbiddenProvenance(unittest.TestCase):
@@ -305,28 +297,6 @@ class TestLoadListValidation(unittest.TestCase):
         self.assertEqual([], c.evaluator_must_read)
         self.assertEqual([], c.evaluator_must_view)
         self.assertEqual([], c.relevant_learnings)
-
-
-class TestPathTokenIdioms(unittest.TestCase):
-    def test_english_slash_idioms_are_not_flagged(self):
-        c = contract(success_criteria=[
-            "works 24/7 and/or as needed, n/a or w/o extra config"])
-        self.assertEqual([], cmod.validate(c, task(), CFG, "", UI_GLOBS))
-
-    def test_a_root_level_file_outside_allow_list_is_scanned(self):
-        c = contract(success_criteria=["package.json gains a new script"])
-        errs = cmod.validate(c, task(), CFG, "", UI_GLOBS)
-        self.assertEqual(1, len(errs))
-        self.assertIn("package.json", errs[0])
-        self.assertIn("allow_list", errs[0])
-
-    def test_a_root_level_file_inside_allow_list_is_fine(self):
-        c = contract(success_criteria=["package.json gains a new script"],
-                     allow_list=["package.json"])
-        self.assertEqual([], cmod.validate(c, task(), CFG, "", UI_GLOBS))
-
-    def test_bare_decimal_is_still_not_a_path_token(self):
-        self.assertFalse(cmod.PATH_TOKEN_RE.match("0.6"))
 
 
 if __name__ == "__main__":

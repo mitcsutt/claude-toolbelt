@@ -451,6 +451,35 @@ class TestApply(_PolicyBase):
         self.assertEqual(evs[0]["decision"], "widen")
         self.assertEqual(evs[0]["classification"], "self-imposed")
 
+    def test_persist_false_records_only_what_reached_disk(self):
+        """The invalid-contract path passes a stand-in contract with persist=False:
+        nothing is saved, so LOOP_DECISIONS.md must not claim edits that never
+        landed and must not tell a human to reverse them."""
+        from runner.contract import load_contract
+        before = load_contract(self.contract_path)
+        action = judge.apply(self.ctx, self.contract, judge._normalize({
+            "decision": "widen", "classification": "self-imposed",
+            "rationale": "the criterion is sound; the validator misread it",
+            "instruction": "write counters.length as a read",
+            "alternatives": ["defer to a human"], "reversal": "",
+            "changes": {
+                "allow_list_add": ["packages/api/src/requests/activepipe/index.ts"],
+                "tier": "standard", "extend_cap_s": 600}}),
+            evidence="allow_list is empty", persist=False)
+        self.assertEqual(action, "retry")
+
+        saved = load_contract(self.contract_path)
+        self.assertEqual(saved.allow_list, before.allow_list,
+                         "a stand-in contract must not be saved")
+        self.assertEqual(saved.scout_notes, before.scout_notes)
+
+        text = cfixtures.read(os.path.join(self.loop_dir, "LOOP_DECISIONS.md"))
+        self.assertIn("- **Applied:** no file changed", text)
+        for lie in ("allow_list += ", "instruction appended to scout_notes",
+                    "next attempt runs at tier", "worker cap extended"):
+            self.assertNotIn(lie, text,
+                             "the ledger claimed %r that persist=False dropped" % lie)
+
     def test_escalate_and_resume_inject_the_instruction_only(self):
         from runner.contract import load_contract
         for decision, expected in (("escalate", "escalate"), ("resume", "resume")):

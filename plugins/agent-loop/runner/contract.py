@@ -1,10 +1,13 @@
 """runtime/sprint-<T>.json — the single document a Worker and an Evaluator see.
 
 The Scout writes it; the harness validates it BEFORE dispatch and refuses an
-invalid one. That refusal is the whole point: in the 2026-09-11 run the
-contract for tick 85 named a success criterion about a file its own allow_list
-forbade, and three Workers burned on it. Validation is cheap, mechanical, and
-happens in Python — never asked of a model.
+invalid one. Validation is cheap, mechanical, and happens in Python — never
+asked of a model. It catches an empty required field, a forbidden entry with no
+provenance, a UI task with no render_gate, or a copy task with no fidelity pair.
+It deliberately does NOT scan prose success_criteria or shell verification for
+paths outside allow_list: that check refused a legal contract on nearly every
+task, and the case it guarded (a criterion needing a file outside allow_list) is
+caught at runtime by the gate and the Judge's widen instead.
 """
 from __future__ import annotations
 
@@ -16,20 +19,8 @@ from typing import Any, Dict, List, Optional
 
 from . import util
 
-# A whitespace-delimited token that looks like a repo path. Built from
-# characters a path (or a glob) legitimately contains, AND at least one of:
-# a glob metachar, a dot-extension on its final segment, or two-or-more "/".
-# A lone slash is not enough — "and/or", "24/7", "n/a" and "w/o" all have
-# exactly one "/" and no extension, so none of them qualify. The extension
-# check excludes an all-digit suffix ("0.6") so a bare decimal doesn't read
-# as a path; "package.json" and "README.md" still qualify since their
-# extensions aren't all-digit.
-PATH_TOKEN_RE = re.compile(
-    r"^(?=.*[*\[{]|(?:[^/]*/){2,}|.*\.(?!\d+$)\w+$)[\w.@#/\[\]{}*-]+$"
-)
 COPY_VERBS = ("copy", "port", "replicate")
 VALID_SOURCES = ("plan", "spec", "scout")
-READ_MARKER = "(read)"
 
 
 class ContractError(ValueError):
@@ -161,35 +152,6 @@ def _matches_any(path: str, patterns: List[str]) -> bool:
     return False
 
 
-def _path_allowed(token: str, allow_list: List[str]) -> bool:
-    """True when the token names something inside the allow_list.
-
-    Three ways to be inside: the token matches a pattern; the token sits under a
-    directory the allow_list names; or the token IS a directory the allow_list
-    writes into (a criterion may legitimately name the folder).
-    """
-    if _matches_any(token, allow_list):
-        return True
-    for pat in allow_list:
-        base = pat.rstrip("/")
-        if token.startswith(base + "/") or base.startswith(token.rstrip("/") + "/"):
-            return True
-    return False
-
-
-def _scan_paths(text: str):
-    """[(token, is_read_only)] for every repo-path-shaped token in `text`."""
-    raw = text.split()
-    out = []
-    for i, tok in enumerate(raw):
-        clean = tok.strip("`'\"(),;:")
-        if not PATH_TOKEN_RE.match(clean):
-            continue
-        nxt = raw[i + 1].strip("`'\"") if i + 1 < len(raw) else ""
-        out.append((clean, nxt == READ_MARKER))
-    return out
-
-
 def _cleanup_blocks(cleanup_text: str, task_id: str) -> bool:
     """True when LOOP_CLEANUP.md names this task on a content line."""
     pattern = re.compile(r"\b%s\b" % re.escape(task_id))
@@ -228,14 +190,6 @@ def validate(c: Contract, task, cfg, cleanup_text: str,
         errors.append("allow_list is empty: the Worker would have nothing it may edit")
     if not c.verification:
         errors.append("verification is empty: the harness would have no gate to run")
-
-    for text in list(c.success_criteria) + list(c.verification):
-        for token, is_read in _scan_paths(text):
-            if is_read or _path_allowed(token, c.allow_list):
-                continue
-            errors.append(
-                "%r names %s, which is outside allow_list; add it, or mark the "
-                "reference read-only by writing '%s (read)'" % (text, token, token))
 
     for f in c.forbidden:
         if f.source not in VALID_SOURCES:
