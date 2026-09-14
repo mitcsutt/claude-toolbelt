@@ -468,7 +468,8 @@ def finish_deferral(h: Harness, ctx, contract, decision: dict) -> None:
                    "loop: block %s — %s"
                    % (task.id, decision.get("classification", "open")),
                    {"Loop-Status": "halted",
-                    "Loop-Verification": verification_summary(h.cfg, False)})
+                    "Loop-Verification": verification_summary(h.cfg, False)},
+                   force=True)
     h.log("blocked %s (%s: %s); %d downstream task(s) marked blocked-upstream"
           % (task.id, decision.get("decision", "defer"),
              decision.get("classification", "open"), len(downstream)))
@@ -747,7 +748,7 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
     h.plan.save()
     base_sha = git_ops.head_sha(h.worktree)
     git_ops.commit(h.worktree, [h.plan_path], "loop: start %s" % task.id,
-                   {"Loop-Status": "progress"})
+                   {"Loop-Status": "progress"}, force=True)
 
     contract = None
     if resume == "wrapup":
@@ -1038,7 +1039,7 @@ def plan_tick(h: Harness, tick: int, segment: str) -> TickOutcome:
         out.cause = "plan-empty"
         return out
     git_ops.commit(h.worktree, [h.plan_path], "loop: plan %s" % segment,
-                   {"Loop-Status": "progress"})
+                   {"Loop-Status": "progress"}, force=True)
     h.log("planned %s: %d row(s)" % (segment, added))
     return out
 
@@ -1115,7 +1116,7 @@ def review_tick(h: Harness, tick: int, segment: str) -> TickOutcome:
     h.plan.stamp_reviewed(segment, git_ops.head_sha(h.worktree)[:7] or "none")
     h.plan.save()
     git_ops.commit(h.worktree, [h.plan_path], "loop: review %s" % segment,
-                   {"Loop-Status": "reviewed"})
+                   {"Loop-Status": "reviewed"}, force=True)
     h.log("reviewed %s: %d follow-up row(s)" % (segment, len(rows)))
     return out
 
@@ -1267,7 +1268,7 @@ def flush_plan(h: Harness) -> None:
     rel = os.path.relpath(os.path.abspath(h.plan_path), h.worktree)
     if rel in changed:
         git_ops.commit(h.worktree, [h.plan_path], "loop: checkpoint plan",
-                       {"Loop-Status": "progress"})
+                       {"Loop-Status": "progress"}, force=True)
 
 
 def dispatch_postmortem(h: Harness) -> None:
