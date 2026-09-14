@@ -284,7 +284,9 @@ class TestNotifyDesktop(Base):
         os.environ["LOOP_NOTIFY"] = "1"
         hostile_title = "title\\"  # a lone trailing backslash
         hostile_body = 'body" & (do shell script "touch /tmp/pwned") & "\\'
-        with mock.patch("runner.incidents.subprocess.run") as run:
+        with mock.patch("runner.incidents.os.uname") as uname, \
+                mock.patch("runner.incidents.subprocess.run") as run:
+            uname.return_value.sysname = "Darwin"
             incidents.notify_desktop(hostile_title, hostile_body)
         self.assertTrue(run.called)
         args, kwargs = run.call_args
