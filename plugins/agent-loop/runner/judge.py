@@ -609,6 +609,11 @@ def apply(ctx, contract, decision: dict, evidence: str = "",
     d = decision["decision"]
     changes = decision.get("changes") or {}
     applied = []
+    # Effects on the contract or the context that only take hold when `persist`
+    # is True: with a stand-in contract (the invalid-contract path) nothing is
+    # saved and the decision is overridden to a deferral, so recording these in
+    # the ledger would tell a human to reverse edits that never reached disk.
+    provisional = []
     path = contract_path(ctx)
     plan_path = os.path.join(ctx.loop_dir, "LOOP_PLAN.md")
     contract_dirty = False
@@ -616,14 +621,14 @@ def apply(ctx, contract, decision: dict, evidence: str = "",
     for p in changes.get("allow_list_add") or []:
         if p not in contract.allow_list:
             contract.allow_list.append(p)
-            applied.append("allow_list += %s" % p)
+            provisional.append("allow_list += %s" % p)
             contract_dirty = True
     removed = set(changes.get("forbidden_remove") or [])
     if removed:
         keep = []
         for f in contract.forbidden:
             if f.path in removed and f.source == "scout":
-                applied.append("forbidden -= %s (scout-sourced)" % f.path)
+                provisional.append("forbidden -= %s (scout-sourced)" % f.path)
                 contract_dirty = True
             else:
                 keep.append(f)
@@ -634,7 +639,7 @@ def apply(ctx, contract, decision: dict, evidence: str = "",
     if note and d in ("retry", "widen", "escalate", "resume"):
         contract.scout_notes = ("%s\n\nJUDGE %s (%s): %s"
                                 % (contract.scout_notes, _now(), d, note)).strip()
-        applied.append("instruction appended to scout_notes")
+        provisional.append("instruction appended to scout_notes")
         contract_dirty = True
     if contract_dirty and persist:
         save_contract(contract, path)
@@ -644,12 +649,12 @@ def apply(ctx, contract, decision: dict, evidence: str = "",
     tier = changes.get("tier") or ""
     if tier and d in ("retry", "widen", "escalate", "resume"):
         ctx.tier = tier
-        applied.append("next attempt runs at tier %s" % tier)
+        provisional.append("next attempt runs at tier %s" % tier)
     extend = int(changes.get("extend_cap_s") or 0)
     if extend > 0 and d in ("retry", "widen", "escalate", "resume"):
         ctx.extend_cap_s = extend
-        applied.append("worker cap extended by %ds (this task's only one)"
-                       % extend)
+        provisional.append("worker cap extended by %ds (this task's only one)"
+                           % extend)
 
     for tid in changes.get("blocks") or []:
         if ctx.plan.set_blocked_by(tid, [ctx.task.id]):
@@ -701,6 +706,8 @@ def apply(ctx, contract, decision: dict, evidence: str = "",
     elif changes.get("blocks"):
         ctx.plan.save()
 
+    if persist:
+        applied = provisional + applied
     append_decision(ctx, decision, applied)
     ctx.events.emit("decision", tick=ctx.tick, task=ctx.task.id, decision=d,
                     classification=decision.get("classification", ""),

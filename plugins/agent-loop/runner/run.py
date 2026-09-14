@@ -809,6 +809,16 @@ def execute_tick(h: Harness, tick: int, task) -> TickOutcome:
                       "has already had both its tries, so this is a deferral"
                       % (task.id, action))
                 action = "defer"
+                # The Judge decided widen/retry/resume, not defer, so its own
+                # apply() never wrote the cleanup entry finish_deferral assumes is
+                # already there. Write it here, exactly as the two cap-exhaustion
+                # deferrals below do, or the task is blocked with an empty human
+                # follow-up list.
+                judge.write_cleanup_entry(ctx, {
+                    "classification": "open",
+                    "rationale": "two Scouts failed to write a valid contract, so "
+                                 "the task cannot be dispatched",
+                    "changes": {}}, "\n".join(errors))
                 judge.mark_blocked(ctx, {"decision": "defer"})
                 finish_deferral(h, ctx, None, {"decision": "defer",
                                                "classification": "open"})

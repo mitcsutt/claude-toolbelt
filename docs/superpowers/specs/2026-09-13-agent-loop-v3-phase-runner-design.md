@@ -164,7 +164,7 @@ Orchestrator model:   # ignored by v3, kept so old configs parse
 ```
 
 ### 5.1 Validation (harness, `contract.py`)
-- Every path named in `success_criteria` or `verification` that looks like a repo path must be inside `allow_list` or be read-only context; a criterion that names a path outside `allow_list` is an error (`w4` tick 85).
+- `success_criteria` (prose) and `verification` (shell) are **not** statically scanned for repo paths outside `allow_list`. The scan (removed in plan E) refused a legal contract on essentially every task it was measured against — a brace in a prose example, a JSDoc delimiter, a read-only path inside a grep the `(read)` marker cannot annotate. The case it guarded, a criterion that needs a file outside `allow_list` (`w4` tick 85), is caught at runtime by the gate and the Judge's `widen` (§7) instead — auditable and self-healing rather than a blanket refusal.
 - `forbidden` entries carry `source`; `scout`-sourced entries are advisory to the Worker and **can be widened by the Judge** (§7). `plan`/`spec`-sourced entries cannot.
 - A task whose `LOOP_CLEANUP.md` entry, or whose plan row `blocked_by:` tag, names it as blocked is not eligible in SELECT (`w4` tick 88).
 - `render_gate` is required when the task's `allow_list` touches paths matching the repo's UI globs (`Render:` recipe, §5.3) unless the Planner tagged the task `| no-ui`.
@@ -252,7 +252,7 @@ The Learner phase runs after COMMIT with the gate outputs and the Evaluator verd
 ---
 
 ## 12. Testing
-- `tests/runner/*.py` (unittest, stdlib): plan grammar round-trip against serve.py's regexes; contract validation cases (criteria path outside allow_list, forbidden provenance, blocked-by); stream parser (activity, outstanding tools, usage per message id, session id capture); budgets and wrap-up; Judge decision application under both policies; fidelity ratio; SANDBOX revert; commit trailers.
+- `tests/runner/*.py` (unittest, stdlib): plan grammar round-trip against serve.py's regexes; contract validation cases (empty required fields, forbidden provenance, blocked-by); stream parser (activity, outstanding tools, usage per message id, session id capture); budgets and wrap-up; Judge decision application under both policies; fidelity ratio; SANDBOX revert; commit trailers.
 - `tests/run.e2e.test.sh` rewritten against a stub `claude` that can be scripted per phase (timeouts, malformed JSON, `--resume`), covering lock conflict, takeover, PAUSE, STOP, needs-human, sidecar adopt, migration, exit codes 0/1/2/3.
 - `tests/web.contract.sh` gains `/api/stop`.
 - Prompt-contract tests for each `runner/prompts/*.md` (sentinel-free: phases return JSON, the harness decides).

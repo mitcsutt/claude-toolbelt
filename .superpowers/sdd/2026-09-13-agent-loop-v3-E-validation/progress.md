@@ -445,3 +445,75 @@ entries and scout_notes paragraphs that are not on disk.
 This is one root cause (`persist=False` not filtering `applied`) plus one gap
 (`write_cleanup_entry` never reached on the try-exhausted path), both recorded
 above with line numbers.
+
+## §5 finished — both unproven §6 items now PROVEN (fresh machine, 2026-09-14)
+
+Baseline first: `bash scripts/test-all.sh` PASS/exit 0; `claude -p` → PONG/exit 0.
+
+Rebuilt `scratchpad/tally-v2` per §5 (v2 layout, schema 2, `[~]` T1, **no**
+task-T1.json, hand-written valid contract, worker-result.json checkpoint,
+partial uncommitted edit). Two fixture bugs found and fixed before real spend:
+worktree-root `.gitignore` must NOT ignore `.claude/` (the harness commits
+LOOP_PLAN.md — first run died on `git add`), and the 10-export task is too small
+to beat a 90s wall.
+
+- **Run 2 (worker_timeout=90):** migration 2→3 (contracts-normalised:1) →
+  boot-reconcile `T1 is [~] … asking the Judge` → **Judge: resume (capability)**
+  → worker did the whole task in **58s** (under cap, no timeout) → PASS → **T1
+  [x] `51cf77a`**, node --test=pass. Proves §6 **item A** (migrates 2→3 in place
+  AND resumes its `[~]` task). But worker never hit the wall → item B unproven.
+- **Calibration:** measured the task at 58s, so set `worker_timeout=35` (below
+  measured) to force a deterministic turn-1 timeout rather than gamble on a
+  bigger task (a third paid run risk). Mechanism proven is identical to §5's;
+  only the literal cap differs from "90s".
+- **Run 3 (worker_timeout=35):** migration 2→3 → boot-reconcile resume →
+  `the Worker hit its 35s cap; wrapping up on session f9d455f6-…-1dd2` →
+  resume event `kind=wrapup` (session f9d455f6) → Judge resume →
+  resume event `kind=resume` (session f9d455f6, attempt 1) → still incomplete →
+  Judge resume → `kind=resume` (session f9d455f6, attempt 2) → PASS →
+  **T1 [x] `c437efb`** (src/catalog.js +65, test/catalog.test.mjs +63),
+  node --test=pass. `runtime/task-T1.json` `session_ids.worker` =
+  `f9d455f6-…-1dd2`, the **same** id every resume event reused (scoped to T1's
+  own state file, per §5's watch-out). loop_end reason=done, **no incidents**.
+  Proves §6 **item B** (a timed-out Worker is `--resume`d from its session id),
+  and re-proves item A in the same run.
+
+Evidence snapshotted to `scratchpad/evidence/{run2-itemA,run3-itemB}/`
+(ephemeral). F1/F2/F3 not exercised — the hand-written contract deliberately
+bypasses the Scout/invalid-contract path, so these runs neither confirm nor
+refute them; the handoff §4 evidence stands. No pre-merge cleanup, no merge
+(awaiting Mitch).
+
+## F1/F2/F3 fixed (Mitch: "fix them all") — 2026-09-14
+
+Red-first for each, then fix, then green.
+
+- **F2** (`judge.apply`): contract/tier/extend effects now go to a `provisional`
+  list merged into `applied` only when `persist`. On the invalid-contract
+  stand-in path (`persist=False`) the ledger no longer claims edits that never
+  reached disk. New test `test_persist_false_records_only_what_reached_disk`.
+  F2's residual caveat — `ctx.tier`/`ctx.extend_cap_s` are still mutated on the
+  in-memory `ctx` under `persist=False` — is deliberately left as-is: those two
+  are read only by `phases.run_worker`, and on the invalid-contract path the
+  caller overrides the action to `defer` and returns the tick before any Worker
+  reruns, so the per-tick `ctx` is discarded unread. Guarding them would be dead
+  code.
+- **F3** (`run.py` invalid-contract override, ~805): now calls
+  `judge.write_cleanup_entry(..., "\n".join(errors))` before `mark_blocked` /
+  `finish_deferral`, mirroring the two cap-exhaustion sites that already do. The
+  override→deferral no longer leaves an empty LOOP_CLEANUP (in tests it also
+  fixed a hard crash: `finish_deferral` had committed a never-written cleanup
+  file). New test `test_a_retry_on_an_invalid_contract_still_writes_a_cleanup_entry`.
+- **F1** (Mitch chose "remove the scan"): deleted the PATH_TOKEN_RE
+  path-outside-allow_list scan over `success_criteria`+`verification` from
+  `validate()`, plus the now-dead `PATH_TOKEN_RE`, `READ_MARKER`, `_scan_paths`,
+  `_path_allowed`. The tick-85 case is handled at runtime by the gate +
+  Judge-widen (e2e widen scenario). Replaced the old scan tests with
+  `TestCriteriaAreNotPathScanned` (T1-T5 false-positive shapes now validate
+  clean). **Updated the binding spec §5.1** (path-scan bullet + test-list line)
+  and the `contract.py` module docstring to match — code was diverging from the
+  authority otherwise.
+
+Verification: full runner suite 687 tests OK; `bash scripts/test-all.sh` PASS,
+exit 0. Committed on `agent-loop-v3` with the pre-merge cleanup; NO throwaway
+loop run, NO merge, NO PR yet (local-work-then-stop per Mitch).
