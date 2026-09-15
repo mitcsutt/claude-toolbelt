@@ -53,12 +53,14 @@ reset=$'\033[0m'
 # Link target. Scheme is chosen by $CCSL_EDITOR so a shared checkout stays
 # editor-neutral; set it in your personal env (e.g. ~/.claude settings "env",
 # not this repo) to override. Encode spaces so the URI stays intact.
-#   unset / file  -> file://<abs-path>            (OS default, universal)
-#   vscode        -> vscode://file/<abs-path>/     (opens folder in VS Code)
-#   cursor        -> cursor://file/<abs-path>/     (opens folder in Cursor)
+#   unset / file  -> file://<abs-path>                        (OS default, universal)
+#   vscode        -> vscode://file/<abs-path>?windowId=_blank  (new window; undocumented param — bare
+#                                                                vscode://file/<path>/ reuses the
+#                                                                current window instead)
+#   cursor        -> cursor://file/<abs-path>/                 (opens folder in Cursor)
 enc="${toplevel// /%20}"
 case "${CCSL_EDITOR:-file}" in
-    vscode) uri="vscode://file${enc}/" ;;
+    vscode) uri="vscode://file${enc}?windowId=_blank" ;;
     cursor) uri="cursor://file${enc}/" ;;
     *)      uri="file://${enc}" ;;
 esac
