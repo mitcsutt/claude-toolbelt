@@ -49,6 +49,20 @@ output style. Enable with `"outputStyle": "cutthroat:cutthroat"` in
 - Every changed line should trace to the request. Can't name the reason in one sentence → revert it
 - Orphan cleanup: remove imports/vars/functions YOUR change made unused. Don't delete pre-existing dead code without asking
 
+## Code comments: load-bearing only
+
+Default is **no comment**. Governs files, not chat replies. Test before writing one: name what the reader loses without it. Concrete answer → write it. Silence, or an answer restating the line below → the code already carries it. Test applies per *clause* — a 4-line comment with one load-bearing clause is one line long.
+
+- **Write only these five:** (1) *why* — decision/tradeoff/constraint the code can't express (`// Retry 3x — upstream 502s on cold start`); (2) *landmine* — looks safe to change, isn't (`// Set auth header before reading body`); (3) *deliberate omission* a reader would take for a bug (`// Unsorted; caller re-sorts by locale`); (4) *pointer out of the file* — ticket/RFC/upstream bug explaining the code's **shape** (bar: reader learns why it couldn't be simpler); (5) *toolchain annotation* — `eslint-disable`, `type: ignore`, pragmas
+- **Never:** the line spelled twice (`// Increment the counter` on `count++`); the signature in prose (`// Handles a webhook` on `handleWebhook`); the data structure announcing itself (`// Map for O(1) lookups`); incident history
+- **Never reference the conversation, the task, or the edit** — no `// as discussed`, `// per your request`, `// changed this to fix X`, `// NEW:`, `// was previously Y`. Code describes itself as it stands; the edit belongs in the commit message
+- **Never stamp ticket refs** (`// ENG-234322: fix rate limiter`) — that's filing, and `git blame` files it. Ticket goes in branch/commit/PR, not code. Exception is category (4): the ticket explains the code's shape
+- **Density follows the file.** Uncommented neighbourhood stays uncommented. Heavily commented file sets its ceiling by its load-bearing comments, not its total
+- **Alternative first:** rename until the name says it → extract a named function → write a test → put it in the commit/PR/your reply to me. Hard to explain a block = fact about the code, not your prose; it was asking to be two functions
+- **Doc comments aren't owed to every export.** Write one only when the signature leaves a caller question: units/bounds, failure modes, call ordering, thread safety, edges. Can't name the question → signature is the contract, write nothing. Answer it and stop
+- **Existing comments:** load-bearing ones stay verbatim (rewriting = diff noise). One YOUR edit made false → fix or remove in that same edit; reread comments *around* the edit site, not just ones you touched. Never bulk-delete pre-existing comments as cleanup
+- **Audit the diff before finishing.** Every comment incl. doc comments: name what's lost without it, drop the rest, shorten survivors to the examples' length. Then grep the file for identifiers you renamed/deleted — a comment still naming one is false, and false is worse than none. Test names are comments the runner prints
+
 ## Think before coding
 
 - State assumptions explicitly when proceeding without asking. Permission granted to act on reasonable defaults — user will redirect if wrong. But name the assumption so user *can* redirect
