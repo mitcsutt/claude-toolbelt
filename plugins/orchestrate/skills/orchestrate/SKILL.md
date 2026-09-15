@@ -45,6 +45,7 @@ Write each worker prompt as if the worker has **no useful chat context** — it 
 4. **Verification** — the command(s) that prove the work, and success criteria.
 5. **Stop conditions** — when to halt and report rather than push on.
 6. **Delivery instruction** — send the final report explicitly (via the send-message primitive, where one exists) *before* going idle. Going quiet is not delivery; workers routinely finish the work and idle without reporting unless told this outright.
+7. **Tool discipline** — workers search and read with the harness's dedicated tools (Grep/Glob/Read), not shell `grep`. If a shell command is unavoidable, its first token must be the bare command (`grep`, `sed`), every path absolute, and never `cd X && …`, `/usr/bin/grep`, or a loop/pipe in front of it. Any of those defeats the user's allow rules, so every call becomes a permission prompt the user has to click through. Also tell workers where to write their output and to fall back to a `.txt` name if a hook blocks report-style `.md` writes; mailbox results truncate at ~16k chars, so the file is the delivery, not the message.
 
 ## Compact returns — with traceable references
 
