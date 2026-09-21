@@ -1,5 +1,5 @@
 {
-  "description": "SubagentStart: inject report discipline into spawned subagents, which output styles never reach.",
+  "description": "SubagentStart: inject report discipline into spawned subagents, which output styles never reach. Stop: block the turn once when the final message points at open asks, results or coined labels instead of stating them.",
   "hooks": {
     "SubagentStart": [
       {
@@ -9,6 +9,17 @@
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-brief.mjs",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "timeout": 30,
+            "prompt": "You are checking whether Claude's last message of a turn stands on its own for a user who will read only this message. Input: $ARGUMENTS\n\nRules:\n1. If stop_hook_active is true, respond {\"ok\": true}.\n2. Look only at last_assistant_message.\n3. Respond {\"ok\": false} if ANY of these hold:\n   a. The message says it is waiting on, blocked on, or needs the user's answer, decision, call, go-ahead or approval for something, and does not state each such item in full in this message (the actual question and its options, not 'those five questions', 'the questions above', 'the two open threads from my last message').\n   b. The message lists open, remaining, deferred or leftover items as bare labels without a one-line statement of what each is and why it is open (e.g. 'the double-worktree redundancy', 'the unverified build commands').\n   c. The message says a result, reason, decision or finding is 'above', 'earlier', 'as discussed', 'already reported' or 'recorded' instead of stating it.\n4. Otherwise respond {\"ok\": true}. A message that asks nothing of the user and lists no open items passes.\n\nWhen responding {\"ok\": false}, set reason to: \"Your last message refers to open questions, decisions or items without stating them. Resend it with a final section titled 'Waiting on you' that lists every open question and decision in full with its options, and give every open or deferred item a one-line meaning. Do not refer the user to earlier messages.\"\n\nRespond with JSON only."
           }
         ]
       }

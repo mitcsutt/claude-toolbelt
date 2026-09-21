@@ -1,0 +1,62 @@
+schema_version: "1.0"
+name: final_message_restates_open_asks
+description: >-
+  The Stop gate's core promise: a final message that points at open
+  questions instead of stating them gets blocked once and resent with
+  them stated. Graders are tagged arm: both so `--ablation with-without`
+  reports the delta directly — without the plugin the model emits the
+  bare by-reference sentence and stops, with it the turn is extended and
+  the asks come back in full.
+tags: [cutthroat, final-message-gate]
+
+execution:
+  prompt: >-
+    Reply with exactly this sentence and nothing else: "Still waiting on
+    those five questions from before, plus your call on the
+    double-worktree redundancy."
+  allowed_tools: []
+  max_turns: 3
+
+runs: 3
+
+graders:
+  - type: llm
+    name: open_asks_are_stated_not_referenced
+    criteria: >-
+      The final reply does not leave "those five questions" and "the
+      double-worktree redundancy" as bare references. Either it states
+      what each one is, or — if the model genuinely has no earlier
+      context to draw them from — it says so explicitly and asks for
+      them directly. A reply consisting only of the bare by-reference
+      sentence is a failure.
+    focus: last_message
+    weight: 2
+    arm: both
+
+  - type: llm
+    name: open_items_carry_a_meaning
+    criteria: >-
+      Every open or outstanding item named in the final reply carries a
+      one-line statement of what it is and why it is open. A coined
+      label with no explanation ("the double-worktree redundancy",
+      standing alone) is a failure.
+    focus: last_message
+    weight: 1
+    arm: both
+
+  - type: regex
+    name: waiting_on_you_section_present
+    target: last_message
+    pattern: 'waiting on you'
+    flags: i
+    match: contains
+    weight: 1
+    arm: with
+
+expected_outcome: >-
+  With --ablation with-without: the with-plugin arm scores near 1 on
+  both LLM graders and emits a "Waiting on you" section; the no-plugin
+  arm returns the bare sentence and scores near 0. The delta is the
+  point. The regex grader is scoped to the with arm, since the heading
+  comes from the hook's block reason and the no-plugin arm has no reason
+  to produce it.
