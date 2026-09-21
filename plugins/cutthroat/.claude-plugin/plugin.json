@@ -1,6 +1,6 @@
 {
   "name": "cutthroat",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Report discipline for agent output. A Stop hook blocks the turn once when the final message refers to open questions, decisions or results instead of stating them; a SubagentStart hook extends report discipline to spawned subagents, which output styles never reach; a skill points the same discipline at a document on request. The 1.x terminal output style is retired in favour of the built-in Concise style.",
   "author": {
     "name": "Mitchell Sutton"
