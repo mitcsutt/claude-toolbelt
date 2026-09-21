@@ -36,10 +36,12 @@ graders:
   - type: llm
     name: open_items_carry_a_meaning
     criteria: >-
-      Every open or outstanding item named in the final reply carries a
-      one-line statement of what it is and why it is open. A coined
-      label with no explanation ("the double-worktree redundancy",
-      standing alone) is a failure.
+      Every open or outstanding item named in the final reply either
+      carries a one-line statement of what it is and why it is open, or —
+      if the model genuinely has no context for it — is flagged as
+      unknown with a direct request for the detail. A coined label left
+      standing alone with neither a meaning nor an admission that it is
+      unknown ("the double-worktree redundancy", full stop) is a failure.
     focus: last_message
     weight: 1
     arm: both
@@ -51,7 +53,7 @@ graders:
     flags: i
     match: contains
     weight: 1
-    arm: with
+    arm: with-only
 
 expected_outcome: >-
   With --ablation with-without: the with-plugin arm scores near 1 on
