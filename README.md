@@ -13,7 +13,7 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 | `session-timeline`  | Generates a self-contained HTML visualization of a Claude Code session — stats, tool usage, subagent cards, chronological timeline.            |
 | `agent-loop`        | Autonomous coding loop for long-running multi-task work — a Python harness owns the state machine and runs one phase at a time as its own headless process, each with its own model tier, timeout and budget. Screenshots the product before it commits, resumes or splits a timed-out worker, settles what it can into an auditable decisions ledger, and hands over to a human through a budgeted `/agent-loop-medic` when it cannot. Requires `superpowers`; bundles `postmortem` and uses the `permissions` plugin's `/permissions-advisor`. |
 | `postmortem`        | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
-| `cutthroat`         | Detail-preserving concise output style — compresses structure (preamble, narration, closing recap, filler), never grammar and never technical substance. Scoped to terminal prose, with an explicit override for documents. Extends report discipline to subagents via a `SubagentStart` hook, which output styles never reach. |
+| `cutthroat`         | Report discipline for agent output — a `Stop` hook blocks the turn once when the final message refers to open questions, decisions or results instead of stating them, so the last message stands on its own. A `SubagentStart` hook extends the same discipline to spawned subagents, which output styles never reach, and a skill points it at a document on request. The 1.x terminal output style is retired in favour of the built-in `Concise` style. |
 | `orchestrate`       | Token-frugal orchestration doctrine for an expensive top-level model — reserve the expensive tier for judgment, route token-heavy bounded work to the cheapest capable subagent tier, demand compact traceable returns, and vet before acting. Model- and harness-agnostic; skill only. |
 | `git`               | A home for narrow git/GitHub helper skills. Currently ships `gh-pending-review` — add inline comments to a PR that already has a pending review, via GraphQL, without orphaning comments drafted elsewhere. |
 
@@ -61,7 +61,7 @@ Structured retrospective generator. `/postmortem` interviews you about a complet
 
 ### [`cutthroat`](plugins/cutthroat/README.md)
 
-An output style that compresses the structure of terminal prose — preamble, narration, closing recap, filler — never grammar and never technical substance. Extends the same report discipline to subagents via a `SubagentStart` hook, since output styles never reach them. Full ruleset, plus activation and disable mechanics, in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
+Makes the message you actually read carry the whole point. A `Stop` hook blocks the turn once when the final message points at open questions, decisions or results instead of stating them — the failure that shows up as "still waiting on those five questions" four messages after the questions scrolled away. A `SubagentStart` hook extends report discipline to spawned subagents, since output styles never reach them, and the skill points the same discipline at a document on request. The 1.x output style is retired; see the migration note in [`plugins/cutthroat/README.md`](plugins/cutthroat/README.md).
 
 ### [`orchestrate`](plugins/orchestrate/README.md)
 
@@ -132,7 +132,7 @@ Notes: the folder link is an OSC 8 hyperlink, so the terminal must honour the ch
 
 ## Shared rules
 
-[`shared-rules.md`](shared-rules.md) is a portable set of agent-behavior rules I import into my user-level `CLAUDE.md` so every project picks them up. The voice rules that used to live here moved out into the `cutthroat` plugin.
+[`shared-rules.md`](shared-rules.md) is a portable set of agent-behavior rules I import into my user-level `CLAUDE.md` so every project picks them up. "Agent voice" and "Final message discipline" live here: the register rules the built-in `Concise` style does not carry, and the rule the `cutthroat` plugin's `Stop` hook enforces.
 
 Claude Code resolves `@<path>` lines in `CLAUDE.md` as file imports — the referenced file's contents are loaded into the agent's context just as if they lived inline.
 

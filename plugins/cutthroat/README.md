@@ -1,79 +1,149 @@
 # cutthroat
 
-Dense, not degraded.
-
-Claude's default register opens with a warm-up, narrates while it works, and
-closes by re-summarising the diff you are about to read. `cutthroat` removes
-that and nothing else.
+Report discipline: say it once, say it fully, say it where it will be read.
 
 ## Why
 
-`cutthroat` compresses **structure**: preamble, narration, recap, hedging,
-filler, and option menus. Grammar stays normal. Technical substance is
-protected explicitly — code, verbatim errors, commands, numbers, `file:line`
-references, and the reasons, edge cases and steps of any procedure are never
-cut.
+Claude's default register opens with a warm-up, narrates while it works, and
+closes by re-summarising the diff you are about to read. That part is now
+handled by the built-in `Concise` output style, so this plugin no longer ships
+a style of its own — see [Install](#install) for the migration.
 
-### Why not caveman
+What `Concise` does not handle is where the words land.
 
-`caveman` — and `crisp`, despite its README — compress **grammar**: they drop
-articles and copulas and emit fragments. The result reads as a degraded
-thinker, costs the reader more to parse, and saves very little.
+**Subagents never see an output style.** A subagent runs its own system
+prompt, so no style or `CLAUDE.md` register reaches it. Its final message lands
+in the parent conversation as a tool result and is re-sent with every later API
+call, so subagent padding is a recurring cost, not a one-off. A
+`SubagentStart` hook injects a short report brief into every spawned agent
+instead.
+
+**There is no single final message once subagents run.** Every subagent return
+arrives as a new turn, so the assistant stops several times per unit of work
+and each stop is a de facto last message. The measured failure is that the
+standing asks get stated in full once, at the first stop-point, and every later
+stop-point carries them forward as a pointer: "still waiting on those five
+questions", "your two decisions are recorded", "the double-worktree
+redundancy". By the time you read the last message, the thing it points at is
+four messages and forty minutes back.
+
+The Claude Code system prompt already asks for a last message that stands on
+its own. Every measured failure postdates it, across three modes: by-reference
+asks, open items compressed into coined labels, and by-reference results ("as
+reported above"). A `Stop` hook enforces it instead of asking for it.
 
 ## What it ships
 
 | Component | Kind | What |
 | --- | --- | --- |
-| `cutthroat` output style | output style | Terminal-conversation register: no preamble, narration, recap, hedging, filler, or option menus. |
-| `SubagentStart` hook | hook | Injects a short report brief into every spawned subagent, since output styles never reach subagents. |
+| `SubagentStart` hook | hook | Injects a short report brief into every spawned subagent, since output styles never reach them. |
+| `Stop` hook | hook | Blocks the turn once when the final message refers to open questions, decisions, items or results instead of stating them. |
+| `cutthroat` skill | skill | Points the same discipline at a document on request — "trim this doc", "too verbose". |
 
-### Scope
+### The Stop gate
 
-Governs terminal prose only. Documents, specs, plans, commits, PR bodies, code,
-code comments, and translation strings keep their normal register by default —
-a terse spec is a bad spec.
+One call to the default fast model per stop-point reads `last_assistant_message`
+and blocks (`{"ok": false}`) if any of:
 
-That exemption is a default, not a prohibition. Say "be cutthroat" or "that doc
-is too long, trim it" and it applies to that artifact for that piece of work.
+- **(a)** the message says it is waiting on, blocked on, or needs your answer,
+  decision, go-ahead or approval, and does not state each such item in full in
+  that same message;
+- **(b)** it lists open, remaining, deferred or leftover items as bare labels
+  with no one-line meaning;
+- **(c)** it says a result, reason, decision or finding is "above", "earlier",
+  "as discussed", "already reported" or "recorded" instead of stating it.
 
-### Subagents
+Anything else passes, including a message that asks nothing of you. On a block,
+the reason is fed back as Claude's next instruction: resend with a `Waiting on
+you` section listing every open question and decision in full with its options.
 
-Output styles never reach subagents — a subagent runs its own system prompt. A
-`SubagentStart` hook injects a short report brief into every spawned agent
-instead. This matters more than it looks: a subagent's final message lands in
-the parent conversation as a tool result and is re-sent with every later API
-call, so subagent padding is a recurring cost.
+The prompt returns `{"ok": true}` unconditionally when `stop_hook_active` is
+`true`, so the gate can extend a turn by at most one message. Claude Code's own
+cap is 8 consecutive blocks; this never approaches it.
 
-Disable by setting `CUTTHROAT_SUBAGENT=off` in the `env` block of
-`~/.claude/settings.json`.
+### Scope of the skill
+
+Documents, specs, plans, commits, PR bodies, code, code comments and
+translation strings keep their normal register by default — a terse spec is a
+bad spec. That exemption is a default, not a prohibition: say "be cutthroat" or
+"that doc is too long, trim it" and it applies to that artifact for that piece
+of work.
 
 ### What it does not do
 
+- No terminal output style. Whatever register you run — the built-in `Concise`
+  style, a custom one, or the harness default — sets verbosity; this plugin
+  sets none.
 - No token-cost optimisation. The benefit is reading time and signal density.
 - No tool-output or log compression.
-- No enforcement hook. One was designed and cut — see the spec for why.
-- Nothing `my-voice` owns. `my-voice` governs text addressed to other people;
-  `cutthroat` governs text addressed to you.
+- Nothing an author-voice tool owns. This plugin governs the agent's own
+  reporting, not text drafted as a person to other people.
 
 ## Install
 
-Add to `~/.claude/settings.json` by hand:
-
-```json
-{ "outputStyle": "cutthroat:cutthroat" }
+```bash
+/plugin marketplace add mitcsutt/claude-toolbelt
+/plugin install cutthroat@claude-toolbelt
 ```
 
-Takes effect after `/clear` or a new session. Set it to `"Default"` to stop
-the terminal style — but the `SubagentStart` hook (see What it ships) keeps
-running, since it is registered by the plugin and gated only by
-`CUTTHROAT_SUBAGENT`, not by the output style. Disabling the plugin entirely
-is what stops both.
+Both hooks are registered by the plugin and take effect on the next session.
+Nothing needs to go in `~/.claude/settings.json`.
 
-Do **not** use `/config` — it writes to project-local
-`.claude/settings.local.json`, scoping the style to one repo.
+**Migrating from 1.x.** 1.x shipped a `cutthroat` output style activated with
+`"outputStyle": "cutthroat:cutthroat"`. That style is gone: a concise output
+style now covers seven of its nine sections at least as strongly, and two of
+them actively conflicted with the final-message rule this version enforces. If
+you were on `cutthroat:cutthroat`, switch to whatever register you prefer — the
+built-in `Concise` style is the closest equivalent (`"outputStyle": "Concise"`
+in `~/.claude/settings.json`). The eight rules a concise register does not
+carry — the anti-sycophancy stance, state-scope-not-time, the completion block,
+the blocker template, the debug-loop override, Mermaid-past-three-parts, the
+destructive-action scope-of-loss line, and the protocol-opener carve-out — are
+listed as plain rules in the author's own `shared-rules.md` (the companion
+import at this repo's root; it is not shipped with the plugin), and hold under
+any style.
+
+## Usage
+
+Both hooks are passive. The skill fires on "be cutthroat", "cutthroat this",
+"trim this doc", "that document is too long", "too verbose".
+
+## Configuration
+
+| Key | Where | Effect |
+| --- | --- | --- |
+| `CUTTHROAT_SUBAGENT=off` | `env` block of `~/.claude/settings.json` | Stops the `SubagentStart` brief. |
+
+The `Stop` gate has no env-var switch: prompt hooks receive only the hook input
+JSON and cannot read the environment. Disabling the plugin stops both hooks.
+
+**Cost.** The gate is one fast-model call per stop-point, 30s timeout. That is
+per *stop*, not per prompt — a turn with three subagent returns costs three
+calls.
+
+**Known limits.** The gate is model-judged, so expect the occasional false pass
+on a subtle reference and the occasional false block. It does not fire between
+tool calls, by design; those are progress updates. It never sees an
+`AskUserQuestion` turn, because the tool blocks before `Stop` fires — which is
+the desired path anyway.
 
 ## Tests
 
 ```bash
 bash plugins/cutthroat/tests/all.sh
 ```
+
+Structural only, and free to run. Whether the gate actually changes the model's
+final message is graded by `evals/final-message-restates-open-asks`, which costs
+money per run — see [`docs/testing.md`](../../docs/testing.md).
+
+## Related
+
+- The author's `shared-rules.md` (companion import at this repo's root, not
+  shipped with the plugin) — its "Agent voice" and "Final message discipline"
+  sections carry the same rules in prose, including the conventions no hook
+  enforces: route decision batches through `AskUserQuestion`, orchestrators
+  speak once per wave, the plan file holds open decisions but the message still
+  restates them.
+- Author-voice tooling (e.g. a `my-voice` plugin, kept separately) — for text
+  drafted as a person to other people, which this plugin does not touch.
