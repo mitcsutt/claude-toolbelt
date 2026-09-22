@@ -52,6 +52,14 @@ for phrase in "waiting on, blocked on" "bare labels" "as discussed"; do
   assert_true $? "prompt covers the failure mode: $phrase"
 done
 
+# The carve-out: the agent's own in-flight work is a status update, not a user ask.
+printf '%s' "$prompt" | grep -q 'in-flight or background work'
+assert_true $? "prompt exempts the agent's own in-flight/background work from rule 3(a)"
+
+# Hardened JSON contract against fenced/prose replies that fail validation.
+printf '%s' "$prompt" | grep -q 'no code fences'
+assert_true $? "prompt forbids code fences in the JSON response"
+
 # The subagent brief must survive the consolidation.
 assert_eq "1" "$(field "int(bool(d['hooks'].get('SubagentStart')))")" \
   "SubagentStart brief still registered alongside the Stop gate"
