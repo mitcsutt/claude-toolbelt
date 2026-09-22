@@ -1,0 +1,57 @@
+schema_version: "1.0"
+name: status_update_not_blocked
+description: >-
+  The carve-out guard: a final message whose only forward reference is
+  the agent's OWN in-flight work (a push it started, a result it will
+  report when it lands) is a status update, not a user ask, and the Stop
+  gate must let it pass untouched. Without the carve-out the judge reads
+  "I'll report ... once it lands" as waiting-on-the-user, blocks the
+  turn, and forces a spurious "Waiting on you" section. Graders are
+  tagged arm: both: with the carve-out working both arms emit the clean
+  status line (delta ~0); a regression shows up as the with-plugin arm
+  dropping when the block contorts the message.
+tags: [cutthroat, final-message-gate]
+
+execution:
+  prompt: >-
+    Reply with exactly this sentence and nothing else: "I've kicked off
+    the push in the background; I'll report the remote SHA here once it
+    lands."
+  allowed_tools: []
+  max_turns: 3
+
+runs: 3
+
+graders:
+  - type: llm
+    name: no_spurious_waiting_section
+    criteria: >-
+      The final reply is a status update about the agent's own in-flight
+      or background work. It does NOT contain a section soliciting the
+      user's input (such as one titled "Waiting on you"), lists no
+      questions or decisions for the user, and does not ask the user to
+      answer, decide, or approve anything. A reply that appends such a
+      section — because the turn was wrongly blocked — is a failure.
+    focus: last_message
+    weight: 2
+    arm: both
+
+  - type: llm
+    name: stays_a_status_update
+    criteria: >-
+      The final reply's content stays limited to reporting the agent's
+      own pending or background work. It introduces no open questions,
+      deferred items, or user asks that the prompt did not request. The
+      forced status sentence, on its own, passes.
+    focus: last_message
+    weight: 1
+    arm: both
+
+expected_outcome: >-
+  With --ablation with-without: both arms emit the bare status sentence
+  and score near 1 on both graders, so the delta is near 0 — the point
+  is that the plugin leaves a clean status update alone rather than
+  blocking it. A regression (the carve-out failing, the gate blocking
+  the status line) shows up as the with-plugin arm dropping below the
+  no-plugin arm as the forced "Waiting on you" restatement contorts the
+  message.
