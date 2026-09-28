@@ -37,8 +37,9 @@ Don't restate any of it here; link to it.
 
 ## Gotchas
 
-- Hooks are `.mjs`, invoked as `node ${CLAUDE_PLUGIN_ROOT}/hooks/<file>.mjs`
-  — not `.py`, not bare-executable.
+- Hooks are `.mjs`, invoked as `node "${CLAUDE_PLUGIN_ROOT}/hooks/<file>.mjs"`
+  — not `.py`, not bare-executable. Keep the placeholder quoted:
+  `claude plugin validate --strict` fails on an unquoted one.
 - `plugin.json` beats the marketplace entry at install time; never duplicate
   metadata into the entry.
 - `shared-rules.md` reaches subagents via `CLAUDE.md` imports and output
