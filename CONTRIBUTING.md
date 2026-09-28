@@ -42,8 +42,8 @@ and the Node test files. It must exit 0. This is also what CI runs on every
 push and pull request — nothing else.
 
 If your plugin is prompt-shaped (an output style, a routing skill, anything
-graded by how it reads rather than by return codes — `cutthroat`,
-`postmortem`, and `find-docs` are the current examples), also run its eval
+graded by how it reads rather than by return codes — `postmortem` and
+`find-docs` are the current examples), also run its eval
 suite before bumping its version:
 
 ```bash

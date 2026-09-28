@@ -26,6 +26,6 @@ $ bash scripts/test-all.sh
 - [ ] `bash scripts/test-all.sh` passes
 - [ ] New plugin only: added to the root `README.md` table, install block,
       and "Plugin details" section
-- [ ] Prompt-shaped plugin only (`cutthroat`, `postmortem`, `find-docs`): ran
+- [ ] Prompt-shaped plugin only (`postmortem`, `find-docs`): ran
       `claude plugin eval` locally before bumping its version — this is a
       manual step that costs money per run and is never run in CI
