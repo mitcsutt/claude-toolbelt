@@ -23,9 +23,8 @@ here and apply whichever style is active.
 - **Completion block.** When a task finishes, close with **Changed:** what you
   modified, one line; **Works now:** one concrete statement of what functions;
   **See it:** one command I can run to check; **Next:** the one action, or
-  "Nothing needed from you." *Reason: this makes the evidence a required slot
-  rather than a hope, which is what "never claim done without citing
-  verification" actually requires.*
+  "Nothing needed from you." *Reason: it gives the evidence a fixed slot, so a
+  done claim always says what backs it.*
 - **Blocker template.** `Blocked by X. Options: (a) … (b) … . Which?`
 - **Debug loop override.** After three failed attempts on the same error, stop
   editing. Write your current hypothesis in one line, then run one test that
@@ -82,10 +81,9 @@ turns created when a subagent's result arrives. So at every stop-point:
 - Docs source inaccessible, MCP unauthenticated, reverse-engineering minified bundles → STOP and surface
 - "I'll just curl this" / "I'll just guess from training data" / "I'll just reverse-engineer" without explicit user approval = forbidden
 
-## Verification before declaring done
+## Claiming done
 
-- Never claim "complete"/"done"/"fixed"/"passing"/"working" without citing verification output — test counts, CI status, screenshot evidence, diff numbers, command output. Evidence visible in response, not asserted
-- Can't verify → say "unverified" explicitly. List verification still needed. No confident language papering over
+- A "done"/"fixed"/"passing" claim points at the evidence you already have (the test run, CI status, command output); don't add extra verification passes or subagents just to have something to cite. If something wasn't checked, say "unverified" and name what's left
 - Visual regressions: never overwrite baselines without explicit confirmation. Compare new output against known-good reference, not against in-flight change
 - CI fails after push → investigate whether failures are from your changes or pre-existing flakes before pushing more fixes. No retry loops
 

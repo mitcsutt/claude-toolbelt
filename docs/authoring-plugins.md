@@ -31,7 +31,7 @@ Fields in use across this repo's six plugins:
 
 ```json
 {
-  "name": "cutthroat",
+  "name": "permissions",
   "version": "1.0.0",
   "description": "...",
   "author": { "name": "..." }
@@ -62,7 +62,7 @@ entry doesn't carry a description at all (see below).
 each entry carries exactly three keys:
 
 ```json
-{ "name": "cutthroat", "source": "./plugins/cutthroat", "category": "productivity" }
+{ "name": "permissions", "source": "./plugins/permissions", "category": "developer-tools" }
 ```
 
 `name`, `source`, and `category` — nothing else. `scripts/validate.sh` fails
@@ -75,10 +75,10 @@ there is no metadata this format is missing.
 
 Hooks reference their own scripts through this variable rather than a
 relative or absolute path, since a plugin can be installed anywhere. Example,
-from `plugins/cutthroat/hooks/hooks.json`:
+from `plugins/permissions/hooks/hooks.json`:
 
 ```json
-"command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-brief.mjs\""
+"command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs\""
 ```
 
 ## The README skeleton

@@ -31,7 +31,7 @@ Don't restate any of it here; link to it.
       layout, follow the plugin's own schema rule — for `agent-loop`, see
       [Upgrading](plugins/agent-loop/README.md#upgrading-loop-dir-schema)
 - [ ] Re-run `bash scripts/test-all.sh`
-- [ ] For prompt-shaped plugins (`cutthroat`, `postmortem`, `find-docs`), run
+- [ ] For prompt-shaped plugins (`postmortem`, `find-docs`), run
       the eval suite — see [`docs/testing.md`](docs/testing.md). Manual only,
       never CI: evals cost money per run.
 

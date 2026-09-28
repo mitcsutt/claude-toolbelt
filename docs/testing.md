@@ -56,19 +56,19 @@ To run a single layer in isolation:
 ```bash
 bash scripts/validate.sh   # structural invariants only
 bash scripts/lint.sh       # shellcheck only
-bash plugins/cutthroat/tests/all.sh   # one plugin's behavioural tests
+bash plugins/postmortem/tests/all.sh  # one plugin's behavioural tests
 ```
 
 ## Evals (manual, fourth layer)
 
-Prompt-shaped plugins — `cutthroat`, `postmortem`, `find-docs` — are best
+Prompt-shaped plugins — `postmortem`, `find-docs` — are best
 verified by actually running the prompt and grading the output, which is
 what `claude plugin eval` does. An eval suite lives at
 `plugins/<name>/evals/` as `case.yaml` files (or `prompt.md` + graders), and
 is committed to the repo like any other plugin file.
 
 ```bash
-claude plugin eval plugins/cutthroat --threshold 0.8
+claude plugin eval plugins/postmortem --threshold 0.8
 ```
 
 **Evals do not run in CI.** They cost money per run — each case invokes a
@@ -82,14 +82,6 @@ document states, not a gate a script enforces.
 
 ### What's covered
 
-- **`cutthroat`** (3 cases) — `substance-survives-compression` is the
-  anti-caveman regression guard: a dense technical question graded on
-  whether the cause and fix survive, not on brevity. `protected-set-never-cut`
-  checks that a stack trace's `file:line` and exception name survive
-  verbatim. `structure-cut-vs-baseline` tags its graders `arm: both` so
-  running it with `--ablation with-without` reports the with/without score
-  delta — the discriminating signal the style exists to produce. Run without
-  `--ablation`, it scores only the arm under test.
 - **`postmortem`** (2 cases) — `writes-file-despite-no-save-request` checks
   hard-contract #1 (the file is the deliverable even when told to skip
   saving) via a `regex` grader on the created-files list, no LLM judging
@@ -106,11 +98,7 @@ document states, not a gate a script enforces.
 **Status:** authored and schema-validated (`claude plugin eval <path> --case
 <glob-that-matches-nothing>` loads and validates every `case.yaml` in the
 suite at zero cost — a malformed file errors before the "no cases match"
-message). One case (`cutthroat`'s `substance-survives-compression`, single
-run, no ablation) was executed for real to confirm the harness runs a
-committed case end to end; the live agent turn hit an auth error inside the
-eval's isolated sandbox environment rather than producing a real answer, so
-no baseline score is recorded here yet. Run the suites in a normally
+message). No baseline scores are recorded here yet. Run the suites in a normally
 authenticated terminal to get real scores before relying on them.
 
 ## Related
