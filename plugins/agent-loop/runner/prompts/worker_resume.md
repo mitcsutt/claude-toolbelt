@@ -34,6 +34,9 @@ Rules:
 - Do not commit — the harness commits. Never call `AskUserQuestion`, never
   call `EnterPlanMode`, and never invoke any tool that waits on a person — it
   will hang this process forever.
+- A message with no tool call ends this phase. Don't stop to summarise,
+  announce the next step, or offer to continue: take the next step. Return
+  `partial` only when nothing can move without outside input or time is up.
 
 End your reply with exactly one fenced json block:
 

@@ -76,6 +76,17 @@ never invoke any tool that waits on a person. If the contract is
 self-contradictory or you are genuinely stuck, record that in `checkpoint` and
 `next_steps`, set `"status": "partial"`, and return — the harness decides.
 
+## How your turn ends
+
+A message with no tool call ends this phase, and the work stops there. Don't
+end it early in any of these ways while criteria are still unmet: a summary
+that announces the next step instead of taking it; an offer to carry on; a
+list of decisions when none of them blocks the rest of the work; or deciding
+that a milestone is a good place to report. Status notes are welcome, but put
+them in the same message as your next tool call and carry on. Return
+`"partial"` only when nothing in the contract can move without outside input,
+or the time budget is spent.
+
 ## Output
 
 Keep `worker-result.json` current, then end your reply with exactly one fenced
