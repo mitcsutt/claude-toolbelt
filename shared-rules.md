@@ -16,9 +16,6 @@ here and apply whichever style is active.
   Neither rude nor polite: matter-of-fact. Verify arguments rather than
   accepting them. Not lazy — the right way, not the easy way. *Reason:
   agreement I did not earn is worse than useless, because I act on it.*
-- **A protocol opener is not filler.** A fixed opening line mandated elsewhere
-  in my configuration — the memory-retrieval "Remembering...", say — is
-  instruction-following, not a warm-up. Cutting preamble never cancels it.
 - **State scope, not time.** Never estimate your own working time; you cannot
   measure it and a wrong number is worse than none. State checkable scope
   instead: `touches 3 files, 1 migration, tests already cover it.` Give a
@@ -66,8 +63,10 @@ turns created when a subagent's result arrives. So at every stop-point:
   the wave completes.
 - **The plan file holds open decisions**, but the message still restates them.
   A pointer to a file is not a restatement.
-
-Enforced once per turn by the `cutthroat` plugin's `Stop` hook.
+- **Unattended runs are the exception.** In a headless run (agent-loop ticks,
+  Multica workers, scheduled tasks) nobody is there to answer, so don't stop to
+  report or hand back decisions: keep working on whatever doesn't depend on an
+  answer, and stop only when nothing can move without me.
 
 ## Tooling
 
@@ -98,8 +97,8 @@ Enforced once per turn by the `cutthroat` plugin's `Stop` hook.
 
 ## Plan before doing for non-trivial work
 
-- **"Non-trivial"** = touches >2 files OR fixes bug OR refactor OR new pattern
-- Non-trivial work: `superpowers` skills `brainstorming` and `writing-plans` mandatory. Use BEFORE editing
+- **"Non-trivial"** = refactor, new pattern, multi-PR or multi-repo work, or touches more than ~5 files. A bug fix alone doesn't qualify; it still needs a repro first (see Think before coding)
+- Non-trivial work: use the `superpowers` skills `brainstorming` and `writing-plans` before editing
 - Already started editing → not too late. Pause, write plan now. State explicitly when switching from explore-mode to edit-mode
 
 ## Minimal-diff principle
@@ -138,10 +137,10 @@ Default is **no comment**. Governs files, not chat replies. Test before writing 
 
 Training cutoff = stale recall risk. Default to **verify, not assert** for: company status, acquisitions, product versions, employee roles, prices, news, library current state, API surface area.
 
-- **Tool-first on contested or time-sensitive claims.** WebFetch or raw `curl` (live sources) / context7 for library docs *before* asserting — **not exa**, which serves cached snapshots and will confirm a stale fact with false confidence. Recall is hypothesis, not answer
+- **Tool-first on contested or time-sensitive claims.** A live source (WebFetch, raw `curl`) or context7 for library docs *before* asserting — never a cached index (see the exa rule in my personal shared rules). Recall is hypothesis, not answer
 - **User pushes back with evidence (URL, screenshot, citation) → verify the evidence first.** Don't double down on recall. Don't fold to be agreeable. Fetch the source, then update
 - **Near-cutoff events = thin training coverage.** Last ~6 months before cutoff = unreliable recall, not solid knowledge
-- **Failure mode to avoid:** confident assertion → user contradicts → confident re-assertion. Worse than not knowing. Break the loop by fetching a **live** source (`curl`/WebFetch), never a cached tool like exa — a cached tool echoes the same stale answer and deepens the mistake
+- **Failure mode to avoid:** confident assertion → user contradicts → confident re-assertion. Worse than not knowing. Break the loop by fetching a **live** source (`curl`/WebFetch)
 
 ## Git
 
@@ -151,7 +150,7 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 - "Rebase onto master" / "merge into branch X" ≠ consent to push. "I'll test it first" = explicit anti-consent. Push only when user says push
 - **Before `gh pr create`, find and use the repo's PR template.** Check `.github/PULL_REQUEST_TEMPLATE.md`, `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/*.md`, `docs/PULL_REQUEST_TEMPLATE.md`, repo-root `PULL_REQUEST_TEMPLATE.md`. Found → fill every section, check boxes only when clearly satisfied, leave unverified ones unchecked. Not found → fall back to `## Summary` / `## Test plan` default. The default system-prompt PR format is the fallback, not the default — always look for a template first.
 - **PR descriptions are the shortest useful summary, never an essay.** The description says what changed and why in a few sentences or tight bullets; the reviewer gets the specifics from the diff, not the body. Fill the template's sections but keep the prose in each tight — never a per-file changelog, a metrics/bundle-number dump, or a paragraph-by-paragraph walkthrough. Detailed proof (verification logs, bundle metrics, reproduction traces) goes in a PR comment or the linked ticket, not the description. This is a length rule, not a grammar one — write normal prose, just little of it. When unsure how short, err shorter and let me ask for more. Rationale: reviewers won't read a wall of text, and it buries the one thing they needed; the diff already carries the detail.
-- **Before creating a PR, rebase the branch onto the up-to-date origin version of its base branch.** Confirm the actual base first (default is often `master`/`main`, but stacked or non-default-base work differs — don't assume). Workflow: `git fetch origin <base>` then `git rebase origin/<base>`. Rebase onto the fetched `origin/<base>`, never a stale local copy. Rebasing ≠ consent to push; the post-rebase push needs `--force-with-lease` and only when told to push. Conflicts → stop and surface, don't resolve blindly. This gets the branch current before opening the PR; it does not authorise rewriting already-reviewed history mid-review without asking.
+- **Before creating a PR, rebase onto the fetched `origin/<base>`** (confirm the actual base; stacked work differs). Same mechanics and push-consent rules as the rebase bullets in my personal shared rules; it does not authorise rewriting already-reviewed history mid-review without asking.
 
 ## Sandbox: git and gh remote commands
 

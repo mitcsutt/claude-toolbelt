@@ -17,7 +17,7 @@ Contrast with v2: v2's spine was a 300-line prompt that re-read the plan every t
 | `/agent-loop-medic` | skill | Bounded triage-and-repair on an incident — headless under `run.sh` or interactive from `/agent-loop`. Allowlisted fixes only, hard budget, then hands over to a human. |
 | `/agent-loop-postmortem` | skill | Wraps `/postmortem` to close out a loop, aggregating artefacts into a retrospective. |
 | `runner/` | python harness | One process per loop. Owns the lock, heartbeat, events, PAUSE/STOP, phase dispatch, the gate, git, the Judge and the dashboard sidecar. Python 3.9 stdlib only. |
-| `runner/prompts/*.md` | role briefs | One per phase (scout, worker, worker_wrapup, worker_resume, evaluator, judge, planner, reviewer, learner). Each states its JSON output shape and forbids interactive tools. |
+| `runner/prompts/*.md` | role briefs | One per phase (scout, worker, worker_wrapup, worker_resume, evaluator, judge, planner, reviewer, learner). Each states its JSON output shape and forbids interactive tools. The Worker briefs also name the early turn-endings to avoid (summary-then-stop, offers to continue), since Opus 5.5 ends turns with progress reports. |
 | `run.sh` | shim | `exec python3 runner/run.py "$@"` — kept so the dashboard's launcher and every `ps … run.sh` liveness check still work. |
 | `web/serve.py` | dashboard server | Stdlib-only Python server; incremental bounded tail of `events.jsonl`, one shared snapshot over SSE, status derived from events + PID liveness (never the log). Serves the render gate's screenshots at `/api/artifact`. |
 
