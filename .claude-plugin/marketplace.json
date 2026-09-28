@@ -1,6 +1,6 @@
 {
   "name": "claude-toolbelt",
-  "description": "A small kit of narrow, composable Claude Code plugins — permissions tuning, docs retrieval, session visualisation, autonomous loops, postmortems, and a concise output style.",
+  "description": "A small kit of narrow, composable Claude Code plugins — permissions tuning, docs retrieval, session visualisation, autonomous loops, postmortems, orchestration and git helpers.",
   "owner": {
     "name": "Mitchell Sutton"
   },
@@ -10,7 +10,6 @@
     { "name": "session-timeline", "source": "./plugins/session-timeline", "category": "developer-tools" },
     { "name": "agent-loop",       "source": "./plugins/agent-loop",       "category": "developer-tools" },
     { "name": "postmortem",       "source": "./plugins/postmortem",       "category": "productivity" },
-    { "name": "cutthroat",        "source": "./plugins/cutthroat",        "category": "productivity" },
     { "name": "orchestrate",      "source": "./plugins/orchestrate",      "category": "developer-tools" },
     { "name": "git",              "source": "./plugins/git",              "category": "developer-tools" }
   ]
