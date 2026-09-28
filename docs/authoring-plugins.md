@@ -78,7 +78,7 @@ relative or absolute path, since a plugin can be installed anywhere. Example,
 from `plugins/cutthroat/hooks/hooks.json`:
 
 ```json
-"command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-brief.mjs"
+"command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-brief.mjs\""
 ```
 
 ## The README skeleton

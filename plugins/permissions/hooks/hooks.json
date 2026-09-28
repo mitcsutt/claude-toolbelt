@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs\"",
             "timeout": 5
           }
         ]
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/sandbox-watch.mjs",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sandbox-watch.mjs\"",
             "timeout": 5
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/prompt-log.mjs",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-log.mjs\"",
             "timeout": 5
           }
         ]

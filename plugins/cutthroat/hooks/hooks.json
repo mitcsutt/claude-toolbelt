@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/subagent-brief.mjs",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/subagent-brief.mjs\"",
             "timeout": 5
           }
         ]
