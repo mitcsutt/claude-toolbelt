@@ -9,9 +9,8 @@ __pycache__/
 config/ccstatusline/*.bak
 config/ccstatusline/*.tmp
 
-# Superpowers artefacts: specs are tracked (design rationale is durable),
-# plans and sdd scaffolding are not (transient execution state).
-docs/superpowers/plans/
+# Superpowers artefacts (specs, plans, sdd scaffolding) are not tracked.
+docs/superpowers/
 .superpowers/
 
 # claude plugin eval's default --output-dir: run artefacts, not suite content.

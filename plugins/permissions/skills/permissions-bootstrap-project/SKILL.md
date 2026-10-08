@@ -142,7 +142,7 @@ No restart is required — the matcher reads settings on each tool call, so new 
 Project bootstrap applied for webapp
 ══════════════════════════════════
   ✓ Bash(pnpm turbo:*)              → <cwd>/.claude/settings.json :: permissions.allow
-  ✓ mcp__plugin_api-acme-*    → <cwd>/.claude/settings.json :: permissions.allow
+  ✓ mcp__plugin_api-acme-*          → <cwd>/.claude/settings.json :: permissions.allow
   ✓ Bash(cd .../storybook *)        → <cwd>/.claude/settings.local.json :: permissions.allow
   ✓ Bash(docker compose:*)          → <cwd>/.claude/settings.json :: permissions.ask (HIGH, demoted)
   ○ Bash(rm -rf .next *)            → skipped (conflicts with global deny)

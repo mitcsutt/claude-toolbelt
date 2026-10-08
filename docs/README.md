@@ -12,7 +12,3 @@ two places, one of them is wrong.
   `${CLAUDE_PLUGIN_ROOT}`, the README skeleton, versioning, file modes.
 - [`testing.md`](testing.md) — the three enforcement layers (structural,
   behavioural, repo-wide runner) plus the manual eval layer.
-
-`superpowers/specs/` holds tracked design specs — the rationale and
-decisions behind past changes to this repo. It documents *why*, not *what's
-currently true*; for current convention, use the three files above.

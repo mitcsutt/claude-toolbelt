@@ -22,8 +22,7 @@ claude-toolbelt/
 │   ├── README.md
 │   ├── repo-structure.md
 │   ├── authoring-plugins.md
-│   ├── testing.md
-│   └── superpowers/specs/             # tracked design specs (rationale, decisions)
+│   └── testing.md
 ├── plugins/<name>/                    # one directory per plugin — see docs/authoring-plugins.md
 ├── scripts/                           # repo-wide, not plugin-scoped
 │   ├── validate.sh                    # structural invariants (R1, R2, R4, R5, R6, R9)
@@ -47,9 +46,8 @@ claude-toolbelt/
   do.
 - **`docs/`** — every repo convention, written once. `README.md` and
   `CLAUDE.md` link into this directory rather than restating what's here
-  (R10). `docs/superpowers/specs/` holds tracked design rationale for past
-  changes; `docs/superpowers/plans/` and `.superpowers/` are execution
-  scaffolding and stay gitignored.
+  (R10). `docs/superpowers/` and `.superpowers/` are execution scaffolding
+  and stay gitignored.
 - **`scripts/`** — checks that apply across all plugins, implemented once.
   A check that only makes sense for one plugin belongs in that plugin's
   `tests/`, not here.

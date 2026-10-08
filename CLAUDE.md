@@ -44,8 +44,7 @@ Don't restate any of it here; link to it.
   metadata into the entry.
 - `shared-rules.md` reaches subagents via `CLAUDE.md` imports and output
   styles — output styles alone do **not** reach subagents.
-- `docs/superpowers/plans/` and `.superpowers/` are gitignored;
-  `docs/superpowers/specs/` is tracked.
+- `docs/superpowers/` and `.superpowers/` are gitignored.
 - macOS ships bash 3.2 (`/bin/bash --version`): no `mapfile`, no
   `declare -A`, no `${var,,}`. Under `set -u`, expanding `"${arr[@]}"` on an
   **empty** array is fatal; `${#arr[@]}` is safe.
