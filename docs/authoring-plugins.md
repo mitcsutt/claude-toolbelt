@@ -139,6 +139,11 @@ out via `/bin/sh -c` and requires the target to be directly executable. That
 is why `config/ccstatusline/ccsl-*.sh` sit on the R9 allowlist alongside
 `run.sh`, which a shell also invokes directly (e.g. `./run.sh`).
 
+Plugin `bin/` commands are the same case: Claude Code puts a plugin's `bin/`
+on the Bash tool's PATH and Claude runs them as bare commands
+([plugins reference](https://code.claude.com/docs/en/plugins-reference#standard-layout)),
+so `plugins/permissions/bin/perm-scan` and `perm-apply` are on the allowlist too.
+
 ## Related
 
 - [`docs/repo-structure.md`](repo-structure.md) — where a plugin sits

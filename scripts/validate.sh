@@ -33,6 +33,8 @@ config/ccstatusline/ccsl-sandbox.sh
 plugins/agent-loop/run.sh
 plugins/agent-loop/tests/fixtures/claude
 plugins/agent-loop/tests/fixtures/dashboard-stub
+plugins/permissions/bin/perm-apply
+plugins/permissions/bin/perm-scan
 scripts/lint.sh
 scripts/test-all.sh
 scripts/validate.sh"

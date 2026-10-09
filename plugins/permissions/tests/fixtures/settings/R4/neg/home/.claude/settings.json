@@ -1,0 +1,10 @@
+{
+  "env": {
+    "EXA_API_KEY": "sk-SECRET-VALUE-123"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)"
+    ]
+  }
+}

@@ -8,7 +8,7 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 
 | Plugin             | What it does                                                                                                                                  |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `permissions`       | Logs every tool call and gives you skills to turn the patterns into `settings.json` allow rules that bypass Auto-mode's classifier — plus a read-only, prospective pre-flight check. |
+| `permissions`       | Finds unsafe, dead and contradictory permission rules across managed/user/project/local settings, alerts you at session start, and tidies them via `/permissions-review` — plus a read-only pre-flight check. |
 | `find-docs`         | Pulls fresh library docs, code examples, and does people/company research via Context7 and Exa MCPs.                                          |
 | `session-timeline`  | Generates a self-contained HTML visualization of a Claude Code session — stats, tool usage, subagent cards, chronological timeline.            |
 | `agent-loop`        | Autonomous coding loop for long-running multi-task work — a Python harness owns the state machine and runs one phase at a time as its own headless process, each with its own model tier, timeout and budget. Screenshots the product before it commits, resumes or splits a timed-out worker, settles what it can into an auditable decisions ledger, and hands over to a human through a budgeted `/agent-loop-medic` when it cannot. Requires `superpowers`; bundles `postmortem` and uses the `permissions` plugin's `/permissions-advisor`. |
@@ -35,7 +35,7 @@ Add this marketplace, then install whichever plugins you want:
 
 ### [`permissions`](plugins/permissions/README.md)
 
-A thin observability layer that complements Claude Code's built-in Auto mode: three hooks log every tool call, prompt, and detected sandbox denial, and seven skills turn that history into allow rules — `/permissions-seed` (curated baseline from recipes), `/permissions-audit` (surface classifier-hitting patterns), `/permissions-promote` (turn a hitter into a rule), `/permissions-lint` (catch matcher-syntax pitfalls and conflicts), `/permissions-bootstrap-project` (project-scoped rules), `/sandbox-fix` (fixes from logged sandbox denials), and `/permissions-advisor` (read-only, prospective pre-flight check against a task's inferred commands).
+Audits the permission rules you already have instead of logging every call. `perm-scan` (on PATH while the plugin is enabled) checks managed, user, project and local settings for risky allow rules, dead or shadowed rules, and leftover one-off literals, and reads recent transcripts for friction. A `SessionStart` hook warns via `systemMessage` when a new high-risk rule appears. `/permissions-review` explains the findings and proposes changes that `perm-apply` writes, with backup and dry-run, only after you approve. `/permissions-advisor` is the read-only, prospective pre-flight check against a task's inferred commands. Sandbox checks apply only when `sandbox.enabled` is true. There are no per-tool-call hooks; upgrading from 2.x archives the old logs automatically (see the plugin README).
 
 ### [`find-docs`](plugins/find-docs/README.md)
 

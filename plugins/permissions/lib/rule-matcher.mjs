@@ -1,18 +1,18 @@
 // Port of Claude Code permission rule matching semantics.
-// Canonical spec: plugins/permissions/references/rule-syntax.md
+// Semantics follow https://code.claude.com/docs/en/permissions#permission-rule-syntax
 //
 // Single export: matchRule(rule, entry) -> boolean
 //   rule:  string like "Bash(git:*)", "Read(~/.ssh/**)", "Read", "mcp__exa__*"
 //   entry: { tool: string, detail: string }
 //
-// Used by: permissions-audit, permissions-lint, permissions-promote,
-// permissions-bootstrap-project. Keep this contract stable.
+// Used by: lib/checks.mjs, lib/scan.mjs and `perm-scan check`.
+// Keep this contract stable.
 
 import { homedir } from "node:os";
 
 // Strip leading env-var assignments from a Bash detail.
 //   "FOO=bar NODE_ENV=test git status" -> "git status"
-// Per rule-syntax.md: "Claude extracts the first word of the command after
+// Per the permissions docs: "Claude extracts the first word of the command after
 // stripping leading environment variable assignments."
 function stripEnv(detail) {
   return (detail ?? "").replace(/^([A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)+/, "");
@@ -24,7 +24,7 @@ function stripEnv(detail) {
 //   "**"   -> ".*"   (crosses directory levels)
 //   "*"    -> "[^/]*" (within one directory level)
 //
-// Bash mode: `*` matches any characters including "/" per rule-syntax.md
+// Bash mode: `*` matches any characters including "/" per the permissions docs
 // ("`*` in Bash patterns matches any characters (including spaces)").
 //
 // Regex metacharacters are escaped. This is intentionally minimal — no brace
@@ -102,7 +102,7 @@ function matchBashArg(arg, detail) {
     return globToRegex(arg, { bash: true }).test(detail);
   }
 
-  // Literal: Bash(cmd) matches exactly "cmd" (no args). Per rule-syntax.md:
+  // Literal: Bash(cmd) matches exactly "cmd" (no args). Per the permissions docs:
   // "Bash(cmd) Matches cmd with NO arguments".
   return detail === arg;
 }
@@ -135,4 +135,114 @@ export function matchRule(rule, entry) {
   }
 
   return matchPathArg(parsed.arg, entry.detail ?? "");
+}
+
+export { parseRule };
+
+// ---------------------------------------------------------------------------
+// Compound-command handling (P5: https://code.claude.com/docs/en/permissions)
+// ---------------------------------------------------------------------------
+
+// Split a shell command on && || ; | |& & newline, respecting simple quotes.
+// `2>&1`, `&>` and `>&` are redirects, not separators.
+export function splitCompound(cmd) {
+  const s = typeof cmd === "string" ? cmd : "";
+  const out = [];
+  let cur = "";
+  let quote = null;
+  const flush = () => {
+    const t = cur.trim();
+    if (t) out.push(t);
+    cur = "";
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      cur += c;
+      if (c === "\\" && quote === '"' && i + 1 < s.length) cur += s[++i];
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "\\" && i + 1 < s.length) {
+      cur += c + s[++i];
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      cur += c;
+      continue;
+    }
+    if (c === "\n" || c === ";") {
+      flush();
+    } else if (c === "&") {
+      const prev = s[i - 1];
+      const next = s[i + 1];
+      if (next === "&") {
+        flush();
+        i++;
+      } else if (prev === ">" || prev === "<" || next === ">") {
+        cur += c; // redirect
+      } else {
+        flush();
+      }
+    } else if (c === "|") {
+      flush();
+      if (s[i + 1] === "|" || s[i + 1] === "&") i++;
+    } else {
+      cur += c;
+    }
+  }
+  flush();
+  return out;
+}
+
+const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S)*\s+/;
+const WRAPPER_RES = [
+  /^timeout\s+(?:-\S+\s+)*\d[\w.]*\s+/,
+  /^time\s+/,
+  /^nice\s+(?:-n\s*-?\d+\s+|-\d+\s+)?/,
+  /^nohup\s+/,
+  /^stdbuf(?:\s+-[ioe]\s+\S+|\s+-[ioe]\S+)*\s+/,
+  /^command\s+/,
+  /^builtin\s+/,
+  /^noglob\s+/,
+  /^xargs\s+(?!-)/,
+];
+
+// Remove leading env assignments and transparent wrappers, repeatedly.
+export function stripWrappers(cmd) {
+  let s = (typeof cmd === "string" ? cmd : "").trim();
+  for (let guard = 0; guard < 50; guard++) {
+    let next = s.replace(ENV_ASSIGN, "");
+    if (next === s) {
+      for (const re of WRAPPER_RES) {
+        const m = re.exec(s);
+        if (m && s.slice(m[0].length).trim() !== "") {
+          next = s.slice(m[0].length);
+          break;
+        }
+      }
+    }
+    next = next.trim();
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
+const MULTI_COMMAND_TOOLS = new Set([
+  "git", "gh", "npm", "pnpm", "yarn", "bun", "npx", "docker", "kubectl",
+  "cargo", "go", "uv", "pip", "pip3", "brew", "terraform", "aws", "gcloud", "make",
+]);
+
+// First word of the (wrapper-stripped) first segment, plus the subcommand for
+// multi-command tools when the second word is not a flag.
+export function commandHead(cmd) {
+  const first = splitCompound(cmd)[0] ?? "";
+  const words = stripWrappers(first).split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "";
+  if (MULTI_COMMAND_TOOLS.has(words[0]) && words[1] && !words[1].startsWith("-")) {
+    return `${words[0]} ${words[1]}`;
+  }
+  return words[0];
 }

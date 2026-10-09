@@ -118,7 +118,7 @@ subagent. They shape how work is split, not which model or agent does it.
 ## Plan before doing for non-trivial work
 
 - **"Non-trivial"** = refactor, new pattern, multi-PR or multi-repo work, or touches more than ~5 files. A bug fix alone doesn't qualify; it still needs a repro first (see Think before coding)
-- Non-trivial work: use the `superpowers` skills `brainstorming` and `writing-plans` before editing
+- Non-trivial work: write a design and an implementation plan, and get approval, before editing
 - Already started editing → not too late. Pause, write plan now. State explicitly when switching from explore-mode to edit-mode
 
 ## Minimal-diff principle
@@ -174,7 +174,7 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 
 ## Sandbox: git and gh remote commands
 
-`git` and `gh` are in `permissions.sandbox.excludedCommands`, so a command **whose first token is `git` or `gh` runs outside the sandbox automatically** — full network and filesystem access, no `dangerouslyDisableSandbox` needed. Remote ops (`push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`) and local `.git` writes (`worktree remove`, `branch -D`, `checkout`) just work when invoked bare. The real blocker was never `~/.ssh` read access (the sandbox reads `~/.ssh` by default per current docs); it is **network egress**, which the exclusion sidesteps.
+This section applies only when `sandbox.enabled` is true. `git` and `gh` are in the top-level `sandbox.excludedCommands` ([docs](https://code.claude.com/docs/en/sandboxing)), so a command **whose first token is `git` or `gh` runs outside the sandbox automatically** — full network and filesystem access, no `dangerouslyDisableSandbox` needed. Remote ops (`push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`) and local `.git` writes (`worktree remove`, `branch -D`, `checkout`) just work when invoked bare. The real blocker was never `~/.ssh` read access (the sandbox reads `~/.ssh` by default per current docs); it is **network egress**, which the exclusion sidesteps.
 
 - **Never wrap git/gh behind another command.** `excludedCommands` matches the *first token* only. `cd /path && git push` has head `cd`, so the whole line runs sandboxed and the remote op fails. Use `git -C <path> push` / `gh -R <repo> …` instead — the head stays `git`/`gh` and the exclusion applies. This also keeps `file:line`-style paths ctrl-clickable.
 - **Do not prefix git/gh with `source …`, `echo … &&`, `export … &&`, or `bash script.sh`** for the same reason — the head is no longer `git`/`gh`.
