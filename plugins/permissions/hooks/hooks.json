@@ -1,37 +1,12 @@
 {
-  "description": "PreToolUse: log every tool call. PostToolUse(Bash): detect sandbox/SSH/fs denials. UserPromptSubmit: correlation log.",
+  "description": "SessionStart: archive 2.x logs once, then warn (systemMessage only) about new HIGH-risk permission rules.",
   "hooks": {
-    "PreToolUse": [
+    "SessionStart": [
       {
-        "matcher": "",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sandbox-watch.mjs\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-log.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-alert.mjs\"",
             "timeout": 5
           }
         ]

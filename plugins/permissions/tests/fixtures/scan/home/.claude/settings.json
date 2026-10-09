@@ -1,0 +1,8 @@
+{
+  "env": { "MY_API_TOKEN": "topsecretvalue123" },
+  "permissions": {
+    "allow": ["Bash(git status:*)", "Bash(npm test)", "Bash(timeout:*)"],
+    "ask": ["Bash(git push:*)"],
+    "deny": ["Bash(rm -rf:*)", "Bash(git push --force:*)"]
+  }
+}

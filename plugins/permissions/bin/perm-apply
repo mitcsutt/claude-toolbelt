@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+// Thin launcher; logic lives in ../lib/apply.mjs. Extension-less, so node loads this as CommonJS.
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const here = path.dirname(fs.realpathSync(__filename));
+import(pathToFileURL(path.join(here, '..', 'lib', 'apply.mjs')).href).then(
+  (m) => { process.exitCode = m.main(process.argv.slice(2)); },
+  (e) => { process.stderr.write(`perm-apply: ${e.message}\n`); process.exitCode = 1; },
+);
