@@ -1,7 +1,7 @@
 {
   "name": "permissions",
-  "version": "2.3.2",
-  "description": "Logs tool calls + sandbox denials + user prompts; provides /permissions-seed, /permissions-audit, /permissions-promote, /sandbox-fix, /permissions-lint, /permissions-bootstrap-project, and /permissions-advisor for tuning settings.json against real and anticipated usage and recovering from sandbox restrictions",
+  "version": "3.0.0",
+  "description": "Finds unsafe, dead and contradictory permission rules across managed/user/project/local settings. SessionStart alert, /permissions-review, /permissions-advisor, perm-scan and perm-apply commands. No per-call hooks. Sandbox checks only when sandbox.enabled is true.",
   "author": {
     "name": "Mitchell Sutton"
   }

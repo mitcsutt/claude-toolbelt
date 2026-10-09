@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+// Thin launcher; logic lives in ../lib/scan.mjs. Extension-less, so node loads this as CommonJS.
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+const here = path.dirname(fs.realpathSync(__filename));
+import(pathToFileURL(path.join(here, '..', 'lib', 'scan.mjs')).href).then(
+  (m) => { Promise.resolve(m.main(process.argv.slice(2))).then((c) => { process.exitCode = c; }); },
+  (e) => { process.stderr.write(`perm-scan: ${e.message}\n`); process.exitCode = 1; },
+);

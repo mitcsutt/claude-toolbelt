@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { homedir } from "node:os";
 import { matchRule } from "./rule-matcher.mjs";
 
-// --- Plan's 7 baseline tests (semantics per references/rule-syntax.md) ---
+// --- Plan's 7 baseline tests (semantics per https://code.claude.com/docs/en/permissions) ---
 // Note: the plan's bullet asserted `Bash(eval:*)` must return false for "eval foo",
-// but references/rule-syntax.md and the parallel `Bash(git:*)` test both require
+// but the permissions docs (https://code.claude.com/docs/en/permissions) and the parallel `Bash(git:*)` test both require
 // `Bash(cmd:*)` to match `cmd ARGS`. We treat the eval bullet as a transcription
-// error and follow the reference doc here. See report.
-test("Bash(eval:*) matches a literal 'eval foo' (per rule-syntax.md)", () => {
+// error and follow the docs here. See report.
+test("Bash(eval:*) matches a literal 'eval foo' (per https://code.claude.com/docs/en/permissions)", () => {
   assert.equal(matchRule("Bash(eval:*)", { tool: "Bash", detail: "eval foo" }), true);
 });
 
@@ -146,4 +146,38 @@ test("Bash(git push --force*) matches bare git push --force", () => {
 test("Read(**/.env) matches nested path but not bare .env", () => {
   assert.equal(matchRule("Read(**/.env)", { tool: "Read", detail: "foo/bar/.env" }), true);
   assert.equal(matchRule("Read(**/.env)", { tool: "Read", detail: ".env" }), false);
+});
+
+// --- Compound handling (P5) ---
+import { splitCompound, stripWrappers, commandHead } from "./rule-matcher.mjs";
+
+test("splitCompound splits on all P5 separators", () => {
+  assert.deepEqual(splitCompound("a && b || c ; d | e |& f & g\nh"), ["a", "b", "c", "d", "e", "f", "g", "h"]);
+});
+
+test("splitCompound respects quotes and redirects", () => {
+  assert.deepEqual(splitCompound(`echo "a && b" | grep 'x;y'`), [`echo "a && b"`, `grep 'x;y'`]);
+  assert.deepEqual(splitCompound("make 2>&1 | tee out &> log"), ["make 2>&1", "tee out &> log"]);
+  assert.deepEqual(splitCompound(""), []);
+});
+
+test("stripWrappers removes env + wrappers repeatedly", () => {
+  assert.equal(stripWrappers("FOO=1 timeout 30 nice -n 5 nohup git status"), "git status");
+  assert.equal(stripWrappers("time command builtin noglob ls"), "ls");
+  assert.equal(stripWrappers("stdbuf -oL xargs grep x"), "grep x");
+  assert.equal(stripWrappers("A='x y' B=2 npm test"), "npm test");
+});
+
+test("stripWrappers keeps xargs with flags and a lone wrapper", () => {
+  assert.equal(stripWrappers("xargs -I {} sh -c x"), "xargs -I {} sh -c x");
+  assert.equal(stripWrappers("time"), "time");
+});
+
+test("commandHead: first word, plus subcommand for multi-command tools", () => {
+  assert.equal(commandHead("git status && ls"), "git status");
+  assert.equal(commandHead("FOO=1 timeout 5 npm run build"), "npm run");
+  assert.equal(commandHead("git -C x status"), "git");
+  assert.equal(commandHead("ls -la"), "ls");
+  assert.equal(commandHead("cd x && git push"), "cd");
+  assert.equal(commandHead(""), "");
 });

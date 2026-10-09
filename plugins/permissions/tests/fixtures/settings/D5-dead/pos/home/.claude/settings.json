@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "sandbox": {
+      "filesystem": {
+        "allowWrite": [
+          "/x"
+        ]
+      }
+    }
+  }
+}

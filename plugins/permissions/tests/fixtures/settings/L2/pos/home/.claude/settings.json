@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "sandbox": {
+      "filesystem": {
+        "allowWrite": [
+          "/x"
+        ]
+      }
+    },
+    "allow": [
+      "Skill(permissions-audit)"
+    ]
+  }
+}
