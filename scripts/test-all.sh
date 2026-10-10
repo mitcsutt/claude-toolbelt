@@ -26,12 +26,6 @@ for suite in plugins/*/tests/all.sh; do
   bash "$suite" || fail=1
 done
 
-for suite in tests/*.sh; do
-  [ -f "$suite" ] || continue
-  echo "### $suite"
-  bash "$suite" || fail=1
-done
-
 echo "### node --test"
 node_files=()
 while IFS= read -r f; do

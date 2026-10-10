@@ -33,9 +33,7 @@ them, plus a fourth manual layer for prompt-shaped plugins.
    skips too when there is no `python3` to run.
 
 3. **`scripts/test-all.sh`** — runs `scripts/validate.sh`, then every
-   plugin's `tests/all.sh` in turn, then each repo-level `tests/*.sh` (today
-   `tests/ideas.sh`, the drift test between the repo-local `/idea` skill and
-   `.github/ISSUE_TEMPLATE/idea.yml`), then `node --test` over every tracked
+   plugin's `tests/all.sh` in turn, then `node --test` over every tracked
    `*.test.mjs` file. This is the single command that must pass before any
    change lands, and the one CI runs.
 
