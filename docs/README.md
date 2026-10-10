@@ -10,5 +10,6 @@ two places, one of them is wrong.
 - [`authoring-plugins.md`](authoring-plugins.md) — the reference for
   building a plugin: layout, `plugin.json`, marketplace entries,
   `${CLAUDE_PLUGIN_ROOT}`, the README skeleton, versioning, file modes.
+- [`ideas.md`](ideas.md) — the idea issue lifecycle and label set.
 - [`testing.md`](testing.md) — the three enforcement layers (structural,
   behavioural, repo-wide runner) plus the manual eval layer.

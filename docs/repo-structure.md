@@ -7,12 +7,15 @@ or directory isn't in this tree, ask whether it belongs before adding it.
 claude-toolbelt/
 ├── .claude-plugin/marketplace.json    # marketplace manifest — thin, see below
 ├── .github/
+│   ├── dependabot.yml                 # weekly github-actions updates
 │   ├── workflows/ci.yml               # validate + lint + test-all, on push/PR
-│   ├── ISSUE_TEMPLATE/                # bug_report.md, plugin_request.md
+│   ├── ISSUE_TEMPLATE/                # bug_report.md, plugin_request.md, idea.yml
 │   └── pull_request_template.md
+├── .claude/skills/idea/               # repo-local /idea skill (not a marketplace plugin) — see docs/ideas.md
 ├── CLAUDE.md                          # agent-facing rules and checklists
 ├── CONTRIBUTING.md                    # human-facing contribution guide
 ├── LICENSE
+├── SECURITY.md                        # vulnerability reporting policy
 ├── README.md                          # OSS front door: what this is, install, plugin list
 ├── shared-rules.md                    # this author's personal Claude Code rules (not repo policy)
 ├── config/                            # tracked non-plugin configuration
@@ -22,13 +25,16 @@ claude-toolbelt/
 │   ├── README.md
 │   ├── repo-structure.md
 │   ├── authoring-plugins.md
+│   ├── ideas.md
 │   └── testing.md
 ├── plugins/<name>/                    # one directory per plugin — see docs/authoring-plugins.md
 ├── scripts/                           # repo-wide, not plugin-scoped
 │   ├── validate.sh                    # structural invariants (R1, R2, R4, R5, R6, R9)
 │   ├── test-all.sh                    # validate + every plugin's tests/all.sh + node --test
 │   └── lint.sh                        # repo-wide shell lint — see docs/testing.md
-└── tests/lib/assert.sh                # shared bash assertion helper — the only copy (R6)
+└── tests/
+    ├── ideas.sh                       # drift tests: /idea skill vs idea.yml (run by test-all.sh)
+    └── lib/assert.sh                  # shared bash assertion helper — the only copy (R6)
 ```
 
 ## What belongs where, and what doesn't
