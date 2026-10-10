@@ -32,9 +32,7 @@ claude-toolbelt/
 │   ├── validate.sh                    # structural invariants (R1, R2, R4, R5, R6, R9)
 │   ├── test-all.sh                    # validate + every plugin's tests/all.sh + node --test
 │   └── lint.sh                        # repo-wide shell lint — see docs/testing.md
-└── tests/
-    ├── ideas.sh                       # drift tests: /idea skill vs idea.yml (run by test-all.sh)
-    └── lib/assert.sh                  # shared bash assertion helper — the only copy (R6)
+└── tests/lib/assert.sh                # shared bash assertion helper — the only copy (R6)
 ```
 
 ## What belongs where, and what doesn't

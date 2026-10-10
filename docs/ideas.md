@@ -16,4 +16,3 @@ marketplace plugin). Ideas may be solution-open: only **Problem** is required.
 ## Related
 
 - [`docs/repo-structure.md`](repo-structure.md) - where the skill and issue templates sit.
-- `tests/ideas.sh` keeps the skill and the form from drifting apart.
