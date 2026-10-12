@@ -1,0 +1,1 @@
+{"permissions":{"allow":["Bash(curl:*)","Bash(bash:*)"],"deny":["Bash(curl * | sh)","Bash(curl * | bash)"]}}

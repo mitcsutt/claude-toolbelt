@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { homedir } from "node:os";
-import { matchRule } from "./rule-matcher.mjs";
+import { matchRule, splitCompound, stripWrappers, commandHead } from "./rule-matcher.mjs";
 
 // --- Plan's 7 baseline tests (semantics per https://code.claude.com/docs/en/permissions) ---
 // Note: the plan's bullet asserted `Bash(eval:*)` must return false for "eval foo",
@@ -143,13 +143,12 @@ test("Bash(git push --force*) matches bare git push --force", () => {
   assert.equal(matchRule("Bash(git push --force*)", { tool: "Bash", detail: "git push --force" }), true);
 });
 
-test("Read(**/.env) matches nested path but not bare .env", () => {
+test("Read(**/.env) matches nested path and bare .env (zero dirs, gitignore semantics)", () => {
   assert.equal(matchRule("Read(**/.env)", { tool: "Read", detail: "foo/bar/.env" }), true);
-  assert.equal(matchRule("Read(**/.env)", { tool: "Read", detail: ".env" }), false);
+  assert.equal(matchRule("Read(**/.env)", { tool: "Read", detail: ".env" }), true);
 });
 
 // --- Compound handling (P5) ---
-import { splitCompound, stripWrappers, commandHead } from "./rule-matcher.mjs";
 
 test("splitCompound splits on all P5 separators", () => {
   assert.deepEqual(splitCompound("a && b || c ; d | e |& f & g\nh"), ["a", "b", "c", "d", "e", "f", "g", "h"]);
@@ -178,6 +177,92 @@ test("commandHead: first word, plus subcommand for multi-command tools", () => {
   assert.equal(commandHead("FOO=1 timeout 5 npm run build"), "npm run");
   assert.equal(commandHead("git -C x status"), "git");
   assert.equal(commandHead("ls -la"), "ls");
-  assert.equal(commandHead("cd x && git push"), "cd");
+  assert.equal(commandHead("cd x && git push"), "git push"); // cd is setup, skipped (3.1)
   assert.equal(commandHead(""), "");
+});
+
+// ---- 3.1 fix round (audit3 S1-S5, audit1 #7, #12) -----------------------------------
+
+const B = (rule, detail, extra = {}) => matchRule(rule, { tool: "Bash", detail, ...extra });
+
+test("S1: trailing ' *' as the only wildcard also matches the bare command", () => {
+  assert.equal(B("Bash(ls *)", "ls"), true);
+  assert.equal(B("Bash(npm run *)", "npm run"), true);
+  assert.equal(B("Bash(ls *)", "lsof"), false);
+  assert.equal(B("Bash(* --help *)", "npm --help"), false);
+  assert.equal(B("Bash(git:*)", "git"), true);
+});
+
+test("S2: bare mcp__server matches every tool of that server only", () => {
+  assert.equal(matchRule("mcp__srv", { tool: "mcp__srv__t" }), true);
+  assert.equal(matchRule("mcp__srv", { tool: "mcp__srv2__t" }), false);
+  assert.equal(matchRule("mcp__srv", { tool: "mcp__srv" }), true);
+  assert.equal(matchRule("mcp__srv__t", { tool: "mcp__srv__u" }), false);
+});
+
+test("S3: env stripping: allow strips only safe vars, deny (anyEnv) strips any", () => {
+  assert.equal(B("Bash(git status)", "PATH=/evil git status"), false);
+  assert.equal(B("Bash(git status)", "LD_PRELOAD=x git status"), false);
+  assert.equal(B("Bash(git status)", "FOO=$(x) git status"), false);
+  assert.equal(B("Bash(git status)", "NODE_ENV=test LC_ALL=C TZ=UTC git status"), true);
+  assert.equal(B("Bash(git status)", "NODE_ENV=$(x) git status"), false);
+  assert.equal(B("Bash(git status)", "PATH=/evil git status", { anyEnv: true }), true);
+  assert.equal(B("Bash(rm *)", 'FOO="a b" rm -rf tmp', { anyEnv: true }), true);
+});
+
+test("stripWrappers: quoted and $( ) env values are consumed whole (audit1 #7)", () => {
+  assert.equal(stripWrappers('N="/p/iso v7.6.2 - React admin"; x'), 'N="/p/iso v7.6.2 - React admin"; x'); // `;` is not whitespace: not an env prefix
+  assert.equal(stripWrappers('N="a b c" x'), "x");
+  assert.equal(stripWrappers("R=$(ls -d x*)/y cmd args"), "cmd args");
+  assert.equal(stripWrappers("J=`readlink -f a` cmd"), "cmd");
+  assert.equal(stripWrappers("A='x y' B=2 npm test"), "npm test");
+  assert.equal(stripWrappers("FOO=bar"), "FOO=bar");
+  assert.equal(stripWrappers("PATH=x git status", { forAllow: true }), "PATH=x git status");
+  assert.equal(stripWrappers("CI=1 PATH=x git status", { forAllow: true }), "PATH=x git status");
+  assert.equal(stripWrappers("timeout -s KILL 5 rm x"), "rm x");
+  assert.equal(stripWrappers("command -v rm"), "command -v rm");
+});
+
+test("splitCompound: no splits inside $( ), ( ), backticks, comments, heredocs; >| is a redirect", () => {
+  assert.deepEqual(splitCompound("echo $(rm -rf x; ls)"), ["echo $(rm -rf x; ls)"]);
+  assert.deepEqual(splitCompound("(cd x; ls) && pwd"), ["(cd x; ls)", "pwd"]);
+  assert.deepEqual(splitCompound("echo `a;b` ; ls"), ["echo `a;b`", "ls"]);
+  assert.deepEqual(splitCompound("echo x >| f"), ["echo x >| f"]);
+  assert.deepEqual(splitCompound("x <<EOF\na;b\nEOF"), ["x <<EOF"]);
+  assert.deepEqual(splitCompound("cat <<EOF && ls\nbody; rm\nEOF\npwd"), ["cat <<EOF", "ls", "pwd"]);
+  assert.deepEqual(splitCompound("echo # c; rm"), ["echo"]);
+  assert.deepEqual(splitCompound('git commit -m "$(cat <<\'EOF\'\nmsg ) ; here\nEOF\n)" && ls'), ['git commit -m "$(cat <<\'EOF\'\nmsg ) ; here\nEOF\n)"', "ls"]);
+  assert.deepEqual(splitCompound('NR="$(gh api user --jq \'"\\(.id)"\')" && git status'), ['NR="$(gh api user --jq \'"\\(.id)"\')"', "git status"]);
+});
+
+test("S5: path rule resolution", () => {
+  const ctx = { cwd: "/proj", home: "/home/u" };
+  const R = (rule, detail, extra = {}) => matchRule(rule, { tool: "Read", detail, ...ctx, ...extra });
+  assert.equal(R("Read(//etc/**)", "/etc/passwd"), true);
+  assert.equal(R("Read(/src/**)", "/src/a"), false);
+  assert.equal(R("Read(/src/**)", "/proj/src/a"), true);
+  assert.equal(R("Read(/src/**)", "/home/u/.claude/src/a", { root: "/home/u/.claude" }), true); // user-scope anchor
+  assert.equal(R("Read(**/.env)", ".env"), true);
+  assert.equal(R("Read(./.env)", ".env"), true);
+  assert.equal(R("Read(*.pem)", "/proj/a/b/k.pem"), true);
+  assert.equal(R("Read(*.pem)", "/elsewhere/k.pem"), false);
+  assert.equal(R("Read(~/.ssh/**)", "~/.ssh/id"), true);
+  assert.equal(R("Read(src/*.ts)", "src/a.ts"), true);
+  assert.equal(R("Read(src/*.ts)", "src/x/a.ts"), false);
+  assert.equal(matchRule("Write(//etc/**)", { tool: "Edit", detail: "/etc/x" }), true);
+  assert.equal(matchRule("Edit(//etc/**)", { tool: "MultiEdit", detail: "/etc/x" }), true);
+  assert.equal(matchRule("Edit", { tool: "Write", detail: "x" }), true);
+});
+
+test("commandHead skips cd/export/VAR=/loops to the real command (audit1 #12)", () => {
+  assert.equal(commandHead('cd ~/p && NR="$(gh api user --jq .id)" && git config user.email x'), "git config");
+  assert.equal(commandHead("U=~/.claude/settings.json; T=$(mktemp); jq '.a' > $T && mv $T $U"), "jq");
+  assert.equal(commandHead("F=/Users/x/firstmate; $F/bin/fm-pr-merge.sh --pr 1"), "$F/bin/fm-pr-merge.sh");
+  assert.equal(commandHead("export S=nmwc; E=/tmp/e; mkdir -p $E; chrome-devtools-axi open x"), "chrome-devtools-axi");
+  assert.equal(commandHead("T=/var/folders/8l/GPE2Z; W=$PWD; for d in a b; do ln -s $d $T; done"), "ln");
+  assert.equal(commandHead("cd ~/.treehouse/w/w; gh-axi variable list"), "gh-axi variable");
+  assert.equal(commandHead("cd x"), "cd");
+  for (const c of ['R=$(ls -d x*)/y cmd args', 'J=$(readlink -f ~/.nvm/z) tool a', 'N="a v7.6.2 - b" ; real x']) {
+    assert.ok(!commandHead(c).startsWith("-") && !/^v\d/.test(commandHead(c)), c);
+  }
 });

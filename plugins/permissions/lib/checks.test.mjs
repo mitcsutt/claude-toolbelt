@@ -24,6 +24,7 @@ const CASES = [
   { dir: "R10", id: "R10", sev: "med" },
   { dir: "R11", id: "R11", sev: "low" },
   { dir: "R12", id: "R12", sev: "info" },
+  { dir: "R13", id: "R13", sev: "high" },
   { dir: "D1", id: "D1", sev: "dead" },
   { dir: "D2", id: "D2", sev: "dead" },
   { dir: "D3", id: "D3", sev: "dead", pos: { seenTools: ["mcp__claude_ai_Buildkite__list_builds"] }, neg: { seenTools: ["mcp__buildkite__list_builds"] } },
@@ -104,7 +105,7 @@ const eff = {
     { rule: "Read(~/src/**)", scope: "user" },
   ],
   ask: [{ rule: "Bash(git push:*)", scope: "user" }],
-  deny: [{ rule: "Bash(rm -rf *)", scope: "managed" }, { rule: "Edit(/etc/**)", scope: "user" }],
+  deny: [{ rule: "Bash(rm -rf *)", scope: "managed" }, { rule: "Edit(//etc/**)", scope: "user" }],
 };
 
 test("decide: allow, unmatched", () => {
@@ -126,7 +127,7 @@ test("decide: deny/ask in any segment wins, deny before ask", () => {
 });
 
 test("decide: wrappers and env are stripped before matching", () => {
-  assert.equal(decide("timeout 5 FOO=1 git status", eff).decision, "allow");
+  assert.equal(decide("timeout 5 NODE_ENV=1 git status", eff).decision, "allow");
   assert.equal(decide("nohup rm -rf x", eff).decision, "deny");
 });
 
@@ -139,4 +140,155 @@ test("decide: redirect target hits Edit deny; non-Bash tool calls", () => {
   assert.deepEqual(decide({ tool: "Read", detail: `${process.env.HOME}/src/a.js` }, eff), { decision: "allow", rule: "Read(~/src/**)", scope: "user" });
   assert.equal(decide({ tool: "Edit", detail: "/etc/passwd" }, eff).decision, "deny");
   assert.equal(decide({ tool: "WebFetch", detail: "x" }, eff).decision, "unmatched");
+});
+
+// ---- 3.1 fix round -------------------------------------------------------------
+
+const ids = (dir, kind, opts = {}) => runChecks(load(dir, kind), { home: homeOf(dir, kind), ...opts });
+const idRules = (r, id) => r.filter((f) => f.id === id).map((f) => f.rule).sort();
+
+test("R3 fires on wildcard source/./env/runner rules (and not on pinned inner commands)", () => {
+  const rules = idRules(ids("R3-wild", "pos"), "R3");
+  for (const want of [
+    "Bash(source *)", "Bash(source:*)", "Bash(. *)", "Bash(env *)", "Bash(env:*)", "Bash(npx *)", "Bash(npx prettier:*)",
+    "Bash(pnpm dlx *)", "Bash(bunx *)", "Bash(yarn dlx *)", "Bash(nvm exec *)", "Bash(nvm run *)", "Bash(fnm exec *)",
+    "Bash(volta run *)", "Bash(asdf exec *)", "Bash(mise exec *)", "Bash(mise x *)", "Bash(pyenv exec *)",
+    "Bash(rbenv exec *)", "Bash(direnv exec *)", "Bash(uv run *)", "Bash(poetry run *)", "Bash(bundle exec *)",
+  ]) assert.ok(rules.includes(want), `missing R3 for ${want}`);
+  assert.deepEqual(idRules(ids("R3-wild", "neg"), "R3"), []);
+});
+
+test("R13: open sudo/doas/su allows are high; pinned sudo and lookalikes are not", () => {
+  assert.deepEqual(idRules(ids("R13", "pos"), "R13"), ["Bash(sudo *)"]);
+  assert.deepEqual(idRules(ids("R13-colon", "pos"), "R13"), ["Bash(doas *)", "Bash(su)", "Bash(sudo:*)"]);
+  assert.deepEqual(idRules(ids("R13", "neg"), "R13"), []);
+});
+
+test("D1: command -v and xargs rules are not dead; timeout/nohup rules still are", () => {
+  assert.deepEqual(idRules(ids("D1-lookup", "neg"), "D1"), []);
+  assert.deepEqual(idRules(ids("D1-timeout", "pos"), "D1"), ["Bash(nohup node server.js)", "Bash(timeout 5 npm test)"]);
+  assert.deepEqual(idRules(ids("D1", "pos"), "D1"), ["Bash(command:*)"]);
+});
+
+test("R8: needs curl AND a shell/interpreter allow; a pipe deny is not mitigation; segment denies are", () => {
+  assert.equal(idRules(ids("R8-nointerp", "neg"), "R8").length, 0);
+  assert.equal(idRules(ids("R8-pipedeny", "pos"), "R8").length, 1);
+  assert.equal(idRules(ids("R8", "neg"), "R8").length, 0);
+});
+
+test("L3 ignores *-inline data dirs", () => {
+  const r = ids("L3", "pos", { pluginDataDirs: ["permissions-inline", "permission-advisor-x"], selfDataDir: "permissions-toolbelt" });
+  assert.deepEqual(r.filter((f) => f.id === "L3").map((f) => f.rule), ["permission-advisor-x"]);
+});
+
+test("L3 why keeps the whole delete command (no truncation)", () => {
+  const name = "permissions-" + "x".repeat(150);
+  const [f] = ids("L3", "pos", { pluginDataDirs: [name], selfDataDir: "s" }).filter((x) => x.id === "L3");
+  assert.ok(f.why.endsWith(name));
+});
+
+test("findings carry file and list; non-rule findings omit list; D6 names covered rule", () => {
+  const r = ids("D6", "pos");
+  const d6 = r.filter((f) => f.id === "D6");
+  assert.ok(d6.length >= 1);
+  for (const f of d6) {
+    assert.match(f.file, /settings\.json$/);
+    assert.equal(f.list, "allow");
+    assert.ok(f.coveredBy);
+  }
+  const r12 = ids("R12", "pos").find((f) => f.id === "R12");
+  assert.equal("list" in r12, false);
+  assert.ok(r12.file);
+});
+
+test("why is clipped at a word boundary within 140 chars", () => {
+  const rule = "Bash(curl:*)";
+  const f = ids("R8", "pos").find((x) => x.id === "R8" && x.rule === rule);
+  assert.ok(f.why.length <= 140);
+});
+
+// ---- decide(): fail closed (audit3 S3, S4, S5) ----------------------------------
+
+const mkEff = (o) => ({ allow: [], ask: [], deny: [], ...Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v.map((rule) => ({ rule, scope: "user" }))])) });
+const dc = (cmd, o, ctx) => decide(cmd, mkEff(o), ctx);
+
+test("S3: allow does not see past an unsafe env assignment; deny does", () => {
+  assert.equal(dc("PATH=/evil git status", { allow: ["Bash(git status)"] }).decision, "unmatched");
+  assert.equal(dc("LD_PRELOAD=x git status", { allow: ["Bash(git status)"] }).decision, "unmatched");
+  assert.equal(dc("FOO=$(x) git status", { allow: ["Bash(git status)"] }).decision, "unsure");
+  assert.equal(dc("NODE_ENV=test git status", { allow: ["Bash(git status)"] }).decision, "allow");
+  assert.equal(dc("PATH=x git status", { deny: ["Bash(git status)"] }).decision, "deny");
+  assert.equal(dc("FOO=bar rm -rf tmp/", { deny: ["Bash(rm *)"] }).decision, "deny");
+});
+
+test("S4: substitutions and subshells: deny still found, otherwise unsure", () => {
+  const o = { allow: ["Bash(echo *)"], deny: ["Bash(rm:*)"] };
+  assert.equal(dc("echo $(rm x)", o).decision, "deny");
+  assert.equal(dc("echo `rm x`", o).decision, "deny");
+  assert.equal(dc("echo <(rm x)", o).decision, "deny");
+  assert.equal(dc("(cd x; rm y)", o).decision, "deny");
+  assert.equal(dc('echo "$(rm x)"', o).decision, "deny");
+  assert.equal(dc("echo $(date)", o).decision, "unsure");
+  assert.equal(dc("echo `date`", o).decision, "unsure");
+  assert.equal(dc("(echo hi)", o).decision, "unsure");
+  assert.equal(dc("echo 'it $(rm x)'", o).decision, "allow");
+  assert.equal(dc("for f in a b; do rm $f; done", o).decision, "deny");
+  assert.equal(dc("for f in a b; do echo $f; done", o).decision, "unsure");
+  assert.equal(dc("eval 'rm x'", { deny: ["Bash(rm:*)"] }).decision, "deny");
+  assert.equal(dc("bash -c 'echo $(ls'", o).decision, "unsure");
+  assert.equal(dc("echo 'unterminated", o).decision, "unsure");
+});
+
+test("S4: heredoc bodies are not commands", () => {
+  const o = { allow: ["Bash(cat *)"], deny: ["Bash(rm:*)"] };
+  assert.equal(dc("cat <<EOF\nrm x\nEOF", o).decision, "allow");
+  assert.equal(dc("cat <<'EOF'\n$(rm x)\nEOF", o).decision, "allow");
+  assert.equal(dc("cat <<EOF\n$(rm x)\nEOF", o).decision, "deny");
+});
+
+test("S1/S2 via decide: bare-command wildcard and bare mcp server", () => {
+  assert.equal(dc("ls", { allow: ["Bash(ls *)"] }).decision, "allow");
+  assert.equal(dc("git push", { deny: ["Bash(git push *)"] }).decision, "deny");
+  assert.equal(dc({ tool: "mcp__srv__t", detail: "" }, { deny: ["mcp__srv"] }).decision, "deny");
+});
+
+test("S5: path rules per docs (// absolute, / anchored at settings source, ./, bare, **/)", () => {
+  const ctx = { cwd: "/proj", home: "/home/u" };
+  const o = (rule) => ({ allow: ["Bash(cat *)", "Bash(echo *)"], deny: [rule] });
+  assert.equal(dc("cat .env", o("Read(**/.env)"), ctx).decision, "deny");
+  assert.equal(dc("cat .env", o("Read(./.env)"), ctx).decision, "deny");
+  assert.equal(dc("cat sub/a.pem", o("Read(*.pem)"), ctx).decision, "deny");
+  assert.equal(dc("cat $HOME/.ssh/id", o("Read(~/.ssh/**)"), ctx).decision, "deny");
+  assert.equal(dc("cat < ~/.ssh/id", o("Read(~/.ssh/**)"), ctx).decision, "deny");
+  assert.equal(dc("echo x>/etc/passwd", o("Edit(//etc/**)"), ctx).decision, "deny");
+  assert.equal(dc("echo x >>/etc/passwd", o("Write(//etc/**)"), ctx).decision, "deny");
+  assert.equal(dc("echo x >| /etc/passwd", o("Edit(//etc/**)"), ctx).decision, "deny");
+  assert.equal(dc('echo "a > /etc/b"', o("Edit(//etc/**)"), ctx).decision, "allow");
+  assert.equal(dc("echo x 2>&1", o("Edit(//etc/**)"), ctx).decision, "allow");
+  assert.equal(dc({ tool: "Write", detail: "/etc/x" }, { deny: ["Edit(//etc/**)"] }, ctx).decision, "deny");
+  // "/etc/**" is <project>/etc/**, not the real /etc
+  assert.equal(dc({ tool: "Edit", detail: "/etc/x" }, { deny: ["Edit(/etc/**)"] }, ctx).decision, "unmatched");
+  const proj = { allow: [], ask: [], deny: [{ rule: "Edit(/etc/**)", scope: "projectShared" }] };
+  assert.equal(decide({ tool: "Edit", detail: "/proj/etc/x" }, proj, ctx).decision, "deny");
+  assert.equal(decide({ tool: "Edit", detail: "/home/u/.claude/etc/x" }, mkEff({ deny: ["Edit(/etc/**)"] }), ctx).decision, "deny"); // user scope anchors at ~/.claude
+});
+
+test("D6 named rule is the dead one (not the broader rule)", () => {
+  const loaded = {
+    scopes: [],
+    effective: { ...mkEff({ allow: ["Bash(git:*)", "Bash(git status)"] }), env: [], additionalDirectories: [], sandbox: { enabled: false }, flags: {} },
+  };
+  loaded.effective.allow.forEach((e, i) => { e.file = "/f"; e.scope = i === 0 ? "user" : "user"; });
+  const d6 = runChecks(loaded, {}).filter((f) => f.id === "D6");
+  assert.deepEqual(d6.map((f) => [f.rule, f.coveredBy]), [["Bash(git status)", "Bash(git:*)"]]);
+});
+
+test("D6: equivalent rules (git:* vs git *) flag only one, never both", () => {
+  const loaded = {
+    scopes: [],
+    effective: { ...mkEff({ allow: ["Bash(git:*)", "Bash(git *)"] }), env: [], additionalDirectories: [], sandbox: { enabled: false }, flags: {} },
+  };
+  loaded.effective.allow.forEach((e) => { e.file = "/f"; });
+  const d6 = runChecks(loaded, {}).filter((f) => f.id === "D6");
+  assert.deepEqual(d6.map((f) => [f.rule, f.coveredBy]), [["Bash(git *)", "Bash(git:*)"]]);
 });

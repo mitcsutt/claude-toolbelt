@@ -1,0 +1,1 @@
+{"permissions":{"allow":["Bash(command -v *)","Bash(xargs *)","Bash(xargs -n1 rm)"]}}

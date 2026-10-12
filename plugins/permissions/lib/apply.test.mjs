@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { applyChanges, ApplyError } from './apply.mjs';
 
 const BIN = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'perm-apply');
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'perm-apply-'));
+const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'perm-apply-')));
 const NOW = new Date('2026-10-09T01:02:03.456Z');
 const read = (f) => fs.readFileSync(f, 'utf8');
 const baks = (f) => fs.readdirSync(path.dirname(f)).filter((n) => n.includes('.bak-'));
@@ -276,4 +276,59 @@ test('launcher sandbox flags: text diff lines, json, exit 3', () => {
   r = run(BIN, ['--file', f, '--remove-sandbox-allow-write', '/tmp/w', '--dry-run']);
   assert.match(r.stdout, /^- sandbox\.filesystem\.allowWrite: \/tmp\/w$/m);
   assert.equal(JSON.parse(read(f)).permissions.sandbox, undefined);
+});
+
+test('symlinked settings file: target is written, link stays a link', () => {
+  const d = tmp();
+  const target = path.join(d, 'real.json');
+  fs.writeFileSync(target, '{"permissions":{"allow":["Read"]}}\n');
+  const link = path.join(d, 'link.json');
+  fs.symlinkSync(target, link);
+  const r = applyChanges({ file: link, changes: { addAllow: ['Bash(git status)'] }, now: NOW });
+  assert.ok(fs.lstatSync(link).isSymbolicLink());
+  assert.deepEqual(JSON.parse(read(target)).permissions.allow, ['Read', 'Bash(git status)']);
+  assert.equal(fs.realpathSync(r.file), fs.realpathSync(target));
+  assert.ok(baks(target).length === 1);
+});
+
+test('tilde paths expand to HOME; literal ~ segment refused', () => {
+  const home = tmp();
+  const cwd = tmp();
+  const env = { ...process.env, HOME: home };
+  const r = spawnSync('node', [BIN, '--file', '~/x/.claude/settings.json', '--add-allow', 'Bash(git status)'], { encoding: 'utf8', env, cwd });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(home, 'x/.claude/settings.json')));
+  assert.ok(!fs.existsSync(path.join(cwd, '~')));
+  const r2 = spawnSync('node', [BIN, '--file', 'a/~/settings.json', '--add-allow', 'Bash(git status)'], { encoding: 'utf8', env, cwd });
+  assert.equal(r2.status, 2);
+  assert.match(r2.stderr, /literal "~"/);
+});
+
+test('risky allow rules (R-checks) refused with exit 3; safe one passes; --force overrides', () => {
+  for (const rule of ['Bash(bash:*)', 'Bash(zsh *)', 'Bash(python3 *)', 'Bash(*)', 'Bash']) {
+    const f = seed({});
+    assert.throws(() => applyChanges({ file: f, changes: { addAllow: [rule] }, now: NOW }), (e) => e instanceof ApplyError && e.exitCode === 3, rule);
+  }
+  const f = seed({});
+  applyChanges({ file: f, changes: { addAllow: ['Bash(git status)'] }, now: NOW });
+  applyChanges({ file: f, changes: { addAllow: ['Bash(python3 *)'] }, force: true, now: NOW });
+  assert.deepEqual(JSON.parse(read(f)).permissions.allow, ['Bash(git status)', 'Bash(python3 *)']);
+});
+
+test('trailing-newline style preserved', () => {
+  const f = seed('{"permissions":{"allow":[]}}');
+  applyChanges({ file: f, changes: { addAllow: ['Bash(git status)'] }, now: NOW });
+  assert.ok(read(f).endsWith('}'));
+  assert.ok(read(f).includes('\n  "permissions"'));
+});
+
+test('stale lock is broken; fresh lock blocks then errors', () => {
+  const f = seed({});
+  const lock = `${f}.lock`;
+  fs.mkdirSync(lock);
+  const old = new Date(Date.now() - 20000);
+  fs.utimesSync(lock, old, old);
+  applyChanges({ file: f, changes: { addAllow: ['Bash(git status)'] }, now: NOW });
+  assert.ok(!fs.existsSync(lock));
+  assert.deepEqual(JSON.parse(read(f)).permissions.allow, ['Bash(git status)']);
 });

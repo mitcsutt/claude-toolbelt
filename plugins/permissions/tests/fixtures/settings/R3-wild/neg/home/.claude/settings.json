@@ -1,0 +1,1 @@
+{"permissions":{"allow":["Bash(uv run pytest *)","Bash(bundle exec rspec *)","Bash(npx prettier --check *)","Bash(npm test)","Bash(environ *)"]}}
