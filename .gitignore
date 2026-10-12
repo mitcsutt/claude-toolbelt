@@ -15,3 +15,7 @@ docs/superpowers/
 
 # claude plugin eval's default --output-dir: run artefacts, not suite content.
 plugins/*/evals/results/
+
+# Test fixtures must be tracked even when a global ignore excludes
+# .claude/settings.local.json (it does on the maintainer's machine).
+!plugins/*/tests/fixtures/**/.claude/settings.local.json
