@@ -1,6 +1,6 @@
 {
   "name": "permissions",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "Finds unsafe, dead and contradictory permission rules across managed/user/project/local settings. SessionStart alert, /permissions-review, /permissions-advisor, perm-scan and perm-apply commands. No per-call hooks. Points to the built-in /fewer-permission-prompts for new allow rules.",
   "author": {
     "name": "Mitchell Sutton"
