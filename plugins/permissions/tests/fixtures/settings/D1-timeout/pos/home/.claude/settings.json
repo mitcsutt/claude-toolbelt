@@ -1,0 +1,1 @@
+{"permissions":{"allow":["Bash(timeout 5 npm test)","Bash(nohup node server.js)"]}}

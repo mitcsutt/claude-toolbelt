@@ -35,60 +35,140 @@ const readJson = (file) => {
   }
 };
 
-function writeAtomic(file, text) {
+function writeAtomic(file, text, mode) {
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, text);
+  fs.writeFileSync(tmp, text, mode ? { mode } : undefined);
   fs.renameSync(tmp, file);
 }
 
 // ---- M1 / M3 ----------------------------------------------------------------
+
+const LOCK_STALE_MS = 30000;
+
+// Exclusive mkdir lock. Returns true when this process now holds it.
+function takeLock(lock) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.mkdirSync(lock);
+      return true;
+    } catch (e) {
+      if (e && e.code !== "EEXIST") return false;
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs < LOCK_STALE_MS) return false;
+        fs.rmSync(lock, { recursive: true, force: true }); // stale: its owner died
+      } catch {
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+// MOVED.json is built from what is actually in the archive, not from this process's renames.
+function archiveListing(archive) {
+  const moved = [];
+  for (const n of fs.readdirSync(archive).sort()) {
+    if (n === "MOVED.json" || n.endsWith(".tmp")) continue;
+    try {
+      moved.push({ file: n, bytes: fs.statSync(path.join(archive, n)).size });
+    } catch {
+      /* vanished */
+    }
+  }
+  return moved;
+}
+
+function freeName(archive, n, now) {
+  let dest = path.join(archive, n);
+  for (let i = 0; fs.existsSync(dest); i++) dest = path.join(archive, `${n}.dup${now}${i ? `-${i}` : ""}`);
+  return dest;
+}
+
+function archiveLogs(home, data, archive, now) {
+  const claudeDir = path.join(home, ".claude");
+  let names = [];
+  try {
+    names = fs.readdirSync(claudeDir).filter((n) => LOGS.some((l) => n === l || new RegExp(`^${l.replace(".", "\\.")}\\.\\d+$`).test(n)));
+  } catch {
+    names = [];
+  }
+  if (!names.length) return null;
+  fs.mkdirSync(archive, { recursive: true });
+  const at = new Date(now).toISOString();
+  // Write the retention clock BEFORE moving anything: a crash mid-way must not strand the archive.
+  const planned = [];
+  for (const n of names) {
+    try {
+      planned.push({ file: n, bytes: fs.statSync(path.join(claudeDir, n)).size });
+    } catch {
+      /* gone */
+    }
+  }
+  const before = archiveListing(archive).filter((m) => !planned.some((p) => p.file === m.file));
+  writeAtomic(path.join(archive, "MOVED.json"), JSON.stringify({ moved: [...before, ...planned], at }) + "\n");
+  let bytes = 0;
+  let count = 0;
+  for (const n of names) {
+    try {
+      const src = path.join(claudeDir, n);
+      const size = fs.statSync(src).size;
+      fs.renameSync(src, freeName(archive, n, now));
+      bytes += size;
+      count++;
+    } catch {
+      /* leave the file where it is; perm-scan reports it as L1 */
+    }
+  }
+  writeAtomic(path.join(archive, "MOVED.json"), JSON.stringify({ moved: archiveListing(archive), at }) + "\n");
+  if (!count) return null;
+  return `permissions 3.0: archived 2.x logs (${(bytes / 1048576).toFixed(1)} MB) to ${archive.replace(home, "~")}; auto-deleted after 30 days.`;
+}
+
+const readMarker = (marker) => {
+  try {
+    return fs.readFileSync(marker, "utf8").trim();
+  } catch {
+    return null; // absent
+  }
+};
 
 function migrate(home, data, now) {
   const marker = path.join(data, "schema");
   const archive = path.join(data, "legacy-v2");
   let message = null;
 
-  let markerValue = null;
-  try {
-    markerValue = fs.readFileSync(marker, "utf8").trim();
-  } catch {
-    /* absent */
-  }
-  if (markerValue !== "3") {
-    const claudeDir = path.join(home, ".claude");
-    let names = [];
-    try {
-      names = fs.readdirSync(claudeDir).filter((n) => LOGS.some((l) => n === l || new RegExp(`^${l.replace(".", "\\.")}\\.\\d+$`).test(n)));
-    } catch {
-      names = [];
-    }
-    const moved = [];
-    if (names.length) {
-      fs.mkdirSync(archive, { recursive: true });
-      for (const n of names) {
+  if (readMarker(marker) !== "3") {
+    fs.mkdirSync(data, { recursive: true });
+    const lock = path.join(data, "migrate.lock");
+    if (takeLock(lock)) {
+      try {
+        // Another process may have finished between our marker read and the lock.
+        if (readMarker(marker) !== "3") {
+          message = archiveLogs(home, data, archive, now);
+          writeAtomic(marker, "3\n");
+        }
+      } finally {
         try {
-          const src = path.join(claudeDir, n);
-          const bytes = fs.statSync(src).size;
-          fs.renameSync(src, path.join(archive, n));
-          moved.push({ file: n, bytes });
+          fs.rmdirSync(lock);
         } catch {
-          /* leave the file where it is; perm-scan reports it as L1 */
+          /* already gone */
         }
       }
     }
-    fs.mkdirSync(data, { recursive: true });
-    if (moved.length) {
-      writeAtomic(path.join(archive, "MOVED.json"), JSON.stringify({ moved, at: new Date(now).toISOString() }) + "\n");
-      const mb = (moved.reduce((s, m) => s + m.bytes, 0) / 1048576).toFixed(1);
-      message = `permissions 3.0: archived 2.x logs (${mb} MB) to ${archive.replace(home, "~")}; auto-deleted after 30 days.`;
-    }
-    writeAtomic(marker, "3\n");
   }
 
   // M3: retention. Only ever removes the legacy-v2 directory itself.
-  const info = readJson(path.join(archive, "MOVED.json"));
-  if (info && path.basename(archive) === "legacy-v2") {
-    const at = Date.parse(info.at);
+  if (path.basename(archive) === "legacy-v2") {
+    const info = readJson(path.join(archive, "MOVED.json"));
+    let at = info ? Date.parse(info.at) : NaN;
+    if (!Number.isFinite(at)) {
+      // No usable MOVED.json (crash, manual edit): fall back to the directory's age.
+      try {
+        at = fs.statSync(archive).mtimeMs;
+      } catch {
+        at = NaN;
+      }
+    }
     if (Number.isFinite(at) && now - at >= RETAIN_MS) fs.rmSync(archive, { recursive: true, force: true });
   }
   return message;
@@ -111,15 +191,42 @@ function scopeFiles(cwd, home, managedPaths) {
   return files;
 }
 
+// An upgrade changes the checks, so the plugin version is part of the cache key.
+function pluginVersion() {
+  try {
+    const f = new URL("../.claude-plugin/plugin.json", import.meta.url);
+    return String(JSON.parse(fs.readFileSync(f, "utf8")).version ?? "?");
+  } catch {
+    return "?";
+  }
+}
+
+// Scratch directories never repeat, so caching them only churns the cache.
+function isScratchCwd(cwd, env) {
+  if (env.PERMISSIONS_CACHE_TMP) return false; // test seam: tests live under the OS temp dir
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const roots = new Set(["/tmp", "/private/tmp", os.tmpdir(), real(os.tmpdir())]);
+  const c = real(cwd);
+  for (const r of roots) if (c === r || c.startsWith(r.endsWith(path.sep) ? r : r + path.sep)) return true;
+  return false;
+}
+
 function fingerprint(files) {
-  const parts = files.map((f) => {
+  const parts = [`v${pluginVersion()}`];
+  parts.push(...files.map((f) => {
     try {
       const st = fs.statSync(f);
       return `${f}|${st.mtimeMs}|${st.size}`;
     } catch {
       return `${f}|missing`;
     }
-  });
+  }));
   return crypto.createHash("sha1").update(parts.join("\n")).digest("hex");
 }
 
@@ -140,12 +247,13 @@ export function shortPath(file, home) {
   return path.join(path.basename(path.dirname(file)), path.basename(file));
 }
 
-async function alert(cwd, home, data, now, room) {
+async function alert(cwd, home, data, now, room, env) {
   const { defaultManagedPaths, loadScopes } = await import("../lib/scopes.mjs");
   const fp = fingerprint(scopeFiles(cwd, home, defaultManagedPaths()));
   const cacheFile = path.join(data, "alert-cache.json");
-  const cache = readJson(cacheFile) ?? {};
-  const entry = cache[cwd];
+  const scratch = isScratchCwd(cwd, env);
+  const cache = scratch ? {} : (readJson(cacheFile) ?? {});
+  const entry = scratch ? undefined : cache[cwd];
   const iso = new Date(now).toISOString();
   const stale = (h) => !Number.isFinite(Date.parse(h.lastShown)) || now - Date.parse(h.lastShown) >= RESHOW_MS;
 
@@ -154,7 +262,6 @@ async function alert(cwd, home, data, now, room) {
   if (entry && entry.fingerprint === fp && Array.isArray(entry.high)) {
     high = entry.high;
     show = high.filter(stale);
-    if (show.length === 0) return null; // cached path: no parse, no write
   } else {
     const { runChecks } = await import("../lib/checks.mjs");
     const found = runChecks(loadScopes({ cwd, home }), { home }).filter((f) => f.severity === "high");
@@ -169,14 +276,26 @@ async function alert(cwd, home, data, now, room) {
   }
   for (const h of show) h.lastShown = iso;
 
-  cache[cwd] = { fingerprint: fp, at: iso, high };
-  const keys = Object.keys(cache);
-  if (keys.length > MAX_CACHED_CWDS) {
-    keys.sort((a, b) => Date.parse(cache[a].at) - Date.parse(cache[b].at));
-    for (const k of keys.slice(0, keys.length - MAX_CACHED_CWDS)) delete cache[k];
+  if (!scratch) {
+    // "at" = when the fingerprint last changed; "lastSeen" = every run (eviction is least recently used).
+    const at = entry && entry.fingerprint === fp ? entry.at : iso;
+    try {
+      fs.mkdirSync(data, { recursive: true });
+      // Re-read just before writing so concurrent sessions do not drop each other's entries.
+      const latest = readJson(cacheFile) ?? {};
+      latest[cwd] = { fingerprint: fp, at, lastSeen: iso, high };
+      for (const k of Object.keys(latest)) if (k !== cwd && !fs.existsSync(k)) delete latest[k];
+      const keys = Object.keys(latest);
+      if (keys.length > MAX_CACHED_CWDS) {
+        const used = (k) => Date.parse(latest[k].lastSeen ?? latest[k].at) || 0;
+        keys.sort((a, b) => used(a) - used(b));
+        for (const k of keys.slice(0, keys.length - MAX_CACHED_CWDS)) delete latest[k];
+      }
+      writeAtomic(cacheFile, JSON.stringify(latest), 0o600);
+    } catch {
+      /* cache is best effort */
+    }
   }
-  fs.mkdirSync(data, { recursive: true });
-  writeAtomic(cacheFile, JSON.stringify(cache));
 
   if (show.length === 0) return null;
   const shown = show.slice(0, room);
@@ -208,7 +327,7 @@ export async function run({ env, home, stdin }) {
   }
   let alertText = null;
   try {
-    alertText = await alert(cwd, home, data, now, migration ? 2 : 3);
+    alertText = await alert(cwd, home, data, now, migration ? 2 : 3, env);
   } catch {
     /* alerting is best effort */
   }

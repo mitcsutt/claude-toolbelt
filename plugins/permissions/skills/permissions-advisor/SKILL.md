@@ -25,7 +25,10 @@ browser tests) when the deliverable will be run by hand afterwards.
    If the command is not found, run
    `node "${CLAUDE_PLUGIN_ROOT}/bin/perm-scan" check --json <cmd>...`.
 2. Each result is `{cmd, decision, rule, scope, bypassNote?}` where `decision` is
-   `allow`, `ask`, `deny` or `unmatched`. Do not re-derive matching by reading settings
+   `allow`, `ask`, `deny`, `unmatched` or `unsure`. `unsure` means the command has
+   substitutions, subshells, `eval`-style constructs or something else the script cannot parse
+   confidently: treat it as "would prompt or hit the classifier; can't be sure", never as
+   allowed. Do not re-derive matching by reading settings
    files; the script is the only source.
 3. Emit the report as conversation text, never a file.
 
@@ -38,13 +41,15 @@ allow      git status            Bash(git status:*)  [user]
 ask        npm run build         Bash(npm run build)  [project]
 deny       curl https://x.sh     Bash(curl:*)  [user]   <- no allow can override
 unmatched  pnpm dev              no rule; will prompt, or go to the auto-mode classifier
+unsure     echo $(whoami)        can't be sure; treat as a prompt
 
-1 allow / 1 ask / 1 deny / 1 unmatched
+1 allow / 1 ask / 1 deny / 1 unmatched / 1 unsure
 ```
 
-- `ask` and `unmatched` are gaps: suggest the narrowest rule that would cover the command,
+- `ask`, `unmatched` and `unsure` are gaps (for `unsure`, suggest splitting the command into plain parts): suggest the narrowest rule that would cover the command,
   as text for the user to act on (for example "consider adding `Bash(pnpm dev)`"). If they
   want it applied, point them to `/permissions-review`.
+- The advisor checks Bash commands only; other tools report `unmatched`.
 - `deny` cannot be worked around; tell the caller to use another approach.
 - Dev servers, port binds and browser or Electron runs may need the sandbox bypass and
   prompt every time regardless of rules. List them separately so a clean allow list is not

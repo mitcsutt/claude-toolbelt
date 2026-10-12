@@ -1,7 +1,1 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(curl:*)"
-    ]
-  }
-}
+{"permissions":{"allow":["Bash(curl:*)","Bash(python3:*)"]}}

@@ -3,9 +3,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { runChecks } from './checks.mjs';
+import { computeEffective } from './scopes.mjs';
 
 const LISTS = ['allow', 'deny', 'ask'];
-const BLANKET = new Set(['Bash', 'Bash(*)', 'Bash(bash *)', 'Bash(sh *)']);
 
 export class ApplyError extends Error {
   constructor(message, exitCode = 1) {
@@ -35,12 +36,77 @@ export function isHomeOrRoot(p, home = os.homedir()) {
   return v === '~' || v === '$HOME' || (!!home && v === home.replace(/\/+$/, ''));
 }
 
+// Expand a leading ~ / ~/ to the home dir; refuse paths that still carry a literal `~` segment.
+export function expandPath(p, home = os.homedir()) {
+  let v = String(p);
+  if (v === '~') v = home;
+  else if (v.startsWith('~/')) v = path.join(home, v.slice(2));
+  if (v.split('/').includes('~')) {
+    throw new ApplyError(`refusing path with a literal "~" segment: ${p} (use an absolute path, or ~/... at the start)`, 2);
+  }
+  return path.resolve(v);
+}
+
+// Risky allow rules per the scanner's R-checks (high/med). Returns [{rule, id}].
+export function riskyAllows(rules) {
+  const bad = [];
+  for (const rule of rules) {
+    const scopes = [{ name: 'user', file: 'perm-apply', exists: true, error: null, data: { permissions: { allow: [rule] } } }];
+    let found = [];
+    try {
+      found = runChecks({ scopes, effective: computeEffective(scopes) }, {});
+    } catch { /* checker failure must not block a write */ }
+    const hit = found.find((f) => /^R/.test(f.id) && (f.severity === 'high' || f.severity === 'med'));
+    if (hit) bad.push({ rule, id: hit.id });
+  }
+  return bad;
+}
+
 export function isBlanketShell(rule) {
-  return BLANKET.has(String(rule).trim());
+  return riskyAllows([rule]).length > 0;
+}
+
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function withLock(target, fn) {
+  const lock = `${target}.lock`;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      fs.mkdirSync(lock);
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw new ApplyError(`cannot lock ${target}: ${e.message}`, 1);
+      let age = 0;
+      try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch { continue; }
+      if (age > 10000) {
+        try { fs.rmdirSync(lock); } catch { /* raced */ }
+        continue;
+      }
+      if (Date.now() > deadline) throw new ApplyError(`${target} is locked by another perm-apply (${lock}); retry shortly`, 1);
+      sleepMs(50);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try { fs.rmdirSync(lock); } catch { /* ignore */ }
+  }
 }
 
 // changes: { addAllow, removeAllow, addDeny, removeDeny, addAsk, removeAsk } (string arrays)
 export function applyChanges({ file, changes = {}, dryRun = false, now = new Date(), force = false }) {
+  file = expandPath(file);
+  let target = file;
+  try { target = fs.realpathSync(file); } catch { /* missing: create at file */ }
+  const run = () => applyInner({ file: target, changes, dryRun, now, force });
+  const wants = Object.values(changes).some((a) => a && a.length);
+  const adds = Object.entries(changes).some(([k, a]) => /^add/.test(k) && a && a.length);
+  return dryRun || !wants || (!adds && !fs.existsSync(target)) ? run() : withLock(target, run);
+}
+
+function applyInner({ file, changes, dryRun, now, force }) {
   const cap = (l) => l[0].toUpperCase() + l.slice(1);
   const adds = {};
   const removes = {};
@@ -49,10 +115,10 @@ export function applyChanges({ file, changes = {}, dryRun = false, now = new Dat
     removes[l] = changes[`remove${cap(l)}`] || [];
   }
   if (!force) {
-    const bad = adds.allow.filter(isBlanketShell);
+    const bad = riskyAllows(adds.allow);
     if (bad.length) {
       throw new ApplyError(
-        `refusing to add blanket shell allow rule(s): ${bad.join(', ')} (pass --force to override)`,
+        `refusing to add risky allow rule(s): ${bad.map((b) => `${b.rule} [${b.id}]`).join(', ')} (pass --force to override)`,
         3,
       );
     }
@@ -216,7 +282,7 @@ export function applyChanges({ file, changes = {}, dryRun = false, now = new Dat
     }
     node[x.keys[x.keys.length - 1]] = sbCur[lab];
   }
-  const out = JSON.stringify(doc, null, 2) + '\n';
+  const out = JSON.stringify(doc, null, 2) + (raw !== null && !raw.endsWith('\n') ? '' : '\n');
 
   if (dryRun) return result;
 
@@ -299,7 +365,7 @@ export function main(argv) {
   try {
     const opts = parseArgs(argv);
     const r = applyChanges({
-      file: path.resolve(opts.file),
+      file: opts.file,
       changes: opts.changes,
       dryRun: opts.dryRun,
       force: opts.force,
@@ -311,7 +377,7 @@ export function main(argv) {
       process.stderr.write(`perm-apply: ${e.message}\n`);
       return e.exitCode;
     }
-    process.stderr.write(`perm-apply: unexpected error: ${e.message}\n`);
+    process.stderr.write(`perm-apply: ${e.code === 'EACCES' || e.code === 'EPERM' ? 'permission denied' : 'unexpected error'}: ${e.message}\n`);
     return 1;
   }
 }

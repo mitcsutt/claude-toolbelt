@@ -226,7 +226,7 @@ Plan once, here, with the human. The harness cannot ask questions later, so this
 
 ### Step 4: Pre-flight checks
 
-1. **Advisory permission check via `permissions-advisor`.** Skip if the skill is unresolvable. Derive the likely bash command set from the verification pipeline (`lint` → `npm run lint`, etc.), the loop type (file ops, `git`, generator scripts), and the project package manager (`npm` / `pnpm` / `yarn`), then invoke `permissions-advisor`. **Treat the result as advisory only.** The harness runs headless with `--dangerously-skip-permissions`, so the allowlist is mostly moot at runtime — surface only genuine gaps the user might care about (e.g. commands a hook would still block). Never modify settings files here.
+1. **Advisory permission check via `permissions-advisor`.** Skip if the skill is unresolvable. Derive the likely bash command set from the verification pipeline (`lint` → `npm run lint`, etc.), the loop type (file ops, `git`, generator scripts), and the project package manager (`npm` / `pnpm` / `yarn`), then invoke `permissions-advisor`. **Treat the result as advisory only.** The harness runs headless with `--dangerously-skip-permissions`, so the allowlist is mostly moot at runtime — surface only genuine gaps the user might care about: the advisor reports `deny`, `ask` or `unsure` under the effective rules, and deny rules still apply under `--dangerously-skip-permissions`, so always surface `deny` results and any `bypassNote`. Never modify settings files here.
 
 2. **Rabbit-hole protection: check for a timeout binary.** The per-tick wall-clock cap (`tick_timeout`) is enforced by a `timeout` (GNU coreutils) or `gtimeout` (macOS Homebrew coreutils) binary. Check PATH:
 
@@ -346,6 +346,6 @@ State the safety posture to the user explicitly so they understand what they are
 | "Run in the main checkout, a worktree is overkill" | Worktree isolation is a guardrail. Resolve a `--worktree` or create one. |
 | "Fully enumerate every task for a huge feature up front" | Large features are `segmented` — defer per-segment tasks to a PLAN tick so they stay fresh. |
 | "No `timeout` binary, but it'll probably be fine" | Warn the user. Without `timeout`/`gtimeout` (install `coreutils`) the per-tick cap is off and a stuck tick runs unbounded. |
-| "Skip permissions-advisor — skip-permissions makes it moot" | Run it anyway if available; it's advisory and cheap, and surfaces hook-blockable gaps. |
+| "Skip permissions-advisor — skip-permissions makes it moot" | Run it anyway if available; it's advisory and cheap, and surfaces `deny` results (deny rules still apply under skip-permissions). |
 | "The environment already has its deps" | Don't assume — check (Step 4.3). Deps/build artefacts are per-checkout and gitignored; a worktree, fresh clone, or stale checkout may lack them, and the first tick will reach elsewhere to verify. |
 | "Skip the install — the first tick can set up its own env" | A headless tick can't ask for help; it improvises (e.g. reaches into the main checkout). Prepare + prove the environment now, while a human can fix breakage. |

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { scanTranscripts, redact } from "./transcripts.mjs";
+import { scanTranscripts, redact, commandHead, classifyPermissionRule, READER_VERSION } from "./transcripts.mjs";
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "tests", "fixtures", "transcripts");
 const NOW = new Date("2026-10-09T12:00:00.000Z");
@@ -74,7 +74,7 @@ test("user rejection is recorded with tool+head; env-assignment secret skipped; 
 
 test("headless not-granted is not counted as a user rejection", async () => {
   const s = await scanTranscripts({ projectsDir: tmp, now: NOW });
-  assert.deepEqual(s.headlessDenied, [{ tool: "Bash", count: 1, last: "2026-10-08T10:06:01.000Z" }]);
+  assert.deepEqual(s.headlessDenied, [{ tool: "Bash", head: "claude", count: 1, last: "2026-10-08T10:06:01.000Z" }]);
 });
 
 test("toolCounts include mcp tools, dedupe repeated tool_use ids, ignore out-of-window records", async () => {
@@ -83,19 +83,16 @@ test("toolCounts include mcp tools, dedupe repeated tool_use ids, ignore out-of-
   assert.equal(s.toolCounts.Edit, 2);
   assert.equal(s.toolCounts.AskUserQuestion, 1);
   assert.equal(s.toolCounts.mcp__srv__create_thing, 1);
-  const cmds = s.bashCommands.map((c) => c.command);
-  assert.ok(!cmds.includes("old-out-of-window-command"));
-  assert.equal(s.bashCommands.find((c) => c.command === "git status").count, 2);
+  assert.equal(s.toolCounts.Bash, 6); // the out-of-window old-out-of-window-command is not counted
+  assert.ok(!("bashCommands" in s));
 });
 
-test("bash commands are first-line normalized and secrets never appear anywhere in output", async () => {
+test("secrets never appear anywhere in output; rejection head skips env assignments", async () => {
   const s = await scanTranscripts({ projectsDir: tmp, now: NOW, sandboxEnabled: true });
   const json = JSON.stringify(s);
   assert.ok(!json.includes("sk-test-123"));
   assert.ok(!json.includes("abc123secret"));
-  assert.ok(s.bashCommands.some((c) => c.command.startsWith("curl -H") && c.command.includes("[REDACTED]")));
-  const npm = s.bashCommands.find((c) => c.command.includes("npm publish"));
-  assert.ok(npm && !npm.command.includes("second line") && npm.command.includes("API_TOKEN=[REDACTED]"));
+  assert.equal(s.rejected[0].head, "npm publish");
 });
 
 test("garbage line counts a parse error; unknown-type line counts unknown, no throw", async () => {
@@ -134,66 +131,100 @@ test("redact removes common secret shapes", () => {
   assert.ok(!redact("git clone https://user:pw123@host/repo").includes("pw123"));
 });
 
-test("ruleDenied counts deny-rule hits by tool+head; cwds counted per bash command", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-rules-"));
+const DENIALS = path.join(FIXTURES, "..", "transcripts-denials");
+const withDir = async (src, fn) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-den-"));
   try {
-    copyDir(path.join(FIXTURES, "..", "transcripts-rules"), dir);
-    const f = path.join(dir, "-proj-d", "sess-4.jsonl");
-    fs.utimesSync(f, new Date("2026-10-08T12:00:00Z"), new Date("2026-10-08T12:00:00Z"));
-    const s = await scanTranscripts({ projectsDir: dir, now: NOW });
-    assert.deepEqual(s.ruleDenied[0], { tool: "Bash", head: "rm", count: 2, last: "2026-10-08T10:01:01.000Z", samples: ["rm -rf /tmp/x"], sampleCounts: [2] });
-    assert.deepEqual(s.ruleDenied[1], { tool: "Read", head: "", count: 1, last: "2026-10-08T10:02:01.000Z", samples: [], sampleCounts: [] });
-    assert.deepEqual(s.rejected, []);
-    assert.equal(s.bashCommands[0].cwds, 2);
+    copyDir(src, dir);
+    const t = new Date("2026-10-08T12:00:00Z");
+    const walkT = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walkT(p);
+        else fs.utimesSync(p, t, t);
+      }
+    };
+    walkT(dir);
+    return await fn(dir);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+};
+// a minimal stand-in for scan.mjs makeAttribute: one deny rule, rm only
+const attr = (tool, detail) => (tool === "Bash" && /\brm -rf\b/.test(detail) ? { decision: "deny", rule: "Bash(rm -rf:*)", scope: "user", tag: /\/tmp\//.test(detail) ? "temp" : "other" } : tool === "Read" && detail.includes(".ssh") ? { decision: "deny", rule: "Read(~/.ssh/**)", scope: "user" } : { decision: "unmatched" });
+
+test("denials: hook blocks, built-in checks and deny rules are classified from the result text", async () => {
+  await withDir(DENIALS, async (dir) => {
+    const s = await scanTranscripts({ projectsDir: dir, now: NOW, attribute: attr });
+    const by = (k, v) => s.denials.filter((g) => g.kind === k && (v === undefined || g.hook === v || g.check === v || g.rule === v));
+    assert.equal(by("hook", "public-repo-guard.py")[0].count, 1);
+    assert.equal(by("hook", "block-destructive-git.sh")[0].count, 1); // "bash /path/x.sh" -> script basename
+    assert.equal(by("builtin", "safety-check")[0].count, 1);
+    assert.equal(by("builtin", "path-check")[0].count, 1);
+    // hook/builtin hits are never credited to a deny rule
+    const rm = by("deny-rule", "Bash(rm -rf:*)")[0];
+    assert.equal(rm.count, 3); // two plain + the long one
+    assert.equal(rm.scope, "user");
+    assert.equal(by("deny-rule", "Read(~/.ssh/**)")[0].count, 1);
+    assert.equal(s.denials.reduce((n, g) => n + g.count, 0), 8);
+  });
+});
+
+test("denials: exact attribution even when the triggering segment is beyond char 400; per-mode counts; samples capped", async () => {
+  await withDir(DENIALS, async (dir) => {
+    const seen = [];
+    const s = await scanTranscripts({ projectsDir: dir, now: NOW, attribute: (t, d, c) => (seen.push(d), attr(t, d, c)) });
+    assert.ok(seen.some((d) => d.length > 450 && d.indexOf("rm -rf") > 400), "attribute sees the FULL command");
+    const rm = s.denials.find((g) => g.rule === "Bash(rm -rf:*)");
+    assert.deepEqual(rm.tags, { temp: 3 });
+    assert.deepEqual(rm.modes, { bypassPermissions: 3 });
+    assert.ok(rm.samples.length <= 3 && rm.samples.every((x) => x.length <= 161));
+    const hook = s.denials.find((g) => g.kind === "hook" && g.hook === "public-repo-guard.py");
+    assert.deepEqual(hook.modes, { default: 1 });
+    assert.equal(attrCalls(seen), 3); // memoized: the long command, `rm -rf /tmp/a` (twice, attributed once), Read
+  });
+});
+const attrCalls = (seen) => seen.length;
+
+test("denials: a rule that no longer exists is reported with rule null and a note", async () => {
+  await withDir(DENIALS, async (dir) => {
+    const s = await scanTranscripts({ projectsDir: dir, now: NOW, attribute: () => ({ decision: "unmatched" }) });
+    const g = s.denials.filter((x) => x.kind === "deny-rule");
+    assert.ok(g.length >= 1 && g.every((x) => x.rule === null && x.note === "rule no longer present"));
+    assert.equal(g.reduce((n, x) => n + x.count, 0), 4);
+  });
+});
+
+test("classifyPermissionRule on real texts (observed 2026-10-12)", () => {
+  assert.deepEqual(classifyPermissionRule("PreToolUse:Bash hook error: [~/.claude/hooks/public-repo-guard.py]: Blocked by x"), { kind: "hook", hook: "public-repo-guard.py" });
+  assert.deepEqual(classifyPermissionRule('PreToolUse:Bash hook error: [[ -z "${A:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-cd-pretool-check.sh --claude]: {"x":1}'), { kind: "hook", hook: "fm-cd-pretool-check.sh" });
+  assert.deepEqual(classifyPermissionRule("Permission for this command was denied by a built-in Claude Code safety check, not by the user."), { kind: "builtin", check: "safety-check" });
+  assert.equal(classifyPermissionRule("Permission to use Bash with command rm -rf x has been denied.").kind, "deny-rule");
+  assert.equal(classifyPermissionRule("Permission to use Read has been denied.").kind, "deny-rule");
+  assert.deepEqual(classifyPermissionRule("cat reads 'a.js' after a cd whose target cannot be resolved, and a deny rule (~/.ssh/**) names that file"), { kind: "builtin", check: "path-check" });
+  // a command that merely QUOTES hook text is still a deny rule hit
+  assert.equal(classifyPermissionRule("Permission to use Bash with command echo PreToolUse:Bash hook error: [x]: has been denied.").kind, "deny-rule");
+  assert.equal(classifyPermissionRule("Can't interact with browser-internal URLs").check, "other");
+});
+
+test("commandHead: first real command, never cd/assignments/&&", () => {
+  assert.equal(commandHead("cd x && git config user.email a"), "git config");
+  assert.equal(commandHead("U=~/.claude/settings.json; T=$(mktemp); jq . > $T && mv $T $U"), "jq");
+  assert.equal(commandHead('N="a b c"; x y'), "x");
+  assert.equal(commandHead("export A=1; E=x; mkdir -p $E; chrome-devtools-axi open"), "mkdir");
+  assert.equal(commandHead("T=/var/folders/a; W=$PWD; for d in a b; do ln -s x y; done"), "ln");
+  assert.equal(commandHead("&& echo hi"), "echo");
+  assert.ok(!commandHead("MY_TOKEN=abc rm -rf z").includes("abc"));
+});
+
+test("headless denial carries the command head", async () => {
+  const s = await scanTranscripts({ projectsDir: tmp, now: NOW });
+  assert.equal(s.headlessDenied[0].head, "claude");
 });
 
 const line = (o) => JSON.stringify(o) + "\n";
 const use = (id, command, cwd, ts) => line({ type: "assistant", cwd, sessionId: "s", timestamp: ts, message: { role: "assistant", content: [{ type: "tool_use", id, name: "Bash", input: { command } }] } });
-const denied = (id, ts) => line({ type: "user", sessionId: "s", timestamp: ts, toolDenialKind: "permission-rule", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, is_error: true, content: "denied" }] } });
-
-test("ruleDenied head is the first real segment (never &&); samples keep later lines and are redacted", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-head-"));
-  try {
-    fs.mkdirSync(path.join(dir, "-p"));
-    const f = path.join(dir, "-p", "s.jsonl");
-    const T = "2026-10-08T10:00:00.000Z";
-    fs.writeFileSync(
-      f,
-      use("a1", "cd x\n&& rm -rf /tmp/y MY_TOKEN=abc", "/w", T) + denied("a1", T) +
-        use("a2", "&& echo hi", "/w", T) + denied("a2", T) +
-        use("a3", "cd x && rm -rf z", "/w", T) + denied("a3", T),
-    );
-    fs.utimesSync(f, new Date(T), new Date(T));
-    const s = await scanTranscripts({ projectsDir: dir, now: NOW });
-    const heads = s.ruleDenied.map((r) => r.head).sort();
-    assert.deepEqual(heads, ["cd", "echo"]);
-    const cd = s.ruleDenied.find((r) => r.head === "cd");
-    assert.equal(cd.count, 2);
-    assert.ok(cd.samples.some((x) => x.includes("rm -rf /tmp/y")));
-    assert.ok(!JSON.stringify(s).includes("abc"));
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("bashCommands carry topCwd (most calls)", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-top-"));
-  try {
-    fs.mkdirSync(path.join(dir, "-p"));
-    const f = path.join(dir, "-p", "s.jsonl");
-    const T = "2026-10-08T10:00:00.000Z";
-    fs.writeFileSync(f, use("b1", "make x", "/a", T) + use("b2", "make x", "/b", T) + use("b3", "make x", "/b", T));
-    fs.utimesSync(f, new Date(T), new Date(T));
-    const s = await scanTranscripts({ projectsDir: dir, now: NOW });
-    assert.equal(s.bashCommands[0].topCwd, "/b");
-    assert.equal(s.bashCommands[0].cwds, 2);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+const denied = (id, ts) => line({ type: "user", sessionId: "s", timestamp: ts, toolDenialKind: "permission-rule", message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, is_error: true, content: "Permission to use Bash has been denied." }] } });
 
 test("cache: identical results with/without it, invalidated by mtime, never written without cacheDir", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-cache-"));
@@ -233,7 +264,7 @@ test("cache: identical results with/without it, invalidated by mtime, never writ
     const after = strip(await scanTranscripts({ ...opts, cacheDir }));
     assert.deepEqual(after, strip(await scanTranscripts(opts)));
     assert.notDeepEqual(after, plain);
-    assert.ok(after.bashCommands.some((b) => b.command === "extra-cmd --go"));
+    assert.ok(after.denials.length > plain.denials.length || after.toolCounts.Bash > plain.toolCounts.Bash);
     // a stale entry for a file that left the window is pruned
     fs.rmSync(f);
     await scanTranscripts({ ...opts, cacheDir });
@@ -249,4 +280,95 @@ test("redact: bare secret-named assignments are redacted", () => {
     for (const secret of ["abc123", "abc 123", "hunter2"]) assert.ok(!out.includes(secret), `${s} -> ${out}`);
   }
   assert.equal(redact("MONKEY=1"), "MONKEY=[REDACTED]"); // over-redaction is the safe failure mode
+});
+
+test("redact: -p passwords, --password, URL passwords with slash, aws secret (audit B3)", () => {
+  const cases = [
+    ["mysql -u root -pHunter2 db", "Hunter2"],
+    ["mysql -u root -p Hunter2 db", "Hunter2"],
+    ["sshpass -p hunter2 ssh h", "hunter2"],
+    ["docker login -u me -p hunter2 reg.io", "hunter2"],
+    ["curl --password hunter2 x", "hunter2"],
+    ["curl --password=hunter2 x", "hunter2"],
+    ['x --password "two words" y', "two words"],
+    ["psql postgres://u:pa/ss@host/db", "pa/ss"],
+    ["aws configure set aws_secret_access_key wJalrXUtnFEMI", "wJalrXUtnFEMI"],
+    ['curl --data "password=hunter2" x', "hunter2"],
+  ];
+  for (const [input, secret] of cases) assert.ok(!redact(input).includes(secret), `${input} -> ${redact(input)}`);
+  // closing quote survives; ports and ordinary prose are left alone
+  assert.equal(redact('--data "password=hunter2" x'), '--data "password=[REDACTED]" x');
+  assert.equal(redact("curl https://example.com:8080/path?e=a@b.c"), "curl https://example.com:8080/path?e=a@b.c");
+  assert.equal(redact("Basic usage of Token handling"), "Basic usage of Token handling");
+  assert.equal(redact("mysql --port 3306 -h x"), "mysql --port 3306 -h x");
+});
+
+test("cache (audit B4): a file with records older than the window is a cache hit, not rewritten each run", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-b4-"));
+  try {
+    fs.mkdirSync(path.join(dir, "p"));
+    const f = path.join(dir, "p", "s.jsonl");
+    fs.writeFileSync(f, use("o1", "old-thing", "/w", "2026-08-01T10:00:00.000Z") + use("n1", "new-thing", "/w", "2026-10-08T10:00:00.000Z") + denied("n1", "2026-10-08T10:00:01.000Z"));
+    fs.utimesSync(f, new Date("2026-10-08T12:00:00Z"), new Date("2026-10-08T12:00:00Z"));
+    const cacheDir = path.join(dir, "cache");
+    const a = await scanTranscripts({ projectsDir: path.join(dir, "p"), now: NOW, cacheDir });
+    assert.equal(a.toolCounts.Bash, 1);
+    const cf = path.join(cacheDir, "cache.json");
+    const m1 = fs.statSync(cf).mtimeMs;
+    await new Promise((r) => setTimeout(r, 30));
+    const b = await scanTranscripts({ projectsDir: path.join(dir, "p"), now: new Date(NOW.getTime() + 1000), cacheDir });
+    assert.deepEqual({ ...b, ms: 0 }, { ...a, ms: 0 });
+    assert.equal(fs.statSync(cf).mtimeMs, m1, "cache.json must not be rewritten on a hit");
+    // a wider window reuses the same cached records and now sees the old one
+    const wide = await scanTranscripts({ projectsDir: path.join(dir, "p"), now: NOW, days: 90, cacheDir });
+    assert.equal(wide.toolCounts.Bash, 2);
+    assert.equal(fs.statSync(cf).mtimeMs, m1);
+    assert.equal(JSON.parse(fs.readFileSync(cf, "utf8")).v, READER_VERSION);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("cache files are mode 0600 (audit E7)", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-mode-"));
+  try {
+    fs.mkdirSync(path.join(dir, "p"));
+    const f = path.join(dir, "p", "s.jsonl");
+    fs.writeFileSync(f, use("n1", "new-thing", "/w", "2026-10-08T10:00:00.000Z"));
+    fs.utimesSync(f, new Date("2026-10-08T12:00:00Z"), new Date("2026-10-08T12:00:00Z"));
+    const cacheDir = path.join(dir, "cache");
+    await scanTranscripts({ projectsDir: path.join(dir, "p"), now: NOW, cacheDir });
+    assert.equal(fs.statSync(path.join(cacheDir, "cache.json")).mode & 0o777, 0o600);
+    assert.deepEqual(fs.readdirSync(cacheDir), ["cache.json"]); // no tmp leftovers
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("lines over 5 MB are skipped and counted, neighbours still read", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "transcripts-long-"));
+  try {
+    fs.mkdirSync(path.join(dir, "p"));
+    const f = path.join(dir, "p", "s.jsonl");
+    const T = "2026-10-08T10:00:00.000Z";
+    const huge = line({ type: "assistant", timestamp: T, pad: "x".repeat(5 * 1024 * 1024 + 10), message: { role: "assistant", content: [{ type: "tool_use", id: "h1", name: "Bash", input: { command: "huge" } }] } });
+    fs.writeFileSync(f, use("a1", "before", "/w", T) + huge + use("a2", "after", "/w", T));
+    fs.utimesSync(f, new Date(T), new Date(T));
+    const s = await scanTranscripts({ projectsDir: path.join(dir, "p"), now: NOW });
+    assert.equal(s.skippedLongLines, 1);
+    assert.equal(s.toolCounts.Bash, 2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("sandbox denials carry the command head", async () => {
+  const s = await scanTranscripts({ projectsDir: tmp, now: NOW, sandboxEnabled: true });
+  assert.equal(s.sandboxDenials[0].head, "git");
+});
+
+test("commandHead has no catastrophic backtracking on long assignment values (real-data hang, 2026-10-12)", () => {
+  const t = Date.now();
+  assert.equal(commandHead("S=/private/tmp/claude-501/-Users-x-Projects/eb12e81d-bb9d-4483-94b1-bebf90e297ac/scratchpad/spike-charts; mkdir -p $S"), "mkdir");
+  assert.ok(Date.now() - t < 500);
 });
