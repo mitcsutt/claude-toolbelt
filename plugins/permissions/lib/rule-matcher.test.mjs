@@ -266,3 +266,14 @@ test("commandHead skips cd/export/VAR=/loops to the real command (audit1 #12)", 
     assert.ok(!commandHead(c).startsWith("-") && !/^v\d/.test(commandHead(c)), c);
   }
 });
+
+test("stripWrappers: timeout forms, and no catastrophic backtracking (CodeQL js/redos)", () => {
+  assert.equal(stripWrappers("timeout 5 npm test"), "npm test");
+  assert.equal(stripWrappers("timeout -s KILL 5 npm test"), "npm test");
+  assert.equal(stripWrappers("timeout --kill-after 2 -v 10s npm test"), "npm test");
+  assert.equal(stripWrappers("timeout -k 1 --preserve-status 3 git status"), "git status");
+  const evil = "timeout " + "-k -! ".repeat(5000) + "x";
+  const t0 = Date.now();
+  stripWrappers(evil);
+  assert.ok(Date.now() - t0 < 200, `took ${Date.now() - t0} ms`);
+});

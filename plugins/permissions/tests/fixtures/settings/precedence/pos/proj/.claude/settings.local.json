@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "deny": [
+      "Bash(rm:*)"
+    ]
+  }
+}

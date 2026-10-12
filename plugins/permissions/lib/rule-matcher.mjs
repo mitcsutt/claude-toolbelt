@@ -553,8 +553,35 @@ export function nestedCommands(seg, { asText = false } = {}) {
   return { inner, unsure };
 }
 
+// `timeout [opts] DURATION cmd…` parsed token by token: the equivalent regex had
+// overlapping option alternatives and backtracked exponentially (CodeQL js/redos).
+const TIMEOUT_ARG_OPTS = new Set(["-s", "-k", "--signal", "--kill-after"]);
+const timeoutWrapper = {
+  exec(s) {
+    const m = /^timeout\s+/.exec(s);
+    if (!m) return null;
+    let i = m[0].length;
+    for (;;) {
+      const tok = /^(\S+)(\s+)/.exec(s.slice(i));
+      if (!tok) return null;
+      if (TIMEOUT_ARG_OPTS.has(tok[1])) {
+        i += tok[0].length;
+        const arg = /^\S+\s+/.exec(s.slice(i));
+        if (!arg) return null;
+        i += arg[0].length;
+      } else if (tok[1].startsWith("-")) {
+        i += tok[0].length;
+      } else if (/^\d[\w.]*$/.test(tok[1])) {
+        return [s.slice(0, i + tok[0].length)];
+      } else {
+        return null;
+      }
+    }
+  },
+};
+
 const WRAPPER_RES = [
-  /^timeout\s+(?:(?:-[sk]|--signal|--kill-after)\s+\S+\s+|-\S+\s+)*\d[\w.]*\s+/,
+  timeoutWrapper,
   /^time\s+/,
   /^nice\s+(?:-n\s*-?\d+\s+|-\d+\s+)?/,
   /^nohup\s+/,
