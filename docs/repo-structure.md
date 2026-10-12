@@ -7,12 +7,15 @@ or directory isn't in this tree, ask whether it belongs before adding it.
 claude-toolbelt/
 ├── .claude-plugin/marketplace.json    # marketplace manifest — thin, see below
 ├── .github/
+│   ├── dependabot.yml                 # weekly github-actions updates
 │   ├── workflows/ci.yml               # validate + lint + test-all, on push/PR
-│   ├── ISSUE_TEMPLATE/                # bug_report.md, plugin_request.md
+│   ├── ISSUE_TEMPLATE/                # bug_report.md, plugin_request.md, idea.yml
 │   └── pull_request_template.md
+├── .claude/skills/idea/               # repo-local /idea skill (not a marketplace plugin) — see docs/ideas.md
 ├── CLAUDE.md                          # agent-facing rules and checklists
 ├── CONTRIBUTING.md                    # human-facing contribution guide
 ├── LICENSE
+├── SECURITY.md                        # vulnerability reporting policy
 ├── README.md                          # OSS front door: what this is, install, plugin list
 ├── shared-rules.md                    # this author's personal Claude Code rules (not repo policy)
 ├── config/                            # tracked non-plugin configuration
@@ -22,6 +25,7 @@ claude-toolbelt/
 │   ├── README.md
 │   ├── repo-structure.md
 │   ├── authoring-plugins.md
+│   ├── ideas.md
 │   └── testing.md
 ├── plugins/<name>/                    # one directory per plugin — see docs/authoring-plugins.md
 ├── scripts/                           # repo-wide, not plugin-scoped

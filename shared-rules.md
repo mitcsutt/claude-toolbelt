@@ -30,10 +30,12 @@ here and apply whichever style is active.
   editing. Write your current hypothesis in one line, then run one test that
   would confirm or rule it out — or ask one question — before changing more
   code. *Reason: repeating a failed fix looks like progress and is not.*
-- **Reach for Mermaid past three interacting parts.** Draw the diagram instead
-  of narrating the interaction in prose. This is the one rule here that adds
-  output rather than cutting it; it earns the length by replacing more prose
-  than it adds.
+- **Diagram past three interacting parts.** Draw the diagram instead of
+  narrating the interaction in prose. Use Mermaid only where it renders
+  (artifacts, PR/issue bodies, Confluence, docs files); in terminal chat,
+  where it prints as raw source, use a short numbered flow or a plain ASCII
+  diagram instead. This is the one rule here that adds output rather than
+  cutting it; it earns the length by replacing more prose than it adds.
 - **Destructive actions: state the scope of loss, do not double-confirm.** The
   harness already gates them. Add one plain line: `This drops the orders table:
   2.1M rows, no undo.` *Reason: asking twice for something already gated wastes

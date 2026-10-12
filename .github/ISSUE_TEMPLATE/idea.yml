@@ -1,0 +1,55 @@
+name: Idea
+description: Log an idea or problem worth thinking about. Solutions are optional.
+title: "idea: "
+labels: ["idea"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ideas can be solution-open. Say what hurts; only propose a direction if you have one.
+        This repo is public: no secrets, tokens, customer data or private project names.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is painful, missing or wasteful today? Use your own words.
+    validations:
+      required: true
+  - type: textarea
+    id: direction
+    attributes:
+      label: Proposed direction
+      description: Optional. A sketch of a solution, or leave blank to keep the solution space open.
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and requirements
+      description: Optional. Hard limits and must-haves you already know about.
+  - type: textarea
+    id: questions
+    attributes:
+      label: Open questions
+      description: Optional. What do you not know yet?
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criteria
+      description: Optional. How would you know this was solved?
+  - type: dropdown
+    id: research
+    attributes:
+      label: Research status
+      description: Has anyone looked into this yet?
+      options:
+        - Logged only
+        - Researched
+      default: 0
+    validations:
+      required: true
+  - type: checkboxes
+    id: public
+    attributes:
+      label: Public repo check
+      options:
+        - label: No secrets or private information in this issue
+          required: true
