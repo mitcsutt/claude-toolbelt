@@ -15,6 +15,7 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 | `postmortem`        | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
 | `orchestrate`       | Token-frugal orchestration doctrine for an expensive top-level model — reserve the expensive tier for judgment, route token-heavy bounded work to the cheapest capable subagent tier, demand compact traceable returns, and vet before acting. Model- and harness-agnostic; skill only. |
 | `git`               | A home for narrow git/GitHub helper skills. Currently ships `gh-pending-review` — add inline comments to a PR that already has a pending review, via GraphQL, without orphaning comments drafted elsewhere. |
+| `review-panel`      | Ten read-only persona reviewer subagents (grumpy senior, paranoid SRE, fact-checker, DX advocate, threat modeller, goal auditor, outsider, contract keeper, cost hawk, noise filter) and `/assemble-panel`, which picks the right panel for a plan, spec, diff or decision, runs it in parallel and filters the reports into one triage. |
 
 ## Install
 
@@ -29,6 +30,7 @@ Add this marketplace, then install whichever plugins you want:
 /plugin install postmortem@claude-toolbelt
 /plugin install orchestrate@claude-toolbelt
 /plugin install git@claude-toolbelt
+/plugin install review-panel@claude-toolbelt
 ```
 
 ## Plugin details
@@ -64,6 +66,20 @@ Doctrine for an expensive top-level model that should spend its tokens on judgme
 ### [`git`](plugins/git/README.md)
 
 A home for narrow git/GitHub helper skills, installed as one plugin. Currently ships `gh-pending-review`, which appends inline comments to a GitHub PR's existing pending review via the GraphQL `addPullRequestReviewThread` mutation — the REST API rejects a second pending review and can orphan comments drafted in another tool. Future git/GitHub skills are added as siblings under `skills/`.
+
+### [`review-panel`](plugins/review-panel/README.md)
+
+A pot of persona reviewers you can call by name (`review-panel:grumpy-senior`, `review-panel:fact-checker`, …), plus `/assemble-panel`, which saves you inventing them each time.
+
+How the skill works:
+
+1. Sizes the panel. It can say a panel isn't worth it.
+2. Picks non-overlapping lenses from the artifact type and its risk signals.
+3. Prints the roster, with why each reviewer was picked and what was skipped.
+4. Briefs each reviewer with a fixed goal and a context level chosen on purpose, then dispatches them in parallel.
+5. Runs `noise-filter`, which merges duplicates, marks cross-confirmed findings, spot-checks evidence and drops nits.
+
+Each reviewer's output has a fixed contract: a signature deliverable (cut-down version, claim ledger, failure table, journey walk and so on), findings with evidence, severity and confidence, and one verdict. Reviewers are read-only, never check out branches, and never print secret values.
 
 ## Statusline
 
