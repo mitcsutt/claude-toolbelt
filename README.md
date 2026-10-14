@@ -2,6 +2,8 @@
 
 A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is intentionally narrow and composable — install only the ones you want.
 
+Also here: [`shared-rules.md`](shared-rules.md), a set of Claude Code behaviour rules you can import into your own `CLAUDE.md` — see [Shared rules](#shared-rules).
+
 [![CI](https://github.com/mitcsutt/claude-toolbelt/actions/workflows/ci.yml/badge.svg)](https://github.com/mitcsutt/claude-toolbelt/actions/workflows/ci.yml)
 
 ## What's inside
