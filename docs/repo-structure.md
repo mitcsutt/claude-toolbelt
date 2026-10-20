@@ -18,6 +18,7 @@ claude-toolbelt/
 ├── SECURITY.md                        # vulnerability reporting policy
 ├── README.md                          # OSS front door: what this is, install, plugin list
 ├── shared-rules.md                    # this author's personal Claude Code rules (not repo policy)
+├── rules/                             # situational rule docs moved out of shared-rules.md; read on trigger
 ├── config/                            # tracked non-plugin configuration
 │   ├── README.md
 │   └── ccstatusline/                  # statusline config + scripts (see below)

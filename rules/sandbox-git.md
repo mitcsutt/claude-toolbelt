@@ -1,0 +1,9 @@
+# Sandbox: git and gh remote commands
+
+This section applies only when `sandbox.enabled` is true. `git` and `gh` are in the top-level `sandbox.excludedCommands` ([docs](https://code.claude.com/docs/en/sandboxing)), so a command **whose first token is `git` or `gh` runs outside the sandbox automatically** — full network and filesystem access, no `dangerouslyDisableSandbox` needed. Remote ops (`push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`) and local `.git` writes (`worktree remove`, `branch -D`, `checkout`) just work when invoked bare. The real blocker was never `~/.ssh` read access (the sandbox reads `~/.ssh` by default per current docs); it is **network egress**, which the exclusion sidesteps.
+
+- **Never wrap git/gh behind another command.** `excludedCommands` matches the *first token* only. `cd /path && git push` has head `cd`, so the whole line runs sandboxed and the remote op fails. Use `git -C <path> push` / `gh -R <repo> …` instead — the head stays `git`/`gh` and the exclusion applies. This also keeps `file:line`-style paths ctrl-clickable.
+- **Do not prefix git/gh with `source …`, `echo … &&`, `export … &&`, or `bash script.sh`** for the same reason — the head is no longer `git`/`gh`.
+- **`dangerouslyDisableSandbox: true` is a last resort, not the default.** It disables *all* network and filesystem isolation (broader than the git-only exclusion) and is redundant for a bare git/gh command. Reach for it only when a genuine sandbox failure remains after the command is already un-wrapped (head = `git`/`gh`), or for a non-excluded remote tool (e.g. raw `curl` against a host).
+- `git worktree remove` and `git branch -D` run fine bare; the earlier `.git/config` write and worktree-removal EPERM failures were the same wrapping problem, not an inherent sandbox limit.
+- `fsmonitor` is disabled globally (`git config --global core.fsmonitor false`) to stop the sandbox EPERM churn on `.git/…/fsmonitor--daemon.ipc`.
