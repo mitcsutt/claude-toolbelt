@@ -1,5 +1,13 @@
 # Shared Claude Code Rules
 
+## Situational rules (read when triggered)
+
+- **Before delegating to a subagent, writing a brief, or fanning out work** → read [rules/delegating.md](rules/delegating.md) (relative to this file) before acting.
+- **Before writing, editing, reviewing or deleting a code comment or doc comment** → read [rules/code-comments.md](rules/code-comments.md) (relative to this file) before acting. Invariant: default is no comment; never reference the conversation, task or edit in a comment.
+- **When the sandbox is enabled and you run git/gh or a remote command, or one fails with EPERM/network errors** → read [rules/sandbox-git.md](rules/sandbox-git.md) (relative to this file) before acting. Invariant: never wrap git/gh behind `cd`/`source`/`export`; use `git -C <path>` / `gh -R <repo>`.
+- **When the user reports something broken, flaky or failing, before forming a theory** → read [rules/before-fixing.md](rules/before-fixing.md) (relative to this file) before acting.
+- **Before creating a PR, writing a PR description, or committing to a branch that has a PR** → read [rules/pull-requests.md](rules/pull-requests.md) (relative to this file) before acting.
+
 ## Agent voice
 
 Standing rules for how the agent reports its work. They hold under any output
@@ -69,28 +77,6 @@ turns created when a subagent's result arrives. So at every stop-point:
   report or hand back decisions: keep working on whatever doesn't depend on an
   answer, and stop only when nothing can move without me.
 
-## Delegating to subagents
-
-These apply to every delegation, from the main session or from inside a
-subagent. They shape how work is split, not which model or agent does it.
-
-- **Brief = objective, output (format + file path), tools/sources,
-  boundaries.** Boundaries always say whether the worker may spawn its own
-  subagents; default is no. *Reason: workers act on inherited instructions
-  literally, so a brief that doesn't pin the role can be read as licence to
-  re-run the whole fan-out.*
-- **Fetch shared data once.** When parallel workers need the same dataset (CI
-  history, logs, search results, API pages), fetch it once to a file, then give
-  each worker the path and a disjoint slice. Never have N workers each pull the
-  full set and filter it.
-- **Bulk data goes to a file, not into context.** Any pull that paginates or
-  needs more than ~20 tool calls: save results to a file, extract with `jq` or
-  a script, and read only the extract. *Reason: every result left in context
-  is re-read on every later turn.*
-- **Fan-out uses fresh subagents, not forks.** A fork copies the whole
-  conversation, including any fan-out plan in it, and re-reads all of it every
-  turn.
-
 ## Tooling
 
 - Use Skills from `~/.claude/skills/` when task matches (e.g. `/systematic-debugging` for bugs, `/go-testing` for tests)
@@ -133,20 +119,6 @@ subagent. They shape how work is split, not which model or agent does it.
 - Every changed line should trace to the request. Can't name the reason in one sentence → revert it
 - Orphan cleanup: remove imports/vars/functions YOUR change made unused. Don't delete pre-existing dead code without asking
 
-## Code comments: load-bearing only
-
-Default is **no comment**. Governs files, not chat replies. Test before writing one: name what the reader loses without it. Concrete answer → write it. Silence, or an answer restating the line below → the code already carries it. Test applies per *clause* — a 4-line comment with one load-bearing clause is one line long.
-
-- **Write only these five:** (1) *why* — decision/tradeoff/constraint the code can't express (`// Retry 3x — upstream 502s on cold start`); (2) *landmine* — looks safe to change, isn't (`// Set auth header before reading body`); (3) *deliberate omission* a reader would take for a bug (`// Unsorted; caller re-sorts by locale`); (4) *pointer out of the file* — ticket/RFC/upstream bug explaining the code's **shape** (bar: reader learns why it couldn't be simpler); (5) *toolchain annotation* — `eslint-disable`, `type: ignore`, pragmas
-- **Never:** the line spelled twice (`// Increment the counter` on `count++`); the signature in prose (`// Handles a webhook` on `handleWebhook`); the data structure announcing itself (`// Map for O(1) lookups`); incident history
-- **Never reference the conversation, the task, or the edit** — no `// as discussed`, `// per your request`, `// changed this to fix X`, `// NEW:`, `// was previously Y`. Code describes itself as it stands; the edit belongs in the commit message
-- **Never stamp ticket refs** (`// ENG-234322: fix rate limiter`) — that's filing, and `git blame` files it. Ticket goes in branch/commit/PR, not code. Exception is category (4): the ticket explains the code's shape
-- **Density follows the file.** Uncommented neighbourhood stays uncommented. Heavily commented file sets its ceiling by its load-bearing comments, not its total
-- **Alternative first:** rename until the name says it → extract a named function → write a test → put it in the commit/PR/your reply to me. Hard to explain a block = fact about the code, not your prose; it was asking to be two functions
-- **Doc comments aren't owed to every export.** Write one only when the signature leaves a caller question: units/bounds, failure modes, call ordering, thread safety, edges. Can't name the question → signature is the contract, write nothing. Answer it and stop
-- **Existing comments:** load-bearing ones stay verbatim (rewriting = diff noise). One YOUR edit made false → fix or remove in that same edit; reread comments *around* the edit site, not just ones you touched. Never bulk-delete pre-existing comments as cleanup
-- **Audit the diff before finishing.** Every comment incl. doc comments: name what's lost without it, drop the rest, shorten survivors to the examples' length. Then grep the file for identifiers you renamed/deleted — a comment still naming one is false, and false is worse than none. Test names are comments the runner prints
-
 ## Think before coding
 
 - State assumptions explicitly when proceeding without asking. Permission granted to act on reasonable defaults — user will redirect if wrong. But name the assumption so user *can* redirect
@@ -168,31 +140,7 @@ Training cutoff = stale recall risk. Default to **verify, not assert** for: comp
 
 - Never commit to master/main (or any default branches)
 - Creating PR without review time → Draft PR. Draft PRs default unless told otherwise
-- Working on PR user referenced: local branch may not match PR's remote head ref (e.g. `gh pr checkout 3074` creates `pr-3074` even when PR branch is `ENG-X-foo`). Before commit, compare `git branch --show-current` to `gh pr view <num> --json headRefName`. Differ → ask which to commit on
 - "Rebase onto master" / "merge into branch X" ≠ consent to push. "I'll test it first" = explicit anti-consent. Push only when user says push
-- **Before `gh pr create`, find and use the repo's PR template.** Check `.github/PULL_REQUEST_TEMPLATE.md`, `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE/*.md`, `docs/PULL_REQUEST_TEMPLATE.md`, repo-root `PULL_REQUEST_TEMPLATE.md`. Found → fill every section, check boxes only when clearly satisfied, leave unverified ones unchecked. Not found → fall back to `## Summary` / `## Test plan` default. The default system-prompt PR format is the fallback, not the default — always look for a template first.
-- **PR descriptions are the shortest useful summary, never an essay.** The description says what changed and why in a few sentences or tight bullets; the reviewer gets the specifics from the diff, not the body. Fill the template's sections but keep the prose in each tight — never a per-file changelog, a metrics/bundle-number dump, or a paragraph-by-paragraph walkthrough. Detailed proof (verification logs, bundle metrics, reproduction traces) goes in a PR comment or the linked ticket, not the description. This is a length rule, not a grammar one — write normal prose, just little of it. When unsure how short, err shorter and let me ask for more. Rationale: reviewers won't read a wall of text, and it buries the one thing they needed; the diff already carries the detail.
-- **Before creating a PR, rebase onto the fetched `origin/<base>`** (confirm the actual base; stacked work differs). Same mechanics and push-consent rules as the rebase bullets in my personal shared rules; it does not authorise rewriting already-reviewed history mid-review without asking.
-
-## Sandbox: git and gh remote commands
-
-This section applies only when `sandbox.enabled` is true. `git` and `gh` are in the top-level `sandbox.excludedCommands` ([docs](https://code.claude.com/docs/en/sandboxing)), so a command **whose first token is `git` or `gh` runs outside the sandbox automatically** — full network and filesystem access, no `dangerouslyDisableSandbox` needed. Remote ops (`push`/`pull`/`fetch`/`clone`, `gh pr`, `gh repo`) and local `.git` writes (`worktree remove`, `branch -D`, `checkout`) just work when invoked bare. The real blocker was never `~/.ssh` read access (the sandbox reads `~/.ssh` by default per current docs); it is **network egress**, which the exclusion sidesteps.
-
-- **Never wrap git/gh behind another command.** `excludedCommands` matches the *first token* only. `cd /path && git push` has head `cd`, so the whole line runs sandboxed and the remote op fails. Use `git -C <path> push` / `gh -R <repo> …` instead — the head stays `git`/`gh` and the exclusion applies. This also keeps `file:line`-style paths ctrl-clickable.
-- **Do not prefix git/gh with `source …`, `echo … &&`, `export … &&`, or `bash script.sh`** for the same reason — the head is no longer `git`/`gh`.
-- **`dangerouslyDisableSandbox: true` is a last resort, not the default.** It disables *all* network and filesystem isolation (broader than the git-only exclusion) and is redundant for a bare git/gh command. Reach for it only when a genuine sandbox failure remains after the command is already un-wrapped (head = `git`/`gh`), or for a non-excluded remote tool (e.g. raw `curl` against a host).
-- `git worktree remove` and `git branch -D` run fine bare; the earlier `.git/config` write and worktree-removal EPERM failures were the same wrapping problem, not an inherent sandbox limit.
-- `fsmonitor` is disabled globally (`git config --global core.fsmonitor false`) to stop the sandbox EPERM churn on `.git/…/fsmonitor--daemon.ipc`.
-
-## Before fixing a "broken" / "flaky" / "failing" thing
-
-User reports broken → **verify world's current state before forming theory.** Your branch may be stale; someone may already be on it.
-
-- **Check master, not your branch**, for file's current state: `git show origin/master:<path>`. Reported flaky test may already be `.skip`'d, quarantined, or rewritten
-- **Search for in-flight work** on same file before starting: `gh pr list --search "<filename>" --state open`. Teammate has open PR → raise it before duplicating
-- **Read recent commits for status markers** (`skip`, `disable`, `revert`, `quarantine`, `WIP`): `git log -10 --oneline -- <path>`. Signals situation already moved
-- **CI failure data has date.** Race conditions often date/timezone/day-of-month dependent. Failure unreproducible locally today may have manifested only on specific date — and vice versa. Don't conflate "I reproduced _a_ failure" with "I reproduced _the_ failure being reported"
-- **Local repro doesn't match CI failure mode → stop and reconcile** before writing fix. Two flake modes coexist; fixing wrong one looks like progress, isn't
 
 ## Running bash commands
 
