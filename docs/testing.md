@@ -37,8 +37,8 @@ them, plus a fourth manual layer for prompt-shaped plugins.
    `*.test.mjs` file. This is the single command that must pass before any
    change lands, and the one CI runs.
 
-Deliberately *not* present: a per-plugin manifest-checking script copied six
-times. Those checks are structural, so they live once in layer 1.
+Deliberately *not* present: a per-plugin manifest-checking script copied into
+every plugin. Those checks are structural, so they live once in layer 1.
 
 ## Running everything
 

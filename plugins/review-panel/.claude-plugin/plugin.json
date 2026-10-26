@@ -1,6 +1,6 @@
 {
   "name": "review-panel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A library of ten read-only persona reviewer subagents (grumpy senior, paranoid SRE, fact-checker, DX advocate, threat modeller, goal auditor, outsider, contract keeper, cost hawk, noise filter) and an /assemble-panel skill that picks the right panel for a plan, spec, diff or decision, briefs and dispatches it in parallel, and filters the reports into one triage.",
   "author": {
     "name": "Mitchell Sutton"

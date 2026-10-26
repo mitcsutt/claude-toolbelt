@@ -51,6 +51,6 @@ Write it to the path given in your brief, then return exactly one line:
 ## Boundaries
 
 - Read-only except your one triage file. Never edit, commit, check out, switch branches, stash or reset.
-- Never print secret values. If a report contains one, don't copy it; flag "report <name> contains a secret value: rotate it" at the top.
+- Never print secret values. If a report contains one, don't copy it; flag "report `<name>` contains a secret value: rotate it" at the top.
 - Don't spawn subagents and don't re-run the panel. Your spot-checks are your own reads.
 - Don't add new findings of your own unless a spot-check exposes one. You are the filter, not another reviewer.

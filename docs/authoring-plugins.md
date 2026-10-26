@@ -27,7 +27,7 @@ plugins/<name>/
 
 ## `plugin.json`
 
-Fields in use across this repo's six plugins:
+Fields in use across this repo's plugins:
 
 ```json
 {
@@ -78,7 +78,7 @@ relative or absolute path, since a plugin can be installed anywhere. Example,
 from `plugins/permissions/hooks/hooks.json`:
 
 ```json
-"command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/log.mjs\""
+"command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-alert.mjs\""
 ```
 
 ## The README skeleton
@@ -116,9 +116,19 @@ Semver, bumped on any behaviour change (R8):
 - **minor** — a new skill, hook, or capability.
 - **major** — a breaking change to invocation or configuration.
 
-Release with `claude plugin tag [path]`, which creates a `{name}--v{version}`
-git tag after validating that `plugin.json` and the marketplace entry agree.
-`claude plugin tag --dry-run` is a good pre-check before actually tagging.
+Every merged version bump is a release, and gets a git tag. After the PR
+lands, the maintainer tags each bumped plugin from an up-to-date, clean
+`main`:
+
+```bash
+claude plugin tag plugins/<name> --dry-run   # pre-check
+claude plugin tag plugins/<name> --push
+```
+
+`claude plugin tag` creates an annotated `{name}--v{version}` tag (e.g.
+`permissions--v3.1.1`) after validating that `plugin.json` and the
+marketplace entry agree, and refuses a dirty tree or an existing tag. Tags
+are the release history: a changelog, when one exists, is built from them.
 Version bumping and tagging are review-gated, not machine-enforced.
 
 ## File modes

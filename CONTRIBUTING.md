@@ -58,8 +58,9 @@ before running it.
 ## Versioning
 
 See [`docs/authoring-plugins.md`](docs/authoring-plugins.md#versioning) for
-the semver policy (patch/minor/major) and how `claude plugin tag` works. Bump
-`plugin.json`'s version for any behaviour change to a plugin you touch.
+the semver policy (patch/minor/major) and the release-tagging step. Bump
+`plugin.json`'s version for any behaviour change to a plugin you touch; the
+maintainer tags the release after merge, so don't create tags in your PR.
 
 ## Submitting
 
