@@ -125,4 +125,4 @@ Don't apply fixes, post comments or publish anything until the user says so. Any
 ## Follow-ups
 
 - **"Run it again after the fixes."** Re-run only the reviewers who raised BLOCKs, with the previous triage attached. Don't re-run the whole panel.
-- **"Add a <persona>."** Dispatch that one reviewer, then re-run `noise-filter` over all reports.
+- **"Add a `<persona>`."** Dispatch that one reviewer, then re-run `noise-filter` over all reports.

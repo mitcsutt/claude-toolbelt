@@ -1,6 +1,6 @@
 {
   "name": "claude-toolbelt",
-  "description": "A small kit of narrow, composable Claude Code plugins — permissions tuning, docs retrieval, session visualisation, autonomous loops, postmortems, orchestration and git helpers.",
+  "description": "A small kit of narrow, composable Claude Code plugins — permissions tuning, docs retrieval, session visualisation, autonomous loops, postmortems, orchestration, git helpers and persona review panels.",
   "owner": {
     "name": "Mitchell Sutton"
   },
