@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { demote, headings, parseFrontmatter, parseTable, splitSections, takeTitle } from './markdown.ts'
+import { cell, demote, headings, parseFrontmatter, parseTable, splitSections, takeTitle } from './markdown.ts'
 
 test('frontmatter reads a description that strict YAML would reject', () => {
   const { data, body } = parseFrontmatter('---\nname: x\ndescription: Advisory check: reports things.\n---\nBody\n')
@@ -34,4 +34,10 @@ test('parseTable returns the header and rows, keeping an escaped pipe in its cel
   const table = parseTable('| A | B |\n| --- | --- |\n| `x` | a \\| b |\n')
   assert.deepEqual(table?.header, ['A', 'B'])
   assert.deepEqual(table?.rows, [['`x`', 'a \\| b']])
+})
+
+test('cell escapes a backslash as well as a pipe, so the pair round-trips through parseTable', () => {
+  const out = cell('a\\|b')
+  assert.equal(out, 'a\\\\\\|b')
+  assert.equal(cell('x | y'), 'x \\| y')
 })

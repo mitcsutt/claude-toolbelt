@@ -188,9 +188,9 @@ export function parseTable(text: string): { header: string[]; rows: string[][] }
   return { header: cells(lines[0] ?? ''), rows: lines.slice(2).map(cells) }
 }
 
-/** A table cell: no line break, and a literal `|` escaped. */
+/** A table cell: no line break, and a literal `|` or `\` escaped. */
 export function cell(text: string): string {
-  return oneLine(text).replace(/\|/g, '\\|')
+  return oneLine(text).replace(/[\\|]/g, '\\$&')
 }
 
 /** A YAML frontmatter block with double-quoted values, which JSON.stringify writes validly. */
