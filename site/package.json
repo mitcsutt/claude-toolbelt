@@ -13,7 +13,7 @@
     "dev": "node scripts/generate.ts && next dev",
     "build": "node scripts/generate.ts && next build && kiln-docs postbuild",
     "check-links": "kiln-docs check-links",
-    "typecheck": "node scripts/generate.ts && tsc --noEmit",
+    "typecheck": "node scripts/generate.ts && fumadocs-mdx && tsc --noEmit",
     "test": "node --test \"scripts/**/*.test.ts\""
   },
   "dependencies": {
