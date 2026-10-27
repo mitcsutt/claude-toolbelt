@@ -4,3 +4,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+    groups:
+      # kiln-docs pins its fumadocs peers as a tested pair, so they move together.
+      docs-foundation:
+        patterns:
+          - '@mitcsutt/*'
+          - 'fumadocs-*'

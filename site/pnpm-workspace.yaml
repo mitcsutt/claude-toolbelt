@@ -1,0 +1,8 @@
+# The site's pnpm settings. pnpm fails an install whose dependencies' build scripts aren't
+# approved: esbuild, which kiln-docs loads `site.config.ts` with, and workerd, the server Wrangler
+# runs for `kiln-docs check-links`.
+allowBuilds:
+  esbuild: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - '@mitcsutt/kiln-docs@0.1.0'

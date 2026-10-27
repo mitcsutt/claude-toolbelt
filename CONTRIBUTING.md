@@ -38,8 +38,11 @@ bash scripts/test-all.sh
 ```
 
 This runs the structural validator, shell lint, every plugin's `tests/all.sh`,
-and the Node test files. It must exit 0. This is also what CI runs on every
-push and pull request — nothing else.
+and the Node test files. It must exit 0. This is also what `ci.yml` runs on
+every push and pull request. Two other workflows cover the docs site in
+`site/`: `docs.yml` builds it and checks its links on pull requests that touch
+what it renders, and `docs-deploy.yml` deploys it from `main`. `test-all.sh`
+stays free of dependencies, so it doesn't build the site.
 
 If your plugin is prompt-shaped (an output style, a routing skill, anything
 graded by how it reads rather than by return codes — `postmortem` and
