@@ -1,0 +1,59 @@
+name: Docs
+
+# Builds the docs site and checks its links on pull requests that touch what the site renders. Kept
+# apart from ci.yml because the site needs `pnpm install`, and scripts/test-all.sh stays dependency-free.
+on:
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'plugins/**'
+      - 'docs/**'
+      - 'rules/**'
+      - 'config/**'
+      - 'scripts/**'
+      - '.claude-plugin/**'
+      - '**.md'
+      - '.github/workflows/docs.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and check links
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: '24'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generator tests
+        run: pnpm test
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Check links
+        run: pnpm check-links

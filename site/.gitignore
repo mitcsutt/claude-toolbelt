@@ -1,0 +1,8 @@
+node_modules/
+.next/
+out/
+.source/
+.generated/
+.wrangler/
+next-env.d.ts
+tsconfig.tsbuildinfo

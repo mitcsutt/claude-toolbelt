@@ -7,8 +7,10 @@ or directory isn't in this tree, ask whether it belongs before adding it.
 claude-toolbelt/
 ├── .claude-plugin/marketplace.json    # marketplace manifest — thin, see below
 ├── .github/
-│   ├── dependabot.yml                 # weekly github-actions updates
+│   ├── dependabot.yml                 # weekly updates: github-actions, and the docs site's npm dependencies
 │   ├── workflows/ci.yml               # validate + lint + test-all, on push/PR
+│   ├── workflows/docs.yml             # build + link-check the docs site, on PRs that touch its inputs
+│   ├── workflows/docs-deploy.yml      # deploy the docs site to Cloudflare Workers, on main
 │   ├── ISSUE_TEMPLATE/                # bug_report.md, plugin_request.md, idea.yml
 │   └── pull_request_template.md
 ├── .claude/skills/idea/               # repo-local /idea skill (not a marketplace plugin) — see docs/ideas.md
@@ -29,6 +31,7 @@ claude-toolbelt/
 │   ├── ideas.md
 │   └── testing.md
 ├── plugins/<name>/                    # one directory per plugin — see docs/authoring-plugins.md
+├── site/                              # the documentation site — see below; its own package.json and lockfile
 ├── scripts/                           # repo-wide, not plugin-scoped
 │   ├── validate.sh                    # structural invariants (R1, R2, R4, R5, R6, R9)
 │   ├── test-all.sh                    # validate + every plugin's tests/all.sh + node --test
@@ -53,6 +56,13 @@ claude-toolbelt/
   `CLAUDE.md` link into this directory rather than restating what's here
   (R10). `docs/superpowers/` and `.superpowers/` are execution scaffolding
   and stay gitignored.
+- **`site/`** — the documentation site, built on the published
+  `@mitcsutt/kiln-docs`. It is the only place with a `package.json` and a
+  lockfile; there is none at the repo root and no workspace, so `scripts/`
+  and the plugins stay dependency-free. `site/scripts/` is a generator that
+  reads this repo's READMEs, `SKILL.md` and agent files, manifests, `docs/`
+  and shared rules and renders them in place, so a fact is still written
+  once. Its checks run in `docs.yml`, not in `scripts/test-all.sh`.
 - **`scripts/`** — checks that apply across all plugins, implemented once.
   A check that only makes sense for one plugin belongs in that plugin's
   `tests/`, not here.
