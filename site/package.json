@@ -17,10 +17,10 @@
     "test": "node --test \"scripts/**/*.test.ts\""
   },
   "dependencies": {
-    "@mitcsutt/kiln-docs": "0.1.0",
+    "@mitcsutt/kiln-docs": "0.1.1",
     "@mitcsutt/kiln-ui": ">=0.8.0 <1.0.0",
-    "fumadocs-core": "~16.15.18",
-    "fumadocs-mdx": "15.4.6",
+    "fumadocs-core": "~16.17.9",
+    "fumadocs-mdx": "15.4.10",
     "next": "^16.3.8",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
