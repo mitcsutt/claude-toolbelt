@@ -27,7 +27,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | `cost-hawk` | agent | Steady-state cost, growth, hot paths, token and dollar spend, as a cost sheet |
 | `rules-lawyer` | agent | Agent instructions (CLAUDE.md, AGENTS.md, rules, skills, commands, hooks, subagents, output styles, MCP descriptions): a load map, literal readings, a claim ledger, hook fixture runs and follower runs on risky lines |
 | `instruction-follower` | agent (helper) | Dispatched only by `rules-lawyer`: follows an artifact on paper for one scenario and reports where it had to guess |
-| `noise-filter` | agent | Final pass: merges duplicates, marks cross-confirmed findings, spot-checks evidence, drops noise |
+| `noise-filter` | agent | Final pass: parses every report in code, runs yes/no checks on each finding, spot-checks evidence, merges only same-cause findings, and accounts for every finding (`check-triage`) in a short triage with an at-a-glance block |
 | `/assemble-panel` | skill | Sizes and picks the panel, prints the roster, briefs and dispatches in parallel, runs `noise-filter`, presents one triage |
 
 Every reviewer agent:
@@ -38,7 +38,7 @@ Every reviewer agent:
 - never prints secret values;
 - returns one line pointing at its report file.
 
-Shared method lives in `references/shared/`: the evidence table every reviewer cites, the review method (tiers, refutation, coverage, severity anchors) and the claim-ledger procedure. `lib/report-parse.mjs` parses the shared report contract; the tests use it to check every agent's output template.
+Shared method lives in `references/shared/`: the evidence table every reviewer cites, the review method (tiers, refutation, coverage, severity anchors) and the claim-ledger procedure. `lib/report-parse.mjs` parses the shared report contract; the tests use it to check every agent's output template, and `noise-filter` runs it to index the findings, propose merge candidates and check that its triage accounts for every finding exactly once (`findings`, `merges`, `check-triage`).
 
 ## Install
 
@@ -62,9 +62,10 @@ What the skill does:
 3. Prints the roster, with why each reviewer was picked and what was skipped.
 4. Dispatches them all in parallel, then runs `noise-filter` over their reports.
 5. Hands back:
+   - the triage's at-a-glance block;
    - Fix before merge;
    - Decisions for you;
-   - counts for "worth doing" and "dropped".
+   - counts for "worth doing", "pre-existing" and "dropped".
 
 For a lens the roster doesn't cover, the skill writes an ad-hoc persona from `references/persona-contract.md`.
 
@@ -90,18 +91,20 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Two eval cases grade `rules-lawyer` against a no-plugin baseline. Each planted defect has its own grader, so the score shows which kinds get caught.
+Three eval cases grade a reviewer against a no-plugin baseline. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
+- `noise-filter-planted-triage` seeds a small Node rate limiter, one change under review and five pre-written reports with 15 findings: real bugs worded differently, folklore, a wrong line, a mis-stated duplicate, a doc mismatch that is really a code bug, a pre-existing bug, nits and process noise. Both arms are told the triage format, so the score compares judgement, not format.
 
-The first case also has a sound rule that should survive the audit. It costs real model calls, so run it by hand (see [`docs/testing.md`](../../docs/testing.md)):
+The first and third cases each have a control that should survive: a sound rule, and a real BLOCK raised by one hedged, low-confidence reviewer. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
 
 ```bash
-claude plugin eval plugins/review-panel --scaffold --runs 1 --allow-tools Bash Write WebFetch WebSearch
+claude plugin eval plugins/review-panel --case 'rules-lawyer-*' --scaffold --runs 1 --allow-tools Bash Write WebFetch WebSearch
+claude plugin eval plugins/review-panel --case 'noise-filter-*' --scaffold --runs 3 --allow-tools Bash Write
 ```
 
-Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` instead; both arms then skip shell checks.
+Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran.
 
 ## Related
 

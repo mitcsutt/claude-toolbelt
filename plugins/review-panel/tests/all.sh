@@ -158,6 +158,8 @@ print(c.get("context", {}).get("scaffold_script"))
 print(not llm or (shaped and p is not None and p in prompt))
 print(all(g.get("target") for g in gs if g.get("type") == "regex"))
 print(any(g["name"].startswith("control_") for g in gs) or "no control" in c.get("description", ""))
+files = [g["target"].get("path") for g in gs if g.get("type") == "regex" and isinstance(g.get("target"), dict) and g["target"].get("source") == "file"]
+print(all(f and f in prompt for f in files))
 ' "$EVAL/case.yaml")
     assert_eq "fixture.sh" "$(echo "$facts" | sed -n 1p)" "$c: seeds its fixture from fixture.sh"
     if [ -f "$EVAL/fixture.sh" ]; then ok=0; else ok=1; fi
@@ -165,10 +167,66 @@ print(any(g["name"].startswith("control_") for g in gs) or "no control" in c.get
     assert_eq "True" "$(echo "$facts" | sed -n 2p)" "$c: every llm grader grades the report file the prompt names"
     assert_eq "True" "$(echo "$facts" | sed -n 3p)" "$c: every regex grader has a target"
     assert_eq "True" "$(echo "$facts" | sed -n 4p)" "$c: has a control grader or says 'no control'"
+    assert_eq "True" "$(echo "$facts" | sed -n 5p)" "$c: every regex grader on a file grades a path the prompt names"
   else
     echo "($c case.yaml checks skipped — python3 with PyYAML not installed)"
   fi
 done
+
+# Promise: noise-filter's eval fixture builds, its five reports parse, and
+# the golden triage accounts for every finding (check-triage).
+NF_EVAL="$PLUGIN/evals/noise-filter-planted-triage"
+PARSER="$PLUGIN/lib/report-parse.mjs"
+GOLDEN="$PLUGIN/lib/fixtures/noise-filter-golden-TRIAGE.md"
+CTRL_DROPPED="$PLUGIN/lib/fixtures/noise-filter-control-dropped-TRIAGE.md"
+if command -v git >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  NF_TMP=$(mktemp -d)
+  if (cd "$NF_TMP" && bash "$NF_EVAL/fixture.sh" >/dev/null 2>&1); then ok=0; else ok=1; fi
+  assert_true "$ok" "noise-filter fixture builds and passes its self-checks"
+  rows=$(cd "$NF_TMP" && node "$PARSER" findings reports/*.md 2>/dev/null)
+  st=$?
+  assert_eq "0" "$st" "noise-filter fixture reports parse with no problems"
+  assert_eq "15" "$(printf '%s\n' "$rows" | grep -c '^{')" "noise-filter fixture has 15 findings"
+  if (cd "$NF_TMP" && node "$PARSER" check-triage "$GOLDEN" reports/*.md >/dev/null 2>&1); then ok=0; else ok=1; fi
+  assert_true "$ok" "check-triage passes on the golden triage against the fixture's reports"
+  rm -rf "$NF_TMP"
+else
+  echo "(noise-filter fixture checks skipped: git or node not installed)"
+fi
+
+# Promise: the noise-filter eval's regex graders discriminate on a known
+# answer: every file grader passes on the golden triage, and the control
+# grader fails when the control finding is dropped.
+GRADE_JS='
+const fs = require("fs");
+const [graders, file] = process.argv.slice(1);
+const text = fs.readFileSync(file, "utf8");
+for (const g of JSON.parse(fs.readFileSync(graders, "utf8"))) {
+  if (!g.target || g.target.source !== "file") continue;
+  const n = (text.match(new RegExp(g.pattern, (g.flags || "") + "g")) || []).length;
+  const m = g.match || "contains";
+  const pass = m === "contains" ? n > 0 : m === "not_contains" ? n === 0
+    : m.startsWith("count:") ? n === Number(m.slice(6)) : false;
+  console.log(g.name + (pass ? " pass" : " fail"));
+}'
+if python3 -c 'import yaml' >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  GR_JSON=$(mktemp)
+  python3 -I -c '
+import sys, json, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+json.dump([g for g in c["graders"] if g.get("type") == "regex"], open(sys.argv[2], "w"))
+' "$NF_EVAL/case.yaml" "$GR_JSON"
+  golden=$(node -e "$GRADE_JS" "$GR_JSON" "$GOLDEN")
+  if [ -n "$golden" ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "noise-filter eval has file-target regex graders"
+  assert_eq "" "$(printf '%s\n' "$golden" | grep ' fail$')" "every noise-filter file grader passes on the golden triage"
+  dropped=$(node -e "$GRADE_JS" "$GR_JSON" "$CTRL_DROPPED")
+  if printf '%s\n' "$dropped" | grep -qx 'control_hedged_block_survives fail'; then ok=0; else ok=1; fi
+  assert_true "$ok" "control grader fails when the control finding is dropped"
+  rm -f "$GR_JSON"
+else
+  echo "(noise-filter grader checks skipped: python3 with PyYAML or node not installed)"
+fi
 
 # Promise: fact-checker uses the CONFIRMED / WRONG / UNVERIFIED ledger.
 grep -q 'CONFIRMED' "$AGENTS/fact-checker.md" && grep -q 'WRONG' "$AGENTS/fact-checker.md" && grep -q 'UNVERIFIED' "$AGENTS/fact-checker.md"
@@ -179,6 +237,9 @@ grep -q '## Ship it on Friday' "$AGENTS/grumpy-senior.md"; assert_true "$?" "gru
 
 # Promise: outsider writes its cold take before reading the artifact.
 grep -q 'Before opening the artifact' "$AGENTS/outsider.md"; assert_true "$?" "outsider takes a cold read first"
+
+# Promise: noise-filter runs the parser through Bash and writes only its triage.
+assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/noise-filter.md" tools)" "noise-filter: tools are exactly Read, Grep, Glob, Bash, Write"
 
 # Promise: noise-filter merges, marks cross-confirmed, spot-checks, drops with reasons.
 for s in 'cross-confirmed' 'Spot-check' '## Dropped' '## Decisions for you' '## Fix before merge'; do
