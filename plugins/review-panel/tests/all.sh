@@ -12,8 +12,11 @@ REFS="$PLUGIN/skills/assemble-panel/references"
 
 ROSTER="grumpy-senior paranoid-sre fact-checker dx-advocate threat-modeller goal-auditor outsider contract-keeper cost-hawk rules-lawyer noise-filter"
 HELPERS="instruction-follower"
-REFS_RL="$PLUGIN/references/rules-lawyer"
-RL="$AGENTS/rules-lawyer.md"
+# Spawn policy as data: the reviewers allowed the Agent tool, and the one
+# agent type each may dispatch.
+SPAWNERS="rules-lawyer"
+spawns() { case "$1" in rules-lawyer) echo instruction-follower ;; esac; }
+is_spawner() { case " $SPAWNERS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 fm() { # file key -> frontmatter value
   awk -v k="$2" 'NR==1&&/^---$/{f=1;next} f&&/^---$/{exit} f&&index($0,k":")==1{sub("^"k":[ ]*","");print;exit}' "$1"
@@ -32,15 +35,15 @@ for a in $ROSTER; do
   if [ -n "$desc" ]; then ok=0; else ok=1; fi
   assert_true "$ok" "$a: has a description"
 
-  # Promise: read-only reviewers that can't edit; only rules-lawyer may spawn, and only its follower.
+  # Promise: read-only reviewers that can't edit; only SPAWNERS may spawn, and only their follower.
   tools=$(fm "$f" tools)
   if [ -n "$tools" ]; then ok=0; else ok=1; fi
   assert_true "$ok" "$a: declares an explicit tools allowlist"
   echo "$tools" | grep -Eq '(^|[ ,])(Task|Edit|NotebookEdit)([ ,(]|$)'
   assert_false "$?" "$a: tools exclude Task/Edit/NotebookEdit"
-  if [ "$a" = rules-lawyer ]; then
+  if is_spawner "$a"; then
     echo "$tools" | grep -Eq '(^|[ ,])Agent([ ,(]|$)'
-    assert_true "$?" "$a: tools include Agent, the one reviewer allowed it"
+    assert_true "$?" "$a: tools include Agent, as a listed spawner"
   else
     echo "$tools" | grep -Eq '(^|[ ,])Agent([ ,(]|$)'
     assert_false "$?" "$a: tools exclude Agent"
@@ -74,28 +77,58 @@ for a in $ROSTER; do
   grep -q 'separate pass filters' "$f"; assert_true "$?" "$a: reports everything, filter is separate"
 done
 
-# Promise: rules-lawyer spawns no agent type other than its follower.
+# Promise: a spawner dispatches no agent type other than its follower.
 # The platform doesn't enforce this (Agent(type) lists are ignored inside
 # subagents) and the eval trace doesn't show a subagent's own Agent calls, so
 # the boundary is prompt-enforced and covered by eval review. This checks only
-# that every agent type it names is its follower.
-others=$(grep -o 'review-panel:[a-z-]*' "$RL" | sort -u | grep -v '^review-panel:instruction-follower$')
-assert_eq "" "$others" "rules-lawyer names no other agent type to dispatch"
-grep -q 'general-purpose' "$RL"; assert_false "$?" "rules-lawyer never mentions general-purpose"
-
-# Promise: its checklists load on demand from the plugin, and every one it names exists (and vice versa).
-grep -q '${CLAUDE_PLUGIN_ROOT}/references/rules-lawyer/' "$RL"; assert_true "$?" "rules-lawyer loads references via CLAUDE_PLUGIN_ROOT"
-for r in $(grep -o '[a-z][a-z-]*\.md' "$RL" | sort -u); do
-  if [ -f "$REFS_RL/$r" ]; then ok=0; else ok=1; fi
-  assert_true "$ok" "rules-lawyer reference exists: $r"
-done
-for f in "$REFS_RL"/*.md; do
-  grep -q "$(basename "$f")" "$RL"; assert_true "$?" "reference is reachable from rules-lawyer: $(basename "$f")"
+# that every agent type a spawner names is its follower.
+for a in $SPAWNERS; do
+  f="$AGENTS/$a.md"
+  others=$(grep -o 'review-panel:[a-z-]*' "$f" | sort -u | grep -v "^review-panel:$(spawns "$a")\$")
+  assert_eq "" "$others" "$a names no agent type to dispatch but $(spawns "$a")"
+  grep -q 'general-purpose' "$f"; assert_false "$?" "$a never mentions general-purpose"
 done
 
-# Promise: every evidence ID cited anywhere resolves to a row in evidence.md.
-for id in $(cat "$RL" "$REFS_RL"/*.md | grep -oE '\bE[0-9]{1,2}\b' | sort -u); do
-  grep -q "^| $id |" "$REFS_RL/evidence.md"; assert_true "$?" "evidence ID $id has a row"
+# Promise: each reviewer's references load on demand from the plugin, every
+# one it names exists, and every file in its directory is reachable.
+REFROOT="$PLUGIN/references"
+for d in "$REFROOT"/*/; do
+  name=$(basename "$d")
+  [ "$name" = shared ] && continue
+  f="$AGENTS/$name.md"
+  if [ -f "$f" ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "references/$name/ belongs to an agent"
+  [ -f "$f" ] || continue
+  grep -q "\${CLAUDE_PLUGIN_ROOT}/references/$name/" "$f"; assert_true "$?" "$name loads references via CLAUDE_PLUGIN_ROOT"
+  # Full paths must resolve; a bare file name means one in its own directory.
+  for p in $(grep -oE '\$\{CLAUDE_PLUGIN_ROOT\}/references/[a-z-]+/[a-z-]+\.md' "$f" | sort -u); do
+    if [ -f "$REFROOT/${p#*/references/}" ]; then ok=0; else ok=1; fi
+    assert_true "$ok" "$name reference exists: ${p#*/references/}"
+  done
+  for r in $(sed -E 's#\$\{CLAUDE_PLUGIN_ROOT\}/[a-z/-]+\.md##g' "$f" | grep -oE '`[a-z][a-z-]*\.md`' | tr -d '`' | sort -u); do
+    if [ -f "$d$r" ]; then ok=0; else ok=1; fi
+    assert_true "$ok" "$name reference exists: $name/$r"
+  done
+  for r in "$d"*.md; do
+    b=$(basename "$r")
+    others=$(find "$d" -name '*.md' ! -name "$b")
+    # shellcheck disable=SC2086 # $others is a list of plain .md paths
+    if grep -q "$b" "$f" $others; then ok=0; else ok=1; fi
+    assert_true "$ok" "reference is reachable from $name: $b"
+  done
+done
+for r in "$REFROOT"/shared/*.md; do
+  b=$(basename "$r")
+  if grep -q "\${CLAUDE_PLUGIN_ROOT}/references/shared/$b" "$AGENTS"/*.md; then ok=0; else ok=1; fi
+  assert_true "$ok" "shared reference is loaded by an agent: $b"
+done
+
+# Promise: every evidence ID cited in an agent or reference resolves to
+# exactly one row across all evidence files.
+ID_RE='\b(E|FC|TM|GA|NF|SR|CK|CH|DX|OU|GS|AP)[0-9]{1,2}\b'
+for id in $(cat "$AGENTS"/*.md "$REFROOT"/*/*.md | grep -oE "$ID_RE" | sort -u); do
+  rows=$(cat "$REFROOT"/*/evidence.md | grep -c "^| $id |")
+  assert_eq "1" "$rows" "evidence ID $id has exactly one row"
 done
 
 # Promise: instruction-follower is a read-only helper that loads no CLAUDE.md.
@@ -104,27 +137,34 @@ assert_eq "instruction-follower" "$(fm "$FOL" name)" "instruction-follower: name
 assert_eq "Read, Grep, Glob" "$(fm "$FOL" tools)" "instruction-follower: read-only tools only"
 assert_eq "true" "$(fm "$FOL" omitClaudeMd)" "instruction-follower: omits CLAUDE.md"
 
-# Promise: two planted-defect evals grade rules-lawyer against a baseline; one carries a control.
-for c in rules-lawyer-planted-defects rules-lawyer-platform-traps; do
-  EVAL="$PLUGIN/evals/$c"
+# Promise: every eval case seeds its fixture, grades the report file its prompt
+# names, targets every regex grader, and has a control grader or says why not.
+for EVAL in "$PLUGIN"/evals/*/; do
+  c=$(basename "$EVAL")
   if [ -f "$EVAL/case.yaml" ]; then ok=0; else ok=1; fi
   assert_true "$ok" "eval case exists: $c"
+  [ -f "$EVAL/case.yaml" ] || continue
   if python3 -c 'import yaml' >/dev/null 2>&1; then
     facts=$(python3 -I -c '
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1]))
-llm = [g for g in c.get("graders", []) if g.get("type") == "llm"]
+gs = c.get("graders", [])
+llm = [g for g in gs if g.get("type") == "llm"]
+paths = {(g.get("focus") or {}).get("path") for g in llm}
+shaped = all((g.get("focus") or {}).get("source") == "file" for g in llm)
+prompt = (c.get("execution") or {}).get("prompt", "")
+p = next(iter(paths)) if len(paths) == 1 else None
 print(c.get("context", {}).get("scaffold_script"))
-print(bool(llm) and all(g.get("focus") == {"source": "file", "path": "AUDIT.md"} for g in llm))
-print(any(g["name"].startswith("control_") for g in llm))
+print(bool(llm) and shaped and p is not None and p in prompt)
+print(all(g.get("target") for g in gs if g.get("type") == "regex"))
+print(any(g["name"].startswith("control_") for g in gs) or "no control" in c.get("description", ""))
 ' "$EVAL/case.yaml")
     assert_eq "fixture.sh" "$(echo "$facts" | sed -n 1p)" "$c: seeds its fixture from fixture.sh"
     if [ -f "$EVAL/fixture.sh" ]; then ok=0; else ok=1; fi
     assert_true "$ok" "$c: fixture.sh exists"
-    assert_eq "True" "$(echo "$facts" | sed -n 2p)" "$c: every llm grader grades the written AUDIT.md"
-    if [ "$c" = rules-lawyer-planted-defects ]; then
-      assert_eq "True" "$(echo "$facts" | sed -n 3p)" "$c: has a control grader"
-    fi
+    assert_eq "True" "$(echo "$facts" | sed -n 2p)" "$c: every llm grader grades the report file the prompt names"
+    assert_eq "True" "$(echo "$facts" | sed -n 3p)" "$c: every regex grader has a target"
+    assert_eq "True" "$(echo "$facts" | sed -n 4p)" "$c: has a control grader or says 'no control'"
   else
     echo "($c case.yaml checks skipped — python3 with PyYAML not installed)"
   fi
