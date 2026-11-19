@@ -108,6 +108,11 @@ document states, not a gate a script enforces.
     Ubuntu with AppArmor's unprivileged-user-namespace restriction),
     run with `--disallow-tools Bash` instead, which skips the hook fixture
     runs in both arms.
+  - `plugins/review-panel/lib/report-parse.test.mjs` (run by `node --test`)
+    parses every agent's output template against the shared report
+    contract. New eval cases should prefer `regex` graders over the report
+    file wherever the ground truth is a token, and keep `llm` graders for
+    "states the right reason".
 
 **Status:** authored and schema-validated (`claude plugin eval <path> --case
 <glob-that-matches-nothing>` loads and validates every `case.yaml` in the
@@ -129,6 +134,14 @@ An audit cost about $1.0–1.5 and 5–6 minutes with the plugin, against about
 $0.40 and 2.5 minutes for the baseline. With n=2 and haiku judges on 13–30k
 character reports, a single grader flip is noise; read the per-grader table
 in the HTML report, not just the mean.
+
+Regression check for review-panel 0.3.0 (shared method references), same
+setup with `--runs 1`, $3.59 total: `rules-lawyer-planted-defects` 1.00 vs
+0.88 (control kept; baseline failed the control and the block-message
+grader), `rules-lawyer-platform-traps` 0.91 vs 0.83 (missed
+`ticket_prompt_stalls_unattended_runs`; baseline missed the inline-command
+and `if`-on-Stop traps). Both within one grader flip of the table, so
+unchanged.
 
 ## Related
 

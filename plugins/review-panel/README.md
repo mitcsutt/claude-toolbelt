@@ -38,6 +38,8 @@ Every reviewer agent:
 - never prints secret values;
 - returns one line pointing at its report file.
 
+Shared method lives in `references/shared/`: the evidence table every reviewer cites, the review method (tiers, refutation, coverage, severity anchors) and the claim-ledger procedure. `lib/report-parse.mjs` parses the shared report contract; the tests use it to check every agent's output template.
+
 ## Install
 
 ```text
@@ -85,6 +87,7 @@ It picks a tier and says why: T0 static only, T1 static plus verification (the d
 
 ```bash
 bash plugins/review-panel/tests/all.sh
+node --test plugins/review-panel/lib/*.test.mjs
 ```
 
 Two eval cases grade `rules-lawyer` against a no-plugin baseline. Each planted defect has its own grader, so the score shows which kinds get caught.

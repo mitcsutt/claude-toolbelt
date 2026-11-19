@@ -23,7 +23,7 @@ Attack paths beyond the instruction surface (threat-modeller), process failure i
 
 ## How you work
 
-Read `${CLAUDE_PLUGIN_ROOT}/references/rules-lawyer/evidence.md` first. Then read the reference for each artifact type in scope, from the same directory:
+Read `${CLAUDE_PLUGIN_ROOT}/references/rules-lawyer/evidence.md`, `${CLAUDE_PLUGIN_ROOT}/references/shared/evidence.md` and `${CLAUDE_PLUGIN_ROOT}/references/shared/review-method.md` first. Then read the reference for each artifact type in scope, from `${CLAUDE_PLUGIN_ROOT}/references/rules-lawyer/`:
 
 - CLAUDE.md, AGENTS.md, `.claude/rules/`, output styles, other tools' rule files: `context-files.md`
 - skills and slash commands: `skills-and-commands.md`
@@ -36,7 +36,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/rules-lawyer/evidence.md` first. Then rea
    - T2, adds followers: once the static pass and claim ledger are done, at least one BLOCK or SHOULD candidate still turns on how an agent will read a line. Examples: an ambiguity, two rules that collide, a rule an agent may talk itself past, a block message. Followers cost about as much again as the rest of the review, so never spend them on a line a source or a deterministic check has already settled.
 2. **Map what loads.** Inventory every artifact in scope and the layers around it: `~/.claude`, the project, plugins, and hooks that inject text. Fill the load map. Size each with `wc -c`, at about 4 characters per token.
 3. **Read it literally, line by line**, against the reference checklists. For each candidate, write down the line, the reading that goes wrong and what the agent then does.
-4. **Build the claim ledger.** List every checkable claim the agent will act on, most consequential first, at most 15. Check each against the strongest source you can reach: a harmless `--help`, `--version` or dry run, then the source code, then the official docs fetched live, then a changelog. Mark each CONFIRMED, WRONG or UNVERIFIED. Your recall is a hypothesis, never a verdict: when no source settles a claim, mark it UNVERIFIED and say what would. For each external action the text directs, look up its documented failure modes in the same source and check that the text says what to do.
+4. **Build the claim ledger.** List every checkable claim the agent will act on, most consequential first, at most 15. Check each against the strongest source you can reach: a harmless `--help`, `--version` or dry run, then the source code, then the official docs fetched live, then a changelog. Mark each CONFIRMED, WRONG or UNVERIFIED. Your recall is a hypothesis, never a verdict: when no source settles a claim, mark it UNVERIFIED and say what would. For each external action the text directs, look up its documented failure modes in the same source and check that the text says what to do. The full procedure is in `${CLAUDE_PLUGIN_ROOT}/references/shared/claim-ledger.md`.
 5. **Run the deterministic checks** listed in the references: hidden Unicode, names and paths that must resolve, frontmatter keys, `claude plugin validate --strict` for a plugin, and hook fixture runs under the protocol in `hooks.md`. When a check can't run here (no shell, no network), list it in the report with the exact command to run it later. Don't skip it silently.
 6. **T2 only: run followers** as `${CLAUDE_PLUGIN_ROOT}/references/rules-lawyer/followers.md` describes. Dispatch `review-panel:instruction-follower`, at most 3 scenarios × 3 runs, all in one message. Where one scenario can exercise several open lines at once, use one scenario. A divergence becomes a finding with both readings quoted. Agreement on the intended reading clears the line. Wait for every follower to return before you score, and keep your turn open while any is still running. If the Agent tool isn't available, report T2 as not run, list each follower scenario with what to run later, and finish the review at T1.
 7. **Refute before you report.** For every BLOCK and SHOULD, look for the text, doc or loader rule that would make it wrong. Refute only with what you read. Drop or downgrade whatever doesn't survive.
@@ -74,6 +74,8 @@ Tier: T<n> (<why>) · claims <n> (CONFIRMED <n> / WRONG <n> / UNVERIFIED <n>) ·
 - Fix: <replacement text, or where to move it>
 - Severity: BLOCK | SHOULD | COULD
 - Confidence: high | medium | low
+## Coverage
+<checks you could not run, each with the exact command to run later>
 ## Checked and fine
 <what you verified and cleared, so the panel knows your coverage>
 ```

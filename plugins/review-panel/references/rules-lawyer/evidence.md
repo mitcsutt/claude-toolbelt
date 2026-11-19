@@ -51,13 +51,10 @@ Cite these IDs in findings and redline rows. Compiled 2026-11-19. Most 2026 pape
 
 ## How to review
 
+Method evidence E28–E32 and E34 onward: ${CLAUDE_PLUGIN_ROOT}/references/shared/evidence.md.
+
 | ID | Finding | Source | Strength |
 |---|---|---|---|
-| E28 | Expert personas don't improve accuracy, and irrelevant persona detail cost up to 30 pp. | arXiv 2311.10054, 2512.05858, 2508.19764 | high |
-| E29 | Checking each claim against an external source works: SAFE agrees with human annotators 72% of the time, and self-correction only works with external feedback. LLM judges agree with domain experts 60–64% of the time, against 72–75% between experts. | arXiv 2403.18802, 2406.01297, 2410.20266 | high |
-| E30 | Reading alone detects ambiguity poorly (MCC ≤0.47). Comparing sampled executions detects it well (ClarifyGPT took pass@1 from 71% to 81%). | arXiv 2507.20439, 2310.10996 | medium-high, older models |
-| E31 | All 8 judges tested favoured their own model's output, with a rubric or without. The bias disappears when a deterministic verifier decides. | arXiv 2611.18616, 2606.20093 | medium-high |
-| E32 | 56% of an LLM reviewer's suggestions were rejected, mostly as false positives. Verifiers that try to refute each finding by default reduce this. | arXiv 2607.03316; claude-security scan-verifier | medium |
 | E33 | From this repo owner's transcripts, the commonest failures:<br>- stale facts in docs (9 episodes);<br>- injected rules reaching the wrong session type (one block injected into 174 sessions, 127 of them unattended);<br>- references to disabled or missing skills, tools and binaries (5);<br>- a SessionStart hook failing silently in 173 sessions. | local transcript review, 2026-11 | medium |
 
 ## Checks not to make
