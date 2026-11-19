@@ -249,7 +249,8 @@ const SAME_CAUSE = /\(same cause:\s*([^)]*)\)/;
 const ITEM_SEVERITY = /^- Severity:\s*(BLOCK|SHOULD|COULD)\b/;
 const TABLE_SEPARATOR = /^\|[\s:|-]+\|?\s*$/;
 
-const keysIn = (text) => [...text.matchAll(KEY)].map((m) => `${m[1]} F${m[2]}`);
+const unwrap = (name) => name.replace(/^[`*_"'<>]+|[`*_"'<>]+$/g, '');
+const keysIn = (text) => [...text.matchAll(KEY)].map((m) => `${unwrap(m[1])} F${m[2]}`);
 
 /** Parse a noise-filter triage (or, with template: true, its output template). */
 export function parseTriage(text, { template = false } = {}) {
@@ -304,7 +305,7 @@ export function parseTriage(text, { template = false } = {}) {
       else if (want !== undefined && letter !== want) out.problems.push(`### ${letter}${num} sits under "## ${section}", whose items are ${want}<n>`);
       item = {
         section, id: `${letter}${num}`, title: title.trim(),
-        tagged: tag ? tag.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        tagged: tag ? tag.split(',').map((t) => unwrap(t.trim())).filter(Boolean) : [],
         tag: Boolean(tag), sources: [], newSources: 0, sameCause: null,
         sourcesLines: 0, severity: null, lines: 0,
       };

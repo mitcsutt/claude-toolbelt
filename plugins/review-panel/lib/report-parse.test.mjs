@@ -266,7 +266,7 @@ test('checkTriage accounts for every finding exactly once', () => {
   assert.deepEqual(check('prose-mention').missing, ['alpha F2']);
 });
 
-test('triage keys round-trip any reviewer name a report title can carry', () => {
+test('triage keys round-trip any reviewer name a report title can carry, bare or Markdown-wrapped', () => {
   const names = { alpha: 'Product_Owner', beta: 'A11y', gamma: 'review-panel:grumpy-senior' };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-names-'));
   try {
@@ -276,18 +276,31 @@ test('triage keys round-trip any reviewer name a report title can carry', () => 
       fs.writeFileSync(out, fs.readFileSync(file, 'utf8').replace(`# ${base} review:`, `# ${names[base]} review:`));
       return out;
     });
-    const triageFile = path.join(dir, 'TRIAGE.md');
-    fs.writeFileSync(triageFile, fixture('triage-valid.md').replace(/\b(alpha|beta|gamma)\b/g, (n) => names[n]));
     const findings = collectFindings(reports).findings;
     assert.deepEqual(findings.map((f) => f.key).sort(),
       ['A11y F1', 'A11y F2', 'Product_Owner F1', 'Product_Owner F2', 'review-panel:grumpy-senior F1']);
-    const r = checkTriage(parseTriage(fs.readFileSync(triageFile, 'utf8')), findings);
-    for (const k of ['missing', 'duplicated', 'unknown', 'tagErrors', 'causeErrors', 'problems']) {
-      assert.deepEqual(r[k], [], k);
+    const plain = fixture('triage-valid.md').replace(/\b(alpha|beta|gamma)\b/g, (n) => names[n]);
+    const wrapped = plain
+      .replace('[cross-confirmed: Product_Owner, A11y]', '[cross-confirmed: `Product_Owner`, `A11y`]')
+      .replace('- Sources: Product_Owner F1, A11y F1', '- Sources: `Product_Owner F1`, **A11y F1**')
+      .replace('- Sources: A11y F2', '- Sources: "A11y F2"')
+      .replace('- Sources: review-panel:grumpy-senior F1', "- Sources: 'review-panel:grumpy-senior F1'")
+      .replace('| Product_Owner F2 |', '| `Product_Owner F2` |');
+    assert.notEqual(wrapped, plain);
+    for (const [label, text] of [['plain', plain], ['wrapped', wrapped]]) {
+      const t = parseTriage(text);
+      assert.deepEqual(t.items[0].sources, ['Product_Owner F1', 'A11y F1'], label);
+      assert.deepEqual(t.dropped.map((d) => d.sources), [['Product_Owner F2']], label);
+      const r = checkTriage(t, findings);
+      for (const k of ['missing', 'duplicated', 'unknown', 'tagErrors', 'causeErrors', 'problems']) {
+        assert.deepEqual(r[k], [], `${label} ${k}`);
+      }
+      assert.equal(r.accounted, 5, label);
+      const triageFile = path.join(dir, `TRIAGE-${label}.md`);
+      fs.writeFileSync(triageFile, text);
+      const cli = spawnSync(process.execPath, [CLI, 'check-triage', triageFile, ...reports], { encoding: 'utf8' });
+      assert.equal(cli.status, 0, `${label}: ${cli.stdout}${cli.stderr}`);
     }
-    assert.equal(r.accounted, 5);
-    const cli = spawnSync(process.execPath, [CLI, 'check-triage', triageFile, ...reports], { encoding: 'utf8' });
-    assert.equal(cli.status, 0, cli.stdout + cli.stderr);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
