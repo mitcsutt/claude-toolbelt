@@ -117,7 +117,8 @@ print(bool(llm) and all(g.get("focus") == {"source": "file", "path": "AUDIT.md"}
 print(any(g["name"].startswith("control_") for g in llm))
 ' "$EVAL/case.yaml")
     assert_eq "fixture.sh" "$(echo "$facts" | sed -n 1p)" "$c: seeds its fixture from fixture.sh"
-    [ -f "$EVAL/fixture.sh" ]; assert_true "$?" "$c: fixture.sh exists"
+    if [ -f "$EVAL/fixture.sh" ]; then ok=0; else ok=1; fi
+    assert_true "$ok" "$c: fixture.sh exists"
     assert_eq "True" "$(echo "$facts" | sed -n 2p)" "$c: every llm grader grades the written AUDIT.md"
     if [ "$c" = rules-lawyer-planted-defects ]; then
       assert_eq "True" "$(echo "$facts" | sed -n 3p)" "$c: has a control grader"
