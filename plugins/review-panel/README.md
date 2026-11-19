@@ -1,6 +1,6 @@
 # review-panel
 
-Ten read-only persona reviewers, plus a skill that picks the right panel for the job and filters what comes back.
+Read-only persona reviewers, plus a skill that picks the right panel for the job and filters what comes back.
 
 ## Why
 
@@ -25,13 +25,15 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | `outsider` | agent | Cold take before reading the artifact; build vs buy; prior art and competitors |
 | `contract-keeper` | agent | Every consumer of a changed interface; migrations, backfill, version skew, safe rollout order |
 | `cost-hawk` | agent | Steady-state cost, growth, hot paths, token and dollar spend, as a cost sheet |
+| `rules-lawyer` | agent | Agent instructions (CLAUDE.md, AGENTS.md, rules, skills, commands, hooks, subagents, output styles, MCP descriptions): a load map, literal readings, a claim ledger, hook fixture runs and follower runs on risky lines |
+| `instruction-follower` | agent (helper) | Dispatched only by `rules-lawyer`: follows an artifact on paper for one scenario and reports where it had to guess |
 | `noise-filter` | agent | Final pass: merges duplicates, marks cross-confirmed findings, spot-checks evidence, drops noise |
 | `/assemble-panel` | skill | Sizes and picks the panel, prints the roster, briefs and dispatches in parallel, runs `noise-filter`, presents one triage |
 
 Every reviewer agent:
 
 - is read-only apart from its own report file;
-- has no `Agent` or `Edit` tool;
+- has no `Edit` tool, and no `Agent` tool except `rules-lawyer`, which spawns only the read-only `instruction-follower`, within a fixed budget;
 - never checks out branches;
 - never prints secret values;
 - returns one line pointing at its report file.
@@ -66,13 +68,37 @@ For a lens the roster doesn't cover, the skill writes an ad-hoc persona from `re
 
 You can dispatch any agent directly too, e.g. `review-panel:fact-checker` on a spec.
 
-Plugin agents don't load your CLAUDE.md. The skill passes the relevant repo rules in each brief.
+Reviewers load your CLAUDE.md chain like any subagent. The skill passes rules that live elsewhere in each brief.
+
+### Reviewing agent instructions with `rules-lawyer`
+
+Point it at a CLAUDE.md, a skill, a hook, a subagent or a whole plugin: "have the rules lawyer go over our CLAUDE.md and the deploy skill". It reviews from two sides: the agent that has to follow the text, and the person who has to live with what the agent does.
+
+- **What's in force.** A load map of every file, rule, skill and hook in scope: when each loads or fires, which sessions it reaches (interactive, headless, subagent, other tools), and its context cost.
+- **Domain expertise without a persona.** Expert personas don't make a model more accurate. Checking claims against sources does. So it builds a claim ledger: every flag, path, API behaviour and number the agent will act on, checked against `--help`, the source or the live docs, and marked CONFIRMED, WRONG or UNVERIFIED. It also checks that the artifact says what to do when those actions fail in documented ways.
+- **Ambiguity shown, not asserted.** At tier T2 it hands risky lines to fresh `instruction-follower` agents, at most 3 scenarios × 3 runs. A line where the followers act differently becomes a finding, with each reading quoted.
+- **Hooks run, not just read.** Guards are piped fixture events and probed for fail-open and bypass paths.
+
+It picks a tier and says why: T0 static only, T1 static plus verification (the default), T2 with followers. Its checklists and the evidence behind each check live in [`references/rules-lawyer/`](references/rules-lawyer/evidence.md). It complements Claude Code's own `/doctor prompt-audit`, which doesn't cover hooks, settings or MCP config, run the instructions, or check domain claims against outside sources.
 
 ## Tests
 
 ```bash
 bash plugins/review-panel/tests/all.sh
 ```
+
+Two eval cases grade `rules-lawyer` against a no-plugin baseline. Each planted defect has its own grader, so the score shows which kinds get caught.
+
+- `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
+- `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
+
+The first case also has a sound rule that should survive the audit. It costs real model calls, so run it by hand (see [`docs/testing.md`](../../docs/testing.md)):
+
+```bash
+claude plugin eval plugins/review-panel --scaffold --runs 1 --allow-tools Bash Write WebFetch WebSearch
+```
+
+Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` instead; both arms then skip shell checks.
 
 ## Related
 

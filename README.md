@@ -15,7 +15,7 @@ A small kit of Claude Code plugins and scripts I use day-to-day. Each piece is i
 | `postmortem`        | Generic structured retrospective generator — writes an 8-section postmortem to `docs/postmortems/` after any significant task. |
 | `orchestrate`       | Token-frugal orchestration doctrine for an expensive top-level model — reserve the expensive tier for judgment, route token-heavy bounded work to the cheapest capable subagent tier, demand compact traceable returns, and vet before acting. Model- and harness-agnostic; skill only. |
 | `git`               | A home for narrow git/GitHub helper skills. Currently ships `gh-pending-review` — add inline comments to a PR that already has a pending review, via GraphQL, without orphaning comments drafted elsewhere. |
-| `review-panel`      | Ten read-only persona reviewer subagents (grumpy senior, paranoid SRE, fact-checker, DX advocate, threat modeller, goal auditor, outsider, contract keeper, cost hawk, noise filter) and `/assemble-panel`, which picks the right panel for a plan, spec, diff or decision, runs it in parallel and filters the reports into one triage. |
+| `review-panel`      | Read-only persona reviewer subagents (grumpy senior, paranoid SRE, fact-checker, DX advocate, threat modeller, goal auditor, outsider, contract keeper, cost hawk, rules lawyer, noise filter) and `/assemble-panel`, which picks the right panel for a plan, spec, diff, decision or set of agent instructions, runs it in parallel and filters the reports into one triage. |
 
 ## Install
 
@@ -80,6 +80,11 @@ How the skill works:
 5. Runs `noise-filter`, which merges duplicates, marks cross-confirmed findings, spot-checks evidence and drops nits.
 
 Each reviewer's output has a fixed contract: a signature deliverable (cut-down version, claim ledger, failure table, journey walk and so on), findings with evidence, severity and confidence, and one verdict. Reviewers are read-only, never check out branches, and never print secret values.
+
+`rules-lawyer` reviews the agent instructions themselves: CLAUDE.md, AGENTS.md, rules, skills, commands, hooks, subagents and MCP descriptions.
+
+- It doesn't play a domain expert. It checks each claim the agent will act on against `--help`, the source or the live docs.
+- At its top tier it hands risky lines to fresh follower agents, to show where readings diverge rather than guess.
 
 ## Statusline
 

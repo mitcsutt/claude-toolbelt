@@ -61,7 +61,7 @@ bash plugins/postmortem/tests/all.sh  # one plugin's behavioural tests
 
 ## Evals (manual, fourth layer)
 
-Prompt-shaped plugins — `postmortem`, `find-docs` — are best
+Prompt-shaped plugins — `postmortem`, `find-docs`, `review-panel` — are best
 verified by actually running the prompt and grading the output, which is
 what `claude plugin eval` does. An eval suite lives at
 `plugins/<name>/evals/` as `case.yaml` files (or `prompt.md` + graders), and
@@ -94,12 +94,41 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
+- **`review-panel`** (2 cases) — both seed a repo with `fixture.sh`, so pass
+  `--scaffold`. One `llm` grader per planted defect reads the written
+  `AUDIT.md`, and the no-plugin arm is the same model auditing unaided.
+  - `rules-lawyer-planted-defects` is a Terraform repo with familiar
+    defects: wrong CLI claims, a guard hook that exits 1, a lowercase
+    matcher, a Stop-hook loop and contradictions.
+  - `rules-lawyer-platform-traps` is a Node repo whose instructions depend
+    on Claude Code behaviour that isn't true. Its ground truth was checked
+    against the 2.1.328 docs, so re-check it when the platform changes.
+  - Grant `--allow-tools Bash Write WebFetch WebSearch`. Granting Bash
+    needs a working sandbox backend. Where there isn't one (for example
+    Ubuntu with AppArmor's unprivileged-user-namespace restriction),
+    run with `--disallow-tools Bash` instead, which skips the hook fixture
+    runs in both arms.
 
 **Status:** authored and schema-validated (`claude plugin eval <path> --case
 <glob-that-matches-nothing>` loads and validates every `case.yaml` in the
 suite at zero cost — a malformed file errors before the "no cases match"
-message). No baseline scores are recorded here yet. Run the suites in a normally
-authenticated terminal to get real scores before relying on them.
+message). No baseline scores are recorded yet for `postmortem` or `find-docs`. Run
+those suites in a normally authenticated terminal to get real scores before
+relying on them.
+
+`review-panel` scores, 2026-11-19. Claude Code 2.1.328 on its default model;
+`--runs 2`; Bash withheld (no sandbox backend on the host), so both arms skip
+hook fixture runs. Scores are weighted grader means, with plugin vs no plugin:
+
+| Case | With plugin | No plugin | What separated them |
+| --- | --- | --- | --- |
+| `rules-lawyer-planted-defects` | 0.94 | 0.90 | Kept the sound scope rule 2/2 (baseline 0/2). Missed one grader each in two runs |
+| `rules-lawyer-platform-traps` | 0.90 | 0.82 | Mean of two 2-run sessions, scored with a since-removed control grader that both arms always failed. Caught "a failing inline command aborts the skill" 3/4 (baseline 0/4) |
+
+An audit cost about $1.0–1.5 and 5–6 minutes with the plugin, against about
+$0.40 and 2.5 minutes for the baseline. With n=2 and haiku judges on 13–30k
+character reports, a single grader flip is noise; read the per-grader table
+in the HTML report, not just the mean.
 
 ## Related
 
