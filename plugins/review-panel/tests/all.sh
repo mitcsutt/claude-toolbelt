@@ -29,11 +29,13 @@ for a in $ROSTER; do
   [ -f "$f" ] || continue
   assert_eq "$a" "$(fm "$f" name)" "$a: frontmatter name matches filename"
   desc=$(fm "$f" description)
-  [ -n "$desc" ]; assert_true "$?" "$a: has a description"
+  if [ -n "$desc" ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "$a: has a description"
 
   # Promise: read-only reviewers that can't edit; only rules-lawyer may spawn, and only its follower.
   tools=$(fm "$f" tools)
-  [ -n "$tools" ]; assert_true "$?" "$a: declares an explicit tools allowlist"
+  if [ -n "$tools" ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "$a: declares an explicit tools allowlist"
   echo "$tools" | grep -Eq '(^|[ ,])(Task|Edit|NotebookEdit)([ ,(]|$)'
   assert_false "$?" "$a: tools exclude Task/Edit/NotebookEdit"
   if [ "$a" = rules-lawyer ]; then
@@ -144,7 +146,8 @@ for s in 'cross-confirmed' 'Spot-check' '## Dropped' '## Decisions for you' '## 
 done
 
 # Skill structure.
-[ -f "$SKILL" ]; assert_true "$?" "SKILL.md exists"
+if [ -f "$SKILL" ]; then ok=0; else ok=1; fi
+assert_true "$ok" "SKILL.md exists"
 assert_eq "assemble-panel" "$(fm "$SKILL" name)" "SKILL.md frontmatter name is 'assemble-panel'"
 
 # Promise: sizes the panel (and can decline) before picking.
