@@ -120,10 +120,11 @@ document states, not a gate a script enforces.
     file wherever the ground truth is a token, and keep `llm` graders for
     "states the right reason".
 
-**Status:** authored and schema-validated (`claude plugin eval <path> --case
-<glob-that-matches-nothing>` loads and validates every `case.yaml` in the
-suite at zero cost — a malformed file errors before the "no cases match"
-message). No baseline scores are recorded yet for `postmortem` or `find-docs`. Run
+**Status:** authored and loaded (`claude plugin eval <path> --case
+<glob-that-matches-nothing>` parses every `case.yaml` in the suite at zero
+cost — a YAML syntax error fails before the "no cases match" message, but
+unknown grader types, `match` modes and regex flags are not rejected, so
+`review-panel`'s `tests/all.sh` checks those itself). No baseline scores are recorded yet for `postmortem` or `find-docs`. Run
 those suites in a normally authenticated terminal to get real scores before
 relying on them.
 
@@ -148,6 +149,16 @@ grader), `rules-lawyer-platform-traps` 0.91 vs 0.83 (missed
 `ticket_prompt_stalls_unattended_runs`; baseline missed the inline-command
 and `if`-on-Stop traps). Both within one grader flip of the table, so
 unchanged.
+
+`noise-filter-planted-triage`, review-panel 0.4.0, 2026-11-19: `--runs 3`,
+Bash withheld (so both arms graded the no-shell T0 path), $2.06. With
+plugin 0.97, without 0.89, delta +0.08. The control (hedged BLOCK kept in
+Fix before merge) passed 6/6 across both arms. That is between the plan's
+bars: below "worth shipping" (delta >= 0.10) and above "no measurable gain"
+(delta < 0.05). `check-triage` was not run on the eval triages (no shell in
+the run, sandboxes not kept). The baseline's misses were accounting ones the
+parser catches: a misstated duplicate counted as confirmation, nits not
+clustered, a tradeoff neither decided nor dropped.
 
 ## Related
 
