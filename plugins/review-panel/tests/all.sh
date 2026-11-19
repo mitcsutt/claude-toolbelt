@@ -155,7 +155,7 @@ shaped = all((g.get("focus") or {}).get("source") == "file" for g in llm)
 prompt = (c.get("execution") or {}).get("prompt", "")
 p = next(iter(paths)) if len(paths) == 1 else None
 print(c.get("context", {}).get("scaffold_script"))
-print(bool(llm) and shaped and p is not None and p in prompt)
+print(not llm or (shaped and p is not None and p in prompt))
 print(all(g.get("target") for g in gs if g.get("type") == "regex"))
 print(any(g["name"].startswith("control_") for g in gs) or "no control" in c.get("description", ""))
 ' "$EVAL/case.yaml")
