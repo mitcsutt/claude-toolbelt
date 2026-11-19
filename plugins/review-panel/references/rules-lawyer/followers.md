@@ -45,6 +45,8 @@ Send all runs in one message, each to `review-panel:instruction-follower`, with 
 - Followers start without the user, project and local CLAUDE.md files (`omitClaudeMd`), so a divergence comes from the artifact itself. Cross-file conflicts are your static job. Managed policy still loads, and so does a nested CLAUDE.md or path-scoped rule once a follower reads a file under it. Keep scenarios away from such directories, or note them alongside the result.
 - Set `model` to the model the artifact runs on: the artifact's own `model:` if it pins one, otherwise leave it unset so the follower inherits.
 - A divergence seen only on a smaller model counts as a finding when the artifact runs on that model. Otherwise it is a candidate to confirm.
+- Wait for every follower to return before you score, and keep your turn open while any is still running. A subagent that ends its turn early loses the replies still on their way.
+- If the Agent tool isn't available, report T2 as not run. List each scenario you designed, with its instructions, task, environment and expected behaviour, so someone can run it later, and finish the review at T1.
 
 ## Score
 
