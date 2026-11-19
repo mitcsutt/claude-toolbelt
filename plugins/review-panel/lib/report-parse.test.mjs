@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -263,6 +264,33 @@ test('checkTriage accounts for every finding exactly once', () => {
   assert.deepEqual(check('no-cause').causeErrors, ['T1']);
   // A key mentioned in prose is not an accounting.
   assert.deepEqual(check('prose-mention').missing, ['alpha F2']);
+});
+
+test('triage keys round-trip any reviewer name a report title can carry', () => {
+  const names = { alpha: 'Product_Owner', beta: 'A11y', gamma: 'review-panel:grumpy-senior' };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-names-'));
+  try {
+    const reports = PANEL.map((file) => {
+      const base = path.basename(file, '.md');
+      const out = path.join(dir, `${base}.md`);
+      fs.writeFileSync(out, fs.readFileSync(file, 'utf8').replace(`# ${base} review:`, `# ${names[base]} review:`));
+      return out;
+    });
+    const triageFile = path.join(dir, 'TRIAGE.md');
+    fs.writeFileSync(triageFile, fixture('triage-valid.md').replace(/\b(alpha|beta|gamma)\b/g, (n) => names[n]));
+    const findings = collectFindings(reports).findings;
+    assert.deepEqual(findings.map((f) => f.key).sort(),
+      ['A11y F1', 'A11y F2', 'Product_Owner F1', 'Product_Owner F2', 'review-panel:grumpy-senior F1']);
+    const r = checkTriage(parseTriage(fs.readFileSync(triageFile, 'utf8')), findings);
+    for (const k of ['missing', 'duplicated', 'unknown', 'tagErrors', 'causeErrors', 'problems']) {
+      assert.deepEqual(r[k], [], k);
+    }
+    assert.equal(r.accounted, 5);
+    const cli = spawnSync(process.execPath, [CLI, 'check-triage', triageFile, ...reports], { encoding: 'utf8' });
+    assert.equal(cli.status, 0, cli.stdout + cli.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('checkTriage warns, not fails, on budget and sort order', () => {
