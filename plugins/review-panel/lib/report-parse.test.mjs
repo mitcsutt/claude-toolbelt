@@ -286,8 +286,12 @@ test('triage keys round-trip any reviewer name a report title can carry, bare or
       .replace('- Sources: A11y F2', '- Sources: "A11y F2"')
       .replace('- Sources: review-panel:grumpy-senior F1', "- Sources: 'review-panel:grumpy-senior F1'")
       .replace('| Product_Owner F2 |', '| `Product_Owner F2` |');
+    const underscored = plain
+      .replace('- Sources: Product_Owner F1, A11y F1', '- Sources: __Product_Owner F1__, _A11y F1_')
+      .replace('| Product_Owner F2 |', '| __Product_Owner F2__ |');
     assert.notEqual(wrapped, plain);
-    for (const [label, text] of [['plain', plain], ['wrapped', wrapped]]) {
+    assert.notEqual(underscored, plain);
+    for (const [label, text] of [['plain', plain], ['wrapped', wrapped], ['underscored', underscored]]) {
       const t = parseTriage(text);
       assert.deepEqual(t.items[0].sources, ['Product_Owner F1', 'A11y F1'], label);
       assert.deepEqual(t.dropped.map((d) => d.sources), [['Product_Owner F2']], label);
