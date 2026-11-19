@@ -21,7 +21,10 @@ For a branch state: "Read with `git show <ref>:<path>` or `git diff <base>...<re
 <The problem as the user would describe it, with no solution in it.>
 
 ## Repo rules that apply
-<Paste the hard rules from CLAUDE.md, CONTRIBUTING or linked docs that bear on this artifact, or list the files to read. Plugin agents don't load CLAUDE.md on their own.>
+<Rules that bear on this artifact and live outside the session's CLAUDE.md chain, which reviewers already load: CONTRIBUTING, linked docs, another repo's CLAUDE.md. Paste them or list the files to read.>
+
+## Tier   <!-- rules-lawyer only, optional -->
+<Override its own tier choice: "static only", or a follower budget such as "at most 2 scenarios × 3 runs".>
 
 ## Focus for this run   <!-- optional -->
 <Anything the user specifically asked this reviewer to look at, or a known-hot area.>

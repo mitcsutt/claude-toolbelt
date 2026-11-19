@@ -24,6 +24,7 @@ Agents are dispatched as `review-panel:<name>`.
 | `outsider` | Right route? Build vs buy? Prior art and competitors | Cold take + prior-art table |
 | `contract-keeper` | Consumers of changed interfaces, migrations, backfill, version skew | Consumer matrix + safe rollout order |
 | `cost-hawk` | Steady-state cost, growth, hot paths, token and dollar spend | Cost sheet |
+| `rules-lawyer` | Agent instructions: what actually loads, literal misreadings, contradictions, stale or wrong claims, hooks that fail open, context waste | Load map + redline; follower runs on risky lines |
 | `noise-filter` | Final pass only: merge, spot-check, drop noise | Consolidated triage |
 
 ## Step 0: Size the panel
@@ -34,12 +35,13 @@ Agents are dispatched as `review-panel:<name>`.
 | Normal (a feature, a plan, a PR) | 3 to 4 reviewers |
 | High-stakes (architecture, data, auth, multi-PR stack, irreversible) | 5 to 6 reviewers |
 
-Then always add `noise-filter` as the final pass, on top of that count. Never run all nine reviewers by reflex: each one in past panels cost 100k to 170k tokens.
+Then always add `noise-filter` as the final pass, on top of that count. Never run every reviewer by reflex: each one in past panels cost 100k to 170k tokens, and `rules-lawyer` at tier T2 adds up to nine short follower runs.
 
 ## Step 1: Classify
 
-Name the **artifact type** (plan, spec/TRD, diff/PR, PR stack, decision, docs) and scan it for **risk signals**:
+Name the **artifact type** (plan, spec/TRD, diff/PR, PR stack, decision, docs, agent instructions) and scan it for **risk signals**:
 
+- text, hooks or tool descriptions that steer an LLM agent (CLAUDE.md, AGENTS.md, rules, skills, commands, hooks, subagent definitions, output styles, MCP descriptions);
 - auth, secrets, input from outside, or tools an LLM can call;
 - a changed API, schema, config, CLI, event or file format;
 - data migration or backfill;
@@ -58,10 +60,12 @@ Start from the core for the artifact type, then add one reviewer per risk signal
 | Plan / spec / TRD | `goal-auditor`, `grumpy-senior`, `fact-checker` |
 | Diff / PR / stack | `goal-auditor`, `paranoid-sre` |
 | Decision / proposal | `outsider`, `grumpy-senior` |
-| Docs / onboarding / skills | `dx-advocate`, `fact-checker` |
+| Docs / onboarding | `dx-advocate`, `fact-checker` |
+| Agent instructions | `rules-lawyer`, `goal-auditor` |
 
 | Signal | Add |
 | --- | --- |
+| Text, hooks or tool descriptions that steer an agent | `rules-lawyer` |
 | Auth, secrets, outside input, agent tools | `threat-modeller` |
 | Interface, schema or format change; migration | `contract-keeper` |
 | Processes, ports, installs, hooks, retries | `paranoid-sre` |
@@ -73,7 +77,7 @@ Start from the core for the artifact type, then add one reviewer per risk signal
 Rules:
 
 - **The user's picks win.** If they named a persona ("make one a grumpy senior dev"), include the matching agent and fill the rest yourself. If they named a lens no agent covers (accessibility, test coverage, product owner), write an **ad-hoc persona** with [persona-contract.md](references/persona-contract.md) and dispatch it as `general-purpose`.
-- **No overlap.** If two picks would hunt the same thing for this artifact, keep one.
+- **No overlap.** If two picks would hunt the same thing for this artifact, keep one. On agent instructions, `rules-lawyer` owns the claim checks and the literal reading, so don't add `fact-checker` or `dx-advocate` for the same text; `dx-advocate` still fits the human docs around it.
 - **At most one ad-hoc persona per panel**, unless the user asked for more.
 
 ## Step 3: Print the roster, then dispatch
@@ -99,7 +103,7 @@ Build every brief from [brief-template.md](references/brief-template.md). The ag
   - `outsider` gets the problem statement first and the artifact second;
   - `grumpy-senior` often does best with the artifact alone;
   - `fact-checker` and `goal-auditor` get the repo.
-- **Pass the repo's hard rules.** Plugin agents don't load CLAUDE.md. Paste the rules that bear on the artifact, or name the files to read.
+- **Pass the rules CLAUDE.md doesn't carry.** Reviewers load the session's CLAUDE.md chain like any subagent, so don't paste it. Pass the rules that bear on the artifact and live elsewhere (CONTRIBUTING, linked docs, another repo's CLAUDE.md), or name the files to read.
 - **Give each reviewer a report path** under the session scratchpad, e.g. `<scratchpad>/panel-<slug>/<agent>.md`. The reviewer returns one line.
 - **Use read-only snapshots.** If reviewers need a branch state, point them at `git show <ref>:<path>` or a separate read-only worktree. Never have a reviewer check out branches in a tree others are reading.
 

@@ -1,0 +1,173 @@
+schema_version: "1.1"
+name: rules-lawyer-planted-defects
+description: >-
+  A small Terraform repo whose agent instructions (CLAUDE.md, a skill, two
+  hooks, a subagent) carry planted defects of the kinds rules-lawyer exists
+  to catch: wrong domain claims, an unsafe edge-case instruction, hook exit
+  codes and matchers that silently don't work, a Stop-hook loop, a
+  cross-file contradiction, dangling references, an over-privileged agent,
+  and context waste. One control rule (a scope limit) is sound and should
+  survive. Each defect has its own grader, so the score shows which kinds
+  get caught. The no-plugin baseline is the same model auditing unaided.
+tags: [review-panel, rules-lawyer, recall]
+runs: 1
+expected_outcome: >-
+  AUDIT.md names every planted defect with the reason it is wrong, and
+  leaves the scope-limit rule alone.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    This repository's agent setup (CLAUDE.md and the .claude/ directory: a
+    skill, hooks in settings.json and a subagent) was written in a hurry and
+    is about to be shared with the team. Audit those agent instructions for
+    anything that would mislead the agent, not work as intended, waste
+    context, or surprise the people using it. If the review-panel:rules-lawyer
+    agent is available to you, delegate the audit to it and give it AUDIT.md
+    in the repository root as its report path; otherwise do the audit
+    yourself. Either way, the full audit must end up in AUDIT.md. Then reply
+    with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Bash, Write, WebFetch, WebSearch]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - name: delegated_to_rules_lawyer
+    type: tool_used
+    tool: Agent
+    input_match: rules-lawyer
+    arm: with-only
+
+  - name: plan_destroy_does_not_destroy
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 3
+    criteria: >-
+      The audit says the skill's teardown step is wrong because
+      `terraform plan -destroy` only produces a destroy plan and destroys
+      nothing, so preview environments would be left running. Mentioning
+      the step without stating this specific mistake fails.
+
+  - name: fmt_check_does_not_format
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says the skill is wrong that `terraform fmt -check` formats
+      the files: `-check` only reports unformatted files (and exits
+      non-zero) without rewriting anything.
+
+  - name: force_unlock_is_unsafe
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit flags the instruction to run `terraform force-unlock -force`
+      on a state-lock error as unsafe (another run may legitimately hold the
+      lock, and forcing it can corrupt state), and says the agent should
+      find out who holds the lock or ask a human instead.
+
+  - name: hook_exit_1_does_not_block
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 3
+    criteria: >-
+      The audit says block-apply.sh cannot actually stop `terraform apply`
+      because it exits with status 1, and Claude Code only blocks a tool call
+      on exit code 2 (or a JSON deny decision), so the command goes ahead.
+      Criticising only the message wording or the grep pattern fails.
+
+  - name: hook_matcher_case
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says the PreToolUse matcher "bash" (lowercase) won't match
+      Claude Code's `Bash` tool because matchers are case-sensitive, so the
+      hook never runs.
+
+  - name: stop_hook_can_trap_the_agent
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit flags the Stop hook (require-plan.sh) as able to keep the
+      agent from finishing: it blocks every stop whenever no plan file
+      exists, including sessions that have nothing to do with previews, and
+      has no `stop_hook_active` check or other loop guard.
+
+  - name: workspace_contradiction
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit points out that CLAUDE.md (run preview plans in the
+      `staging` workspace) and the tf-preview skill (use a
+      `preview-<branch>` workspace) contradict each other.
+
+  - name: dangling_references
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit points out at least two of these three references that
+      don't resolve: `make lint` (the Makefile has no lint target), the
+      `@docs/runbook.md` import (the file doesn't exist), and
+      `references/costs.md` (the file doesn't exist).
+
+  - name: reviewer_agent_not_read_only
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 1
+    criteria: >-
+      The audit points out that the tf-reviewer subagent says it is
+      read-only but has no `tools:` allowlist, so it inherits every tool,
+      including ones that edit files and run commands.
+
+  - name: skill_description
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 1
+    criteria: >-
+      The audit criticises the tf-preview skill's description, for example
+      that it narrates the workflow steps, is written in the first person,
+      or doesn't say when the skill should be used.
+
+  - name: small_change_is_ambiguous
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 1
+    criteria: >-
+      The audit flags "Skip the plan if the change is small" as ambiguous
+      (nothing defines "small") or as otherwise risky.
+
+  - name: context_waste
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 1
+    criteria: >-
+      The audit flags as wasted context the skill's paragraph explaining
+      what Terraform is, or CLAUDE.md's generic advice ("Write clean,
+      maintainable code and handle edge cases"), or both.
+
+  - name: block_message_gives_no_alternative
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 1
+    criteria: >-
+      The audit notes that the hook's block message ("Blocked.") doesn't
+      tell the agent why, or what to do instead.
+
+  - name: control_scope_rule_survives
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit does NOT recommend deleting or loosening the CLAUDE.md rule
+      "Only change files inside the directory you were asked to work on. If
+      the change needs files anywhere else, ask first." Pass if the audit
+      keeps that rule, endorses it, doesn't mention it, or only rewords it
+      while keeping the restriction. Fail if it proposes removing the rule
+      or letting the agent change files elsewhere without asking.

@@ -1,0 +1,151 @@
+schema_version: "1.1"
+name: rules-lawyer-platform-traps
+description: >-
+  A small Node service whose agent instructions look reasonable but depend on
+  Claude Code or domain behaviour that isn't true: an AGENTS.md that never
+  loads, a rule scoped with Cursor-style frontmatter, a rule hidden in an
+  HTML comment, allowed-tools mistaken for a restriction, an inline command
+  that aborts its skill, hooks on the wrong event or with an `if` that never
+  runs, an Agent(type) "guarantee", a SessionStart prompt that stalls
+  unattended runs, a stale count, and a wrong Stripe idempotency claim. It
+  measures whether verified platform knowledge beats the model's own recall.
+  It has no control grader. In this repo, the scope rule and the skill's
+  trigger wording interact with the planted defects, and in trial runs both
+  arms raised real issues with them, so a "leave it alone" check measured
+  the fixture rather than the reviewer. The airtight control lives in
+  rules-lawyer-planted-defects.
+  The ground truth was checked against the Claude Code 2.1.328 docs on
+  2026-11-19, so re-check the traps when the platform changes.
+tags: [review-panel, rules-lawyer, platform]
+runs: 1
+expected_outcome: >-
+  AUDIT.md names each trap with the platform or domain reason it fails.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    This repository's agent setup (CLAUDE.md, AGENTS.md and the .claude/
+    directory: a rule, a skill, hooks in settings.json and a subagent) is
+    about to be shared with the team. Audit those agent instructions for
+    anything that would mislead the agent, not work as intended, waste
+    context, or surprise the people using it. If the review-panel:rules-lawyer
+    agent is available to you, delegate the audit to it and give it AUDIT.md
+    in the repository root as its report path; otherwise do the audit
+    yourself. Either way, the full audit must end up in AUDIT.md. Then reply
+    with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Bash, Write, WebFetch, WebSearch]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - name: delegated_to_rules_lawyer
+    type: tool_used
+    tool: Agent
+    input_match: rules-lawyer
+    arm: with-only
+
+  - name: agents_md_never_loads
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 3
+    criteria: >-
+      The audit says Claude Code won't load AGENTS.md here, because a
+      CLAUDE.md exists and doesn't import it, so AGENTS.md's rule against
+      running `npm test` never reaches the agent.
+
+  - name: html_comment_stripped
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 3
+    criteria: >-
+      The audit says the rule inside the HTML comment in CLAUDE.md (never
+      edit an applied migration) never reaches the agent, because Claude Code
+      strips block-level HTML comments from CLAUDE.md.
+
+  - name: rule_frontmatter_ignored
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says .claude/rules/migrations.md is scoped with `globs:` /
+      `alwaysApply:` frontmatter that Claude Code ignores (it reads only
+      `paths:`), so the rule isn't limited to migration files and loads in
+      every session.
+
+  - name: allowed_tools_is_not_a_restriction
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says the release-notes skill is wrong to call itself
+      read-only because of `allowed-tools`: that field pre-approves the
+      listed tools and doesn't restrict the skill to them. Noting only that
+      step 3 writes a file, without saying `allowed-tools` doesn't restrict
+      tools, fails.
+
+  - name: inline_command_aborts_skill
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says the inline `git describe --tags --abbrev=0` command will
+      fail because the repository has no tags, and that this breaks the
+      skill: a failing inline command aborts the whole skill invocation, so
+      the agent never gets the skill's instructions. Saying only that the
+      "last release" line will be empty or show an error fails.
+
+  - name: posttooluse_misses_failures
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says test-nudge.sh won't fire when the tests fail, because
+      a failed tool call fires PostToolUseFailure rather than PostToolUse
+      (and/or because the Bash tool response has no `exit_code` field).
+
+  - name: if_on_stop_never_runs
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says the Stop hook with `"if": "Bash(git push *)"` never
+      runs, because `if` is only evaluated on tool events.
+
+  - name: agent_type_list_ignored
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says `Agent(sql-linter)` in db-reviewer's tools does not
+      limit which agents it can start (the type list is ignored in a
+      subagent definition), so the "can't start any other agent" guarantee
+      is false.
+
+  - name: ticket_prompt_stalls_unattended_runs
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit flags the SessionStart hook that tells the agent to ask the
+      user for a ticket and wait before doing anything, because it fires in
+      every session, including unattended or headless runs and tasks that
+      have nothing to do with a ticket, where it stalls or derails the work.
+
+  - name: stale_skill_count
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 1
+    criteria: >-
+      The audit says CLAUDE.md claims three skills in .claude/skills/ but
+      only one (release-notes) exists.
+
+  - name: stripe_idempotency_claim
+    type: llm
+    focus: { source: file, path: AUDIT.md }
+    weight: 2
+    criteria: >-
+      The audit says the CLAUDE.md claim that Stripe keeps idempotency keys
+      forever is wrong (Stripe can prune keys once they are about 24 hours
+      old), so a late retry with the same key can create a new charge.
