@@ -10,9 +10,10 @@ outcome · met · evidence
 - Consequence: Reverting the fix leaves the suite green.
 - Evidence: ran `git stash; npm test` and got
   14 passing
-  ```
-  ## not a heading: inside a code fence
-  ```
+```
+## not a heading: inside a code fence
+### F9 not a finding
+```
 - Fix: Assert the retry count.
 - Severity: SHOULD
 - Confidence: high

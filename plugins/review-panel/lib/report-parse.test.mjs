@@ -54,6 +54,7 @@ test('continuation lines, including fenced ones, stay with their field', () => {
   const [f1] = parseReport(fixture('valid.md')).findings;
   assert.match(f1.evidence, /^ran `git stash; npm test` and got\n {2}14 passing\n/);
   assert.match(f1.evidence, /## not a heading: inside a code fence/);
+  assert.match(f1.evidence, /\n```\n## not a heading: inside a code fence\n### F9 not a finding\n```$/);
   assert.equal(f1.fix, 'Assert the retry count.');
 });
 
