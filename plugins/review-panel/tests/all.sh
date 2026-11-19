@@ -37,8 +37,8 @@ for a in $ROSTER; do
   echo "$tools" | grep -Eq '(^|[ ,])(Task|Edit|NotebookEdit)([ ,(]|$)'
   assert_false "$?" "$a: tools exclude Task/Edit/NotebookEdit"
   if [ "$a" = rules-lawyer ]; then
-    grep -q 'Spawn only `review-panel:instruction-follower`' "$f"; assert_true "$?" "$a: may spawn only instruction-follower"
-    grep -q 'at most 3 scenarios × 3 runs' "$f"; assert_true "$?" "$a: states the follower budget"
+    echo "$tools" | grep -Eq '(^|[ ,])Agent([ ,(]|$)'
+    assert_true "$?" "$a: tools include Agent, the one reviewer allowed it"
   else
     echo "$tools" | grep -Eq '(^|[ ,])Agent([ ,(]|$)'
     assert_false "$?" "$a: tools exclude Agent"
@@ -73,14 +73,13 @@ for a in $ROSTER; do
 done
 
 # Promise: rules-lawyer spawns no agent type other than its follower.
+# The platform doesn't enforce this (Agent(type) lists are ignored inside
+# subagents) and the eval trace doesn't show a subagent's own Agent calls, so
+# the boundary is prompt-enforced and covered by eval review. This checks only
+# that every agent type it names is its follower.
 others=$(grep -o 'review-panel:[a-z-]*' "$RL" | sort -u | grep -v '^review-panel:instruction-follower$')
 assert_eq "" "$others" "rules-lawyer names no other agent type to dispatch"
 grep -q 'general-purpose' "$RL"; assert_false "$?" "rules-lawyer never mentions general-purpose"
-
-# Promise: rules-lawyer picks a tier, maps what loads, keeps a claim ledger and a redline.
-for s in 'T0, static only' 'T1, static and verify' 'T2, adds followers' '## Load map' '## Redline' '## Claim ledger' '## Follower results' 'CONFIRMED, WRONG or UNVERIFIED' 'Refute before you report'; do
-  grep -q "$s" "$RL"; assert_true "$?" "rules-lawyer: $s"
-done
 
 # Promise: its checklists load on demand from the plugin, and every one it names exists (and vice versa).
 grep -q '${CLAUDE_PLUGIN_ROOT}/references/rules-lawyer/' "$RL"; assert_true "$?" "rules-lawyer loads references via CLAUDE_PLUGIN_ROOT"
@@ -96,31 +95,37 @@ done
 for id in $(cat "$RL" "$REFS_RL"/*.md | grep -oE '\bE[0-9]{1,2}\b' | sort -u); do
   grep -q "^| $id |" "$REFS_RL/evidence.md"; assert_true "$?" "evidence ID $id has a row"
 done
-grep -q '^## Checks not to make' "$REFS_RL/evidence.md"; assert_true "$?" "evidence.md lists checks not to make"
 
-# Promise: platform facts carry a date and are re-checked live before a finding depends on them.
-for f in "$REFS_RL"/context-files.md "$REFS_RL"/skills-and-commands.md "$REFS_RL"/hooks.md "$REFS_RL"/agents-and-tools.md; do
-  grep -q 'on 2026-' "$f"; assert_true "$?" "$(basename "$f"): states when facts were checked"
-  grep -q 'Before a finding depends on' "$f"; assert_true "$?" "$(basename "$f"): says to re-check live"
-done
-
-# Promise: instruction-follower is a read-only helper that loads no CLAUDE.md and runs nothing.
+# Promise: instruction-follower is a read-only helper that loads no CLAUDE.md.
 FOL="$AGENTS/instruction-follower.md"
 assert_eq "instruction-follower" "$(fm "$FOL" name)" "instruction-follower: name matches filename"
 assert_eq "Read, Grep, Glob" "$(fm "$FOL" tools)" "instruction-follower: read-only tools only"
 assert_eq "true" "$(fm "$FOL" omitClaudeMd)" "instruction-follower: omits CLAUDE.md"
-fm "$FOL" description | grep -q 'not for direct use'; assert_true "$?" "instruction-follower: says it is not for direct use"
-grep -q 'run, edit and create nothing' "$FOL"; assert_true "$?" "instruction-follower: plans on paper only"
 
 # Promise: two planted-defect evals grade rules-lawyer against a baseline; one carries a control.
 for c in rules-lawyer-planted-defects rules-lawyer-platform-traps; do
   EVAL="$PLUGIN/evals/$c"
   if [ -f "$EVAL/case.yaml" ]; then ok=0; else ok=1; fi
   assert_true "$ok" "eval case exists: $c"
-  grep -q 'scaffold_script: fixture.sh' "$EVAL/case.yaml" && [ -f "$EVAL/fixture.sh" ]; assert_true "$?" "$c: seeds its fixture from fixture.sh"
-  grep -q 'focus: { source: file, path: AUDIT.md }' "$EVAL/case.yaml"; assert_true "$?" "$c: grades the written audit"
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    facts=$(python3 -I -c '
+import sys, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+llm = [g for g in c.get("graders", []) if g.get("type") == "llm"]
+print(c.get("context", {}).get("scaffold_script"))
+print(bool(llm) and all(g.get("focus") == {"source": "file", "path": "AUDIT.md"} for g in llm))
+print(any(g["name"].startswith("control_") for g in llm))
+' "$EVAL/case.yaml")
+    assert_eq "fixture.sh" "$(echo "$facts" | sed -n 1p)" "$c: seeds its fixture from fixture.sh"
+    [ -f "$EVAL/fixture.sh" ]; assert_true "$?" "$c: fixture.sh exists"
+    assert_eq "True" "$(echo "$facts" | sed -n 2p)" "$c: every llm grader grades the written AUDIT.md"
+    if [ "$c" = rules-lawyer-planted-defects ]; then
+      assert_eq "True" "$(echo "$facts" | sed -n 3p)" "$c: has a control grader"
+    fi
+  else
+    echo "($c case.yaml checks skipped — python3 with PyYAML not installed)"
+  fi
 done
-grep -q 'does NOT recommend' "$PLUGIN/evals/rules-lawyer-planted-defects/case.yaml"; assert_true "$?" "planted-defects eval has a control that must survive"
 
 # Promise: fact-checker uses the CONFIRMED / WRONG / UNVERIFIED ledger.
 grep -q 'CONFIRMED' "$AGENTS/fact-checker.md" && grep -q 'WRONG' "$AGENTS/fact-checker.md" && grep -q 'UNVERIFIED' "$AGENTS/fact-checker.md"

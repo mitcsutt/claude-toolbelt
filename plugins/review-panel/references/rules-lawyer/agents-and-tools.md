@@ -17,7 +17,7 @@ Platform facts were checked against Claude Code 2.1.328 (code.claude.com/docs/en
   - Omitting `tools` inherits every tool, `Agent` and `Edit` included.
   - `Agent(type)` lists are ignored inside a subagent; they apply only to `claude --agent`. Nesting goes 3 layers deep by default.
   - `AskUserQuestion`, `EndConversation`, `EnterPlanMode`, `ScheduleWakeup`, `WaitForMcpServers` and `Workflow` are always removed. `ExitPlanMode` is removed too unless `permissionMode: plan`, and `Agent` is removed at the depth limit.
-  - Background subagents (the default) keep only these built-ins, listed or inherited, with no error for the rest: `Read`, `Grep`, `Glob`, `LSP`, `Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`, `TodoWrite`, `Skill`, `ToolSearch`, `EnterWorktree`, `ExitWorktree`, `Monitor`, `TaskStop`, `SendMessage`, `Artifact`.
+  - Background subagents (the default) keep only these built-ins, listed or inherited, with no error for the rest: `Read`, `Grep`, `Glob`, `LSP`, `Bash`, `PowerShell`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`, `TodoWrite`, `Skill`, `ToolSearch`, `EnterWorktree`, `ExitWorktree`, `Monitor`, `TaskStop`, `SendMessage`, `Artifact`. `Agent` isn't on that list, but in a live test on 2.1.328 a background subagent kept `Agent` and spawned a nested agent, so don't flag an agent for relying on `Agent` in the background.
   - A `disallowedTools` entry with a specifier, such as `Bash(git push *)`, removes the whole tool.
 - **Descriptions.** If all agents' descriptions together pass about 15,000 tokens, Claude Code warns at startup. Plugin agents are named `plugin:agent`, and subfolders add segments.
 
