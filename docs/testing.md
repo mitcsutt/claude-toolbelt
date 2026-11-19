@@ -94,20 +94,26 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (2 cases) — both seed a repo with `fixture.sh`, so pass
-  `--scaffold`. One `llm` grader per planted defect reads the written
-  `AUDIT.md`, and the no-plugin arm is the same model auditing unaided.
+- **`review-panel`** (3 cases) — all seed a repo with `fixture.sh`, so pass
+  `--scaffold`. One grader per planted defect reads the written report
+  (`AUDIT.md` or `TRIAGE.md`), and the no-plugin arm is the same model
+  working unaided.
   - `rules-lawyer-planted-defects` is a Terraform repo with familiar
     defects: wrong CLI claims, a guard hook that exits 1, a lowercase
     matcher, a Stop-hook loop and contradictions.
   - `rules-lawyer-platform-traps` is a Node repo whose instructions depend
     on Claude Code behaviour that isn't true. Its ground truth was checked
     against the 2.1.328 docs, so re-check it when the platform changes.
-  - Grant `--allow-tools Bash Write WebFetch WebSearch`. Granting Bash
-    needs a working sandbox backend. Where there isn't one (for example
-    Ubuntu with AppArmor's unprivileged-user-namespace restriction),
-    run with `--disallow-tools Bash` instead, which skips the hook fixture
-    runs in both arms.
+  - `noise-filter-planted-triage` triages five pre-written reports on a
+    small rate limiter into `TRIAGE.md`; it needs Bash for the parser path
+    (`--allow-tools Bash Write`), and without it grades the no-shell T0
+    fallback (`--allow-tools Write --disallow-tools Bash PowerShell`).
+  - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
+    WebSearch`. Granting Bash needs a working sandbox backend. Where there
+    isn't one (for example Ubuntu with AppArmor's
+    unprivileged-user-namespace restriction), run with
+    `--disallow-tools Bash` instead, which skips the hook fixture runs in
+    both arms.
   - `plugins/review-panel/lib/report-parse.test.mjs` (run by `node --test`)
     parses every agent's output template against the shared report
     contract. New eval cases should prefer `regex` graders over the report

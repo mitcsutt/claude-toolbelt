@@ -1,0 +1,178 @@
+schema_version: "1.1"
+name: noise-filter-planted-triage
+description: >-
+  A small Node rate limiter (ratelimit-cli) with one change under review
+  (CHANGE.diff) and five pre-written panel reports in the shared contract.
+  The reports plant a cross-confirmed real bug worded differently, folklore
+  and wrong-line findings, a confident mis-stated duplicate of a real flaw,
+  a doc mismatch that is really a code bug, an inflated BLOCK, a pre-existing
+  bug at the same line as a false finding, nits, process noise and an
+  out-of-goal trade-off. The control is a real BLOCK raised by one reviewer
+  with low confidence and hedged wording, which must survive. The no-plugin
+  baseline is the same model triaging unaided with the same output format.
+tags: [review-panel, noise-filter, recall, triage]
+runs: 3
+expected_outcome: >-
+  TRIAGE.md keeps both real BLOCKs in Fix (one merged from three reports),
+  drops the false and noisy findings with reasons, files the pre-existing
+  bug separately, and accounts for all 15 findings.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    A five-reviewer panel reviewed the change in CHANGE.diff to this
+    repository. The change's goal, which is fixed (don't argue against it):
+    "Add an admin reset endpoint without weakening the limiter." The reports,
+    in this order, are reports/grumpy-senior.md, reports/dx-advocate.md,
+    reports/goal-auditor.md, reports/paranoid-sre.md and
+    reports/threat-modeller.md. Triage them for a busy author into
+    TRIAGE.md in the repository root: merge duplicates, check cited
+    evidence against the code, drop noise with a reason, and account for
+    every finding exactly once. Use exactly these sections, in order:
+    "## At a glance", "## Fix before merge", "## Decisions for you",
+    "## Worth doing", "## Pre-existing", "## Dropped", "## Coverage". Give
+    every item a "- Sources:" line listing the findings it covers as
+    "<reviewer> F<n>" (for example "goal-auditor F2"), and put those in the
+    first column of each Dropped table row. If the review-panel:noise-filter
+    agent is available to you, delegate the triage to it with the goal, the
+    report paths in the order above, CHANGE.diff as the artifact and
+    TRIAGE.md as its triage path; otherwise do the triage yourself. Then
+    reply with exactly one line:
+    "<overall verdict> · fix <n> / decide <n> / worth <n> / dropped <n> · TRIAGE.md".
+  allowed_tools: [Agent, Read, Grep, Glob, Bash, Write]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - name: delegated_to_noise_filter
+    type: tool_used
+    tool: Agent
+    input_match: noise-filter
+    arm: with-only
+
+  - name: control_hedged_block_survives
+    type: regex
+    weight: 3
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Fix before merge\n(?:(?!\n## ).)*?Sources:[^\n]*threat-modeller F1\b'
+
+  - name: t1_merged_in_fix
+    type: regex
+    weight: 2
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Fix before merge\n(?:(?!\n## ).)*?Sources:[^\n]*(paranoid-sre F1\b[^\n]*goal-auditor F1\b|goal-auditor F1\b[^\n]*paranoid-sre F1\b)'
+
+  - name: doc_symptom_not_dropped
+    type: regex
+    weight: 2
+    match: not_contains
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Dropped\n(?:(?!\n## ).)*?dx-advocate F1\b'
+
+  - name: misstated_dup_not_confirming
+    type: regex
+    weight: 2
+    match: not_contains
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: 'Sources:[^\n]*(threat-modeller F1\b[^\n]*grumpy-senior F2\b|grumpy-senior F2\b[^\n]*threat-modeller F1\b)'
+
+  - name: misstated_dup_dropped
+    type: regex
+    weight: 1
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Dropped\n(?:(?!\n## ).)*?grumpy-senior F2\b'
+
+  - name: folklore_dropped
+    type: regex
+    weight: 2
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Dropped\n(?:(?!\n## ).)*?paranoid-sre F3\b'
+
+  - name: wrong_line_dropped
+    type: regex
+    weight: 2
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Dropped\n(?:(?!\n## ).)*?goal-auditor F2\b'
+
+  - name: preexisting_filed
+    type: regex
+    weight: 2
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Pre-existing\n(?:(?!\n## ).)*?Sources:[^\n]*paranoid-sre F2\b'
+
+  - name: inflated_block_regraded
+    type: regex
+    weight: 1
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Worth doing\n(?:(?!\n## ).)*?Sources:[^\n]*goal-auditor F3\b'
+
+  - name: nits_clustered_once
+    type: regex
+    weight: 1
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Dropped\n(?:(?!\n## ).)*?\|[^\n]*dx-advocate F2\b[^\n]*dx-advocate F3\b[^\n]*dx-advocate F4\b[^\n]*\|'
+
+  - name: rename_nit_dropped
+    type: regex
+    weight: 1
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Dropped\n(?:(?!\n## ).)*?grumpy-senior F3\b'
+
+  - name: process_noise_dropped
+    type: regex
+    weight: 1
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## Dropped\n(?:(?!\n## ).)*?paranoid-sre F4\b'
+
+  - name: tradeoff_decided_or_dropped
+    type: regex
+    weight: 1
+    target: { source: file, path: TRIAGE.md }
+    flags: s
+    pattern: '## (Decisions for you|Dropped)\n(?:(?!\n## ).)*?grumpy-senior F1\b'
+
+  - name: return_line
+    type: regex
+    weight: 1
+    target: last_message
+    pattern: '(SHIP WITH FIXES|SHIP|DO NOT SHIP) · fix \d+ / decide \d+ / worth \d+ / dropped \d+ · \S*TRIAGE\.md'
+
+  - name: reason_doc_is_right
+    type: llm
+    focus: { source: file, path: TRIAGE.md }
+    criteria: >-
+      PASS if the triage treats the README sentence "Burst is capped at
+      capacity" as correct and the code as wrong, because the change removed
+      the clamp on refill (it links dx-advocate F1 to the refill bug). FAIL if
+      it says the README is stale or should be updated to match the code.
+
+  - name: reason_folklore
+    type: llm
+    focus: { source: file, path: TRIAGE.md }
+    criteria: >-
+      PASS if the triage drops paranoid-sre F3 because parseInt("08") returns 8
+      in modern JavaScript, or because the finding offers no evidence beyond
+      recall. FAIL if it accepts that "08" parses as 0, or merges F3 with
+      paranoid-sre F2 (the NaN issue) as one finding.
+
+  - name: reason_wrong_line
+    type: llm
+    focus: { source: file, path: TRIAGE.md }
+    criteria: >-
+      PASS if the triage drops goal-auditor F2 because the cited line in
+      src/limiter.js is a comment and the file calls Date.now() only once.
+      FAIL if it keeps the finding or drops it with no evidence reason.

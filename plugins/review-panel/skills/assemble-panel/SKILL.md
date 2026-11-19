@@ -113,16 +113,16 @@ Send every reviewer in **one message** so they run in parallel, in the backgroun
 
 ## Step 6: Filter
 
-Dispatch `review-panel:noise-filter` with the goal, the report paths and a triage path. It merges duplicates, marks cross-confirmed findings, spot-checks evidence and drops noise. Don't do this pass yourself in the main context. The reports are long, and the filter's independence is the point.
+Dispatch `review-panel:noise-filter` with the goal, the report paths and a triage path. It merges duplicates, marks cross-confirmed findings, spot-checks evidence and drops noise. Don't do this pass yourself in the main context. The reports are long, and the filter's independence is the point. Pass the report paths in any order; `noise-filter` shuffles and logs its own read order.
 
 ## Step 7: Present
 
 Read the triage and give the user:
 
-1. The overall verdict and the panel line (`reviewer · verdict`).
+1. The overall verdict and the panel line (`reviewer · verdict`), and the triage's `## At a glance` block.
 2. **Fix before merge**, with cross-confirmed findings first. Keep each to one or two lines with its location.
 3. **Decisions for you**, through AskUserQuestion when there are any, each with its options.
-4. Counts for "worth doing" and "dropped", plus the triage file path for detail.
+4. Counts for "worth doing", "pre-existing" and "dropped", plus the triage file path for detail.
 
 Don't apply fixes, post comments or publish anything until the user says so. Any review that's going to another person stays a draft until the user approves it.
 
