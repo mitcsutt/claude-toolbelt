@@ -81,7 +81,7 @@ Point it at a CLAUDE.md, a skill, a hook, a subagent or a whole plugin: "have th
 - **Ambiguity shown, not asserted.** At tier T2 it hands risky lines to fresh `instruction-follower` agents, at most 3 scenarios × 3 runs. A line where the followers act differently becomes a finding, with each reading quoted.
 - **Hooks run, not just read.** Guards are piped fixture events and probed for fail-open and bypass paths.
 
-It picks a tier and says why: T0 static only, T1 static plus verification (the default), T2 with followers. Its checklists and the evidence behind each check live in [`references/rules-lawyer/`](references/rules-lawyer/evidence.md). It complements Claude Code's own `/doctor prompt-audit`, which doesn't cover hooks, settings or MCP config, run the instructions, or check domain claims against outside sources.
+It picks a tier and says why: T0 static only, T1 static plus verification (the default), T2 with followers. Its checklists and the evidence behind each check live in [`references/rules-lawyer/`](references/rules-lawyer/evidence.md), with the method evidence in [`references/shared/`](references/shared/evidence.md). It complements Claude Code's own `/doctor prompt-audit`, which doesn't cover hooks, settings or MCP config, run the instructions, or check domain claims against outside sources.
 
 ## Tests
 
