@@ -1,0 +1,143 @@
+schema_version: "1.1"
+name: dx-advocate-planted-defects
+description: >-
+  A small Node service, ledger-api, whose 1.4.0 change (in CHANGE.diff and
+  git HEAD~1..HEAD) renames an env var and a config key, reworks setup and
+  adds a nightly unattended job. Planted defects are the kinds dx-advocate
+  exists to catch: a documented flag the script rejects, silent fallbacks
+  after renames, a runtime-version mismatch, a bash-4 builtin on a claimed
+  macOS path, a phony make target that passes doing nothing, a human-only
+  step in an unattended run, a vague error, an incomplete uninstall, and a
+  written-rule breach. One control (a generated secret documented as such)
+  is sound and must not be reported. The no-plugin baseline is the same
+  model reviewing unaided.
+tags: [review-panel, dx-advocate, recall]
+runs: 2
+expected_outcome: >-
+  REVIEW.md names every planted defect with its consequence for the user,
+  and leaves SESSION_SECRET alone.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    The latest commit in this repository is the 1.4.0 release of ledger-api;
+    its diff is in CHANGE.diff. Before it ships, review it for developer
+    experience: can a new engineer, and a Claude session running unattended,
+    set up, run, upgrade to and remove this version using only what is
+    written down, and does the change follow the repo's written rules? If
+    the review-panel:dx-advocate agent is available to you, delegate the
+    review to it and give it REVIEW.md in the repository root as its report
+    path; otherwise do the review yourself. Either way, the full review must
+    end up in REVIEW.md. Then reply with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Bash, Write]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - name: delegated_to_dx_advocate
+    type: tool_used
+    tool: Agent
+    input_match: dx-advocate
+    arm: with-only
+
+  - name: d1_flag_not_accepted
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "--no-seed"
+    weight: 1
+
+  - name: d2_env_rename_silent_fallback
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says the code now reads LEDGER_DB_URL while
+      .env.example and the README still say DATABASE_URL, AND that because
+      of the `?? 'sqlite://./dev.db'` fallback a user who follows the docs
+      silently runs against a local SQLite file with no error. FAIL if it
+      only says the variable was renamed or the docs are stale, without the
+      silent-fallback consequence.
+
+  - name: d3_config_key_silently_ignored
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says an existing config.json with "port" is now
+      ignored because the loader reads `listen_port ?? 3000`, so upgraded
+      installs silently move to port 3000, and that nothing (no migration
+      note; the CHANGELOG calls it "Internal") tells existing users. FAIL
+      if it only notes that the key was renamed.
+
+  - name: d4_env_file_needs_newer_node
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "20\\.6"
+    weight: 2
+
+  - name: d5_mapfile_on_macos_bash
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "mapfile[\\s\\S]{0,400}(3\\.2|bash ?4|4\\.0)|(3\\.2|bash ?4|4\\.0)[\\s\\S]{0,400}mapfile"
+    flags: i
+    weight: 2
+
+  - name: d6_phony_target_false_green
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says `make test-unit` (named in CONTRIBUTING.md and
+      CLAUDE.md) has no rule in the Makefile, only a .PHONY entry, so it
+      prints "Nothing to be done" and exits 0 while running no tests, giving
+      a false pass to a person or agent that checks it. FAIL if it says only
+      that the target is missing or would error.
+
+  - name: d7_unattended_dead_end
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says the nightly job in docs/ci.md runs
+      `claude -p --permission-mode dontAsk` with nobody watching, so
+      CLAUDE.md's "ask the maintainer before retrying" cannot be followed,
+      and asks for an unattended branch (for example stop and record the
+      failure). FAIL if it does not connect the ask-the-maintainer rule to
+      the unattended run.
+
+  - name: d8_error_message_unhelpful
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 1
+    criteria: >-
+      PASS if the review says setup.sh's "config error" message (when .env
+      is missing) doesn't say that .env is missing or that the user should
+      copy .env.example, ideally noting the previous version's message did.
+
+  - name: d9_uninstall_leaves_files
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says the README's uninstall step leaves behind what
+      setup.sh now writes outside the cleanup: at least the file under
+      ~/.config/ledger/ (and optionally the .git/hooks/pre-commit link).
+
+  - name: d10_rule_breach_env_var
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "LEDGER_AUDIT_TIMEOUT_MS[\\s\\S]{0,300}env\\.example|env\\.example[\\s\\S]{0,300}LEDGER_AUDIT_TIMEOUT_MS"
+    weight: 2
+
+  - name: control_session_secret_not_flagged
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if REVIEW.md does not report SESSION_SECRET as missing,
+      undocumented, a setup gap, or something the user must fill in by
+      hand. Mentioning it as fine, or not mentioning it, passes. FAIL if it
+      asks the user to set SESSION_SECRET manually or calls its empty value
+      in .env.example a defect.

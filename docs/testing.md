@@ -94,7 +94,7 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (13 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (14 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
@@ -116,6 +116,12 @@ document states, not a gate a script enforces.
     PowerShell` and measures T1, not the revert check. The sound #14 fix is
     the control. `tests/all.sh` runs the shipped revert-check recipe itself
     against two throwaway repos.
+  - `dx-advocate-planted-defects` reviews a Node service's 1.4.0 change,
+    into `REVIEW.md`, with doc, upgrade, unattended-run and removal defects
+    and one control (an empty `SESSION_SECRET` that setup generates); run
+    with `--allow-tools Write --disallow-tools Bash PowerShell`.
+    `lib/doc-checks-commands.test.mjs` runs the shipped doc checks against
+    the same fixture.
   - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the
     roster, claim owner and status line the skill prints before it would
     dispatch, with `regex` graders on the final message. The trace also
@@ -248,6 +254,14 @@ in both arms. With the plugin a run cost about $0.62, against $0.38 for the
 baseline. No baseline pilot ran before this scored run, so the drop rule
 wasn't applied; by that rule every planted break would now be dropped, so
 the case needs harder breaks before it can show a gain.
+
+`dx-advocate-planted-defects`, 2026-11-20: `--runs 2`, Bash withheld, $1.97.
+With plugin 1.00, without 0.87, delta +0.13, which clears the plan's +0.09
+bar, and the control passed in both arms. Only one of the four target
+defects separated the arms: the baseline missed the phony-target false green
+(D6) in both runs; D2, D3 and D7 were caught in both arms. So it's a partial
+pass of the plan's bar (it asks for two). With the plugin a run cost about
+2.4x the baseline ($0.70 vs $0.30).
 
 ## Related
 

@@ -18,7 +18,7 @@ Agents are dispatched as `review-panel:<name>`.
 | `grumpy-senior` | Over-engineering, scope creep, reinvention | "Ship it on Friday" cut-down version |
 | `paranoid-sre` | Restarts, partial failure, races, ports, locks, rollback | Failure table as event sequences |
 | `fact-checker` | Every concrete technical claim | Claim ledger: CONFIRMED / WRONG / UNVERIFIED |
-| `dx-advocate` | New engineer + unattended agent journeys, stale docs, repo rules | Journey walk + stale-docs list |
+| `dx-advocate` | New engineer + unattended agent journeys, stale docs, repo rules | Resolution table + journey walk + stale-docs list |
 | `threat-modeller` | Trust boundaries, auth, injection, secrets and credential scope, agent/CI/MCP attack paths, supply chain | Threat table with attack paths |
 | `goal-auditor` | Is the goal actually met? Overclaims, tests that pass without the fix, missed callers and siblings, absences (rollback, bad inputs) | Goal scorecard with evidence per row |
 | `outsider` | Right route? Build vs buy? Prior art and competitors | Cold take + prior-art table |
