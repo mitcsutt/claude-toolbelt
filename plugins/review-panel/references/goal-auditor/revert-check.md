@@ -60,7 +60,9 @@ echo "logs: $T"
 
 ## 6. PASS_TO_PASS
 
-`(cd "$T/after" && env -i PATH="$PATH" HOME="$T/home" TMPDIR="$T" LANG=C.UTF-8 ${EXTRA_ENV:-} <full test cmd>) > "$T/after.full.log" 2>&1; echo "after full exit=$?"`.
+This is a separate Bash call, so shell variables from §4 are gone: set `T` (the `logs:` path) and `EXTRA_ENV` (the same words as §4) at its start.
+
+`T=<logs path>; EXTRA_ENV='<same as §4>'; (cd "$T/after" && env -i PATH="$PATH" HOME="$T/home" TMPDIR="$T" LANG=C.UTF-8 ${EXTRA_ENV:-} <full test cmd>) > "$T/after.full.log" 2>&1; echo "after full exit=$?"`.
 
 - If it fails, rerun once to rule out a flake.
 - If it still fails, run the same command in `$T/before`, which tells a regression from a pre-existing failure.
