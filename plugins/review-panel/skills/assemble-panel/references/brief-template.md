@@ -23,8 +23,13 @@ For a branch state: "Read with `git show <ref>:<path>` or `git diff <base>...<re
 ## Repo rules that apply
 <Rules that bear on this artifact and live outside the session's CLAUDE.md chain, which reviewers already load: CONTRIBUTING, linked docs, another repo's CLAUDE.md. Paste them or list the files to read.>
 
-## Tier   <!-- rules-lawyer and goal-auditor only, optional -->
-<Override its own tier choice: "static only", or for rules-lawyer a follower budget such as "at most 2 scenarios × 3 runs".>
+## Lens boundaries (this panel)
+<Panel: <agent>, <agent>, …
+Claim checks belong to <claim owner>. Don't re-verify technical claims yourself. Raise a claim only if its truth would change a finding in your own lens, then name that finding and mark the claim "for <claim owner> to verify".
+For the claim owner itself: "You own claim checks for this panel.">
+
+## Tier   <!-- any reviewer whose agent file defines tiers, optional -->
+<Override its own tier choice: "static only", or a follower budget such as "at most 2 scenarios × 3 runs".>
 
 ## Focus for this run   <!-- optional -->
 <Anything the user specifically asked this reviewer to look at, or a known-hot area.>

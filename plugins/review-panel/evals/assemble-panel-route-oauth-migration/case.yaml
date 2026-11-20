@@ -1,0 +1,39 @@
+schema_version: "1.1"
+name: assemble-panel-route-oauth-migration
+description: >-
+  PR 42 adds GitHub OAuth login (a callback that exchanges the code, sets
+  a session cookie and reads a client secret) and a migration that drops a
+  column. High stakes (auth, an irreversible drop) and over 50 changed
+  lines, so the roster needs the high-stakes band with threat-modeller and
+  contract-keeper on top of the diff core. Agent is withheld (fixture
+  hooks don't load under claude plugin eval), so routing is graded from
+  the roster the skill prints before dispatch, in the final message (the
+  trace also holds SKILL.md's example roster). This case has no control;
+  the routing control is assemble-panel-route-typo-control.
+tags: [review-panel, assemble-panel, routing]
+runs: 3
+expected_outcome: >-
+  Prints a roster of 4-6 reviewers including threat-modeller,
+  contract-keeper, goal-auditor and paranoid-sre, and the status line.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: >-
+    Review PR 42 (PR.md and CHANGE.diff) with a panel. Subagent dispatch
+    isn't available in this session, so don't try it. Follow the skill up
+    to the point where it would dispatch reviewers, make your final reply
+    exactly what it prints there (or your answer, if no panel is
+    warranted), and stop.
+  allowed_tools: [Skill, Read, Grep, Glob]
+  max_turns: 25
+  timeout_seconds: 600
+graders:
+  - { name: skill_fired, type: tool_used, tool: Skill, input_match: 'assemble-panel' }
+  - { name: adds_threat_modeller, type: regex, target: last_message, flags: s, weight: 3, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?threat-modeller\b' }
+  - { name: adds_contract_keeper, type: regex, target: last_message, flags: s, weight: 2, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?contract-keeper\b' }
+  - { name: core_goal_auditor, type: regex, target: last_message, flags: s, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?goal-auditor\b' }
+  - { name: core_paranoid_sre, type: regex, target: last_message, flags: s, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?paranoid-sre\b' }
+  - { name: size_4_to_6, type: regex, target: last_message, weight: 1, pattern: 'Panel \((4|5|6) \+ filter\)' }
+  # shared graders, in every case that prints a roster:
+  - { name: roster_printed, type: regex, target: last_message, pattern: 'Panel \(\d+ \+ filter\)' }
+  - { name: status_line, type: regex, target: last_message, weight: 2, pattern: 'Expect about \d+\s*[–-]\s*\d+ min' }
