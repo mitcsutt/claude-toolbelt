@@ -35,7 +35,7 @@ Agents are dispatched as `review-panel:<name>`.
 | Normal (a feature, a plan, a PR) | 3 to 4 reviewers |
 | High-stakes (architecture, data, auth, multi-PR stack, irreversible) | 5 to 6 reviewers |
 
-Then always add `noise-filter` as the final pass, on top of that count. Never run every reviewer by reflex. Extra reviewers add cost faster than coverage (see [evidence](references/evidence.md) AP1–AP4).
+Then add `noise-filter` as the final pass, on top of that count, whenever there's more than one reviewer. Never run every reviewer by reflex. Extra reviewers add cost faster than coverage (see [evidence](references/evidence.md) AP1–AP4).
 
 What a panel costs, measured once (2026-10-26, six Opus 5.5 reviewers plus the filter):
 - each reviewer peaked at 134k–307k tokens of context and processed about 0.45M–17.1M tokens in total, mostly cache reads;
@@ -86,6 +86,8 @@ Show one line per reviewer, one line naming the claim owner, and one line for wh
 
     Panel running: <n> reviewers + filter. Expect about <a>–<b> min; I'll report once, when the triage is ready.
 
+With a single reviewer, say `1 reviewer, no filter` and "when its findings are ready" instead.
+
 Take `<a>–<b>` from this table, not from memory: 1 reviewer 10–20; 2–3 reviewers 20–35; 4–6 reviewers 25–40. The slowest reviewer gates the filter. One measured run took 8.5–21.6 min per reviewer and 12 min for the filter.
 
 ```
@@ -119,10 +121,10 @@ Work through this checklist in order. If you have a task-list tool, copy the che
 
 1. Send every reviewer in **one message**, in the background.
 2. If any call is refused (a hook, a permission rule, a policy, an unknown agent type), stop and follow "If dispatch is blocked". Don't retry it.
-3. As each reviewer finishes, note its one-line return and nothing else. Don't Read, Grep or quote its report, and don't tell the user about it.
-4. When every reviewer has returned or failed, say one line: `Reviewers done (<k>/<n>); filter running, about 10–15 min.` Name any reviewer that failed.
-5. Dispatch `noise-filter` (Step 6) with the report paths. You haven't read the reports, and you don't need to.
-6. Read the triage, and only the triage (Step 7). If the user asks about one finding, read that finding's section, not the whole report.
+3. As each reviewer finishes, note its one-line return and nothing else. Don't Read, Grep or quote its report, and don't tell the user about it. With a single reviewer, the only exception is the title-and-severity Grep in Step 6.
+4. When every reviewer has returned or failed, say one line: `Reviewers done (<k>/<n>); filter running, about 10–15 min.` Name any reviewer that failed. With a single reviewer, skip this line.
+5. Dispatch `noise-filter` (Step 6) with the report paths. You haven't read the reports, and you don't need to. With a single reviewer, skip this item; there is no filter.
+6. Read the triage, and only the triage (Step 7). With a single reviewer there is no triage: follow Step 6's single-reviewer line instead. If the user asks about one finding, read that finding's section, not the whole report.
 
 ## If dispatch is blocked
 
