@@ -30,17 +30,23 @@ execution:
 graders:
   - { name: delegated_to_fact_checker, type: tool_used, tool: Agent, input_match: fact-checker, arm: with-only }
   - { name: p1_python_frozendict_wrong, type: regex, weight: 3, target: { source: file, path: REVIEW.md },
-      pattern: 'PLAN\.md:14\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:14\b' }
+      flags: m,
+      pattern: '^\|[^\n]*PLAN\.md:14\b[^\n]*\|\s*\**WRONG\**\s*\|' }
   - { name: p2_utf8_default_wrong, type: regex, weight: 2, target: { source: file, path: REVIEW.md },
-      pattern: 'PLAN\.md:15\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:15\b' }
+      flags: m,
+      pattern: '^\|[^\n]*PLAN\.md:15\b[^\n]*\|\s*\**WRONG\**\s*\|' }
   - { name: p4_strip_types_wrong, type: regex, weight: 1, target: { source: file, path: REVIEW.md },
-      pattern: 'PLAN\.md:16\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:16\b' }
+      flags: m,
+      pattern: '^\|[^\n]*PLAN\.md:16\b[^\n]*\|\s*\**WRONG\**\s*\|' }
   - { name: p5_require_esm_wrong, type: regex, weight: 1, target: { source: file, path: REVIEW.md },
-      pattern: 'PLAN\.md:17\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:17\b' }
+      flags: m,
+      pattern: '^\|[^\n]*PLAN\.md:17\b[^\n]*\|\s*\**WRONG\**\s*\|' }
   - { name: p6_cp_n_wrong, type: regex, weight: 2, target: { source: file, path: REVIEW.md },
-      pattern: 'PLAN\.md:18\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:18\b' }
+      flags: m,
+      pattern: '^\|[^\n]*PLAN\.md:18\b[^\n]*\|\s*\**WRONG\**\s*\|' }
   - { name: p3_agents_md_wrong, type: regex, weight: 3, target: { source: file, path: REVIEW.md },
-      pattern: 'PLAN\.md:20\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:20\b' }
+      flags: m,
+      pattern: '^\|[^\n]*PLAN\.md:20\b[^\n]*\|\s*\**WRONG\**\s*\|' }
   - name: p6_cites_9_5_reversal
     type: llm
     weight: 1

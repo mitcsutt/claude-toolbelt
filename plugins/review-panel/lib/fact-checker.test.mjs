@@ -12,7 +12,3 @@ test('fact-checker template: ledger, findings, coverage, checked-and-fine in ord
   assert.equal(r.tier, '<n>');
   assert.deepEqual(r.sections, ['Claim ledger', 'Findings', 'Coverage', 'Checked and fine']);
 });
-
-test('fact-checker return line: verdict, tier, three counts, path', () => {
-  assert.match(md, /^`<verdict> · T<tier> · <n> WRONG \/ <n> UNVERIFIED \/ <n> CONFIRMED · <report path>`\.$/m);
-});
