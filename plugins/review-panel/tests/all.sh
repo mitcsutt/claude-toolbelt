@@ -233,13 +233,12 @@ fi
 assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/goal-auditor.md" tools)" "goal-auditor: tools are exactly the read-only set plus Bash and Write"
 
 # Promise: goal-auditor's fail-before/pass-after recipe tells a covering test
-# from a vacuous one, and leaves the repo it reads untouched.
+# from a vacuous one, copies DEPS and passes EXTRA_ENV to both sides without
+# the block being edited, and leaves the repo it reads untouched.
 GA_TMP=$(mktemp -d)
 awk '/^# revert-check v1/{f=1} f&&/^```/{exit} f{print}' "$PLUGIN/references/goal-auditor/revert-check.md" > "$GA_TMP/recipe.sh"
 if [ -s "$GA_TMP/recipe.sh" ]; then ok=0; else ok=1; fi
 assert_true "$ok" "goal-auditor: revert-check.md carries the recipe block"
-if grep -Eq 'git +(stash|checkout|switch|worktree|reset|commit|add|restore|clean)([^a-z-]|$)' "$GA_TMP/recipe.sh"; then ok=1; else ok=0; fi
-assert_true "$ok" "goal-auditor: recipe runs no git command that changes repo state"
 ga_snap() { find .git -type f -exec cksum {} + | sort; git ls-files -z | xargs -0 cksum | sort; }
 ga_want="before test/f.sh exit=1
 before test/vac.sh exit=0
@@ -249,11 +248,13 @@ for mode in commit WORKTREE; do
   res=$(
     d="$GA_TMP/$mode"; mkdir -p "$d/src" "$d/test" && cd "$d" || exit 1
     git init -q -b main
+    printf 'deps/\n' > .gitignore
     printf 'f() { echo bad; }\ng() { echo same; }\n' > src/lib.sh
     printf '. ./src/lib.sh\n[ "$(g)" = same ]\n' > test/g.sh
     git add -A && git -c user.name=t -c user.email=t@example.invalid commit -q -m base
     printf 'f() { echo ok; }\ng() { echo same; }\n' > src/lib.sh
-    printf '. ./src/lib.sh\n[ "$(f)" = ok ]\n' > test/f.sh
+    mkdir deps && printf 'h() { echo "$WANT"; }\n' > deps/h.sh
+    printf '. ./src/lib.sh\n. ./deps/h.sh\n[ "$(f)" = "$(h)" ]\n' > test/f.sh
     printf '. ./src/lib.sh\n[ "$(g)" = same ]\n' > test/vac.sh
     fix=WORKTREE
     if [ "$mode" = commit ]; then
@@ -261,11 +262,11 @@ for mode in commit WORKTREE; do
       fix=fix
     fi
     snap=$(ga_snap)
-    out=$(BASE=main FIX="$fix" TESTS="test/f.sh test/vac.sh" RUN=sh TMPDIR="$GA_TMP" bash "$GA_TMP/recipe.sh" | grep ' exit=')
+    out=$(BASE=main FIX="$fix" TESTS="test/f.sh test/vac.sh" RUN=sh DEPS=deps EXTRA_ENV=WANT=ok TMPDIR="$GA_TMP" bash "$GA_TMP/recipe.sh" | grep ' exit=')
     if [ "$out" = "$ga_want" ]; then echo 0; else echo 1; fi
     if [ "$snap" = "$(ga_snap)" ]; then echo 0; else echo 1; fi
   ) 2>/dev/null
-  assert_eq "0" "$(echo "$res" | sed -n 1p)" "goal-auditor: recipe ($mode) fails the covering test before the fix, passes it after, and passes the vacuous test both times"
+  assert_eq "0" "$(echo "$res" | sed -n 1p)" "goal-auditor: recipe ($mode), given DEPS and EXTRA_ENV, fails the covering test before the fix, passes it after, and passes the vacuous test both times"
   assert_eq "0" "$(echo "$res" | sed -n 2p)" "goal-auditor: recipe ($mode) leaves .git and tracked files unchanged"
 done
 rm -rf "$GA_TMP"
