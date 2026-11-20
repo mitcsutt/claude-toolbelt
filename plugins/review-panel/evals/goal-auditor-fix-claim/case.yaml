@@ -1,0 +1,94 @@
+schema_version: "1.1"
+name: goal-auditor-fix-claim
+description: >-
+  A small Node repo (slugkit) with a branch that claims to fix issues #12 and
+  #14. The #12 fix carries three planted defects that make the "fixed" claim
+  false: its new test passes on the pre-fix code, post URLs are built by a
+  separate legacy helper the fix never touched, and the trimming only fits
+  the issue's exact example. The #14 fix is complete and is the control.
+  Each defect is decidable from PR.md's diff and the repo, without Bash.
+  The no-plugin baseline is the same model auditing unaided.
+tags: [review-panel, goal-auditor, recall]
+runs: 1
+expected_outcome: >-
+  REVIEW.md says #12 is not fixed, naming the vacuous test, the legacy post
+  path and the input-fitted trimming, and confirms #14 is fixed and covered.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    The branch fix-12-14 claims to fix issues #12 and #14 (see ISSUES.md);
+    PR.md has the PR description and its full diff against main. Audit
+    whether the claim holds: is each issue fixed everywhere the issue says,
+    and do the added tests prove it? If the review-panel:goal-auditor agent
+    is available to you, delegate the audit to it and give it REVIEW.md in
+    the repository root as its report path; otherwise do the audit yourself.
+    Either way, the full audit must end up in REVIEW.md, with one line that
+    starts "Verdict: " followed by SHIP, SHIP WITH FIXES or DO NOT SHIP.
+    Then reply with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Bash, Write]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - name: delegated_to_goal_auditor
+    type: tool_used
+    tool: Agent
+    input_match: goal-auditor
+    arm: with-only
+
+  - name: verdict_not_ship
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "^Verdict: \\**(SHIP WITH FIXES|DO NOT SHIP)"
+    flags: m
+    weight: 1
+
+  - name: vacuous_test_12
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      The audit says the test added for #12 doesn't prove the fix because it
+      would pass on the pre-fix code: it calls slug('Hello World') with a
+      single space, which main's slug() (replace(/ /g, '-')) already turns
+      into 'hello-world'. Showing this by running the test against main also
+      passes. Saying only that tests are thin or that more cases are needed,
+      without stating that this test passes on the old code, fails.
+
+  - name: post_urls_not_fixed
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      The audit says #12 is still broken for post URLs: postPath() in
+      src/paths.js builds the handle with makeHandle() in
+      src/legacy/permalink.js, which keeps its own replace(/ /g, '-') and
+      never calls slug(), so the claim that every title-to-URL path goes
+      through slug() is false. Naming permalink.js or makeHandle as still
+      producing runs of dashes passes; mentioning it only as checked and
+      fine fails.
+
+  - name: trim_fits_only_the_example
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      The audit says the #12 trimming only fits the issue's exact example:
+      /^  / removes exactly two leading spaces and / $/ exactly one trailing
+      space, so other spacing (for example ' Hello', '   Hi' or 'Hello  ')
+      still gives a leading or trailing dash. Saying the regexes "could be
+      more robust" without naming a concrete input that still fails, fails.
+
+  - name: control_truncate_fix_holds
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      The audit does NOT say the #14 truncate() fix is wrong, incomplete or
+      untested. Pass if it confirms #14 is fixed and covered, doesn't
+      mention #14, or raises only points outside #14's goal without saying
+      #14 isn't fixed. Fail if it says #14's test doesn't cover the fix, the
+      fix is wrong, or a caller or sibling of truncate() was missed.

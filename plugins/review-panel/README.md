@@ -21,7 +21,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | `fact-checker` | agent | Marks every technical claim CONFIRMED / WRONG / UNVERIFIED against live docs, source or a real run |
 | `dx-advocate` | agent | Walks a new engineer and an unattended agent through each journey; finds stale docs and repo-rule breaches |
 | `threat-modeller` | agent | Trust boundaries, auth, injection, secrets, supply chain, each as an attack path; never prints secret values |
-| `goal-auditor` | agent | Re-derives the author's claims; scores whether the goal is met; checks absences (tests, rollback, bad inputs) |
+| `goal-auditor` | agent | Re-derives "fixed"/"done" claims: reads the pre-fix code, runs a fail-before/pass-after check in a temp copy, hunts missed callers, wrappers and siblings; scores the goal with evidence per row |
 | `outsider` | agent | Cold take before reading the artifact; build vs buy; prior art and competitors |
 | `contract-keeper` | agent | Every consumer of a changed interface; migrations, backfill, version skew, safe rollout order |
 | `cost-hawk` | agent | Steady-state cost, growth, hot paths, token and dollar spend, as a cost sheet |
@@ -84,6 +84,15 @@ Point it at a CLAUDE.md, a skill, a hook, a subagent or a whole plugin: "have th
 
 It picks a tier and says why: T0 static only, T1 static plus verification (the default), T2 with followers. Its checklists and the evidence behind each check live in [`references/rules-lawyer/`](references/rules-lawyer/evidence.md), with the method evidence in [`references/shared/`](references/shared/evidence.md). It complements Claude Code's own `/doctor prompt-audit`, which doesn't cover hooks, settings or MCP config, run the instructions, or check domain claims against outside sources.
 
+### Auditing a "fixed it" claim with `goal-auditor`
+
+Dispatch it alone with the claim as the goal: "have the goal auditor check that PR 123 really fixes #12". It scores each part of the goal, with evidence on every row, and anything it couldn't settle stays "claimed only".
+
+- It picks a tier and says why: T0 reads and quotes, T1 (the default) adds diff checks, pre-fix reads and hunts for missed callers, wrappers and siblings, and T2 adds the revert check.
+- At T2 it runs the new tests against the pre-fix tree and the fixed tree, each in a temp copy built with `git archive`. It never touches your checkout, never installs anything, and never runs the tests of an untrusted outside contributor.
+
+Its checks, the revert-check recipe and the evidence behind them live in [`references/goal-auditor/`](references/goal-auditor/evidence.md).
+
 ## Tests
 
 ```bash
@@ -91,20 +100,22 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Three eval cases grade a reviewer against a no-plugin baseline. Each planted defect has its own grader, so the score shows which kinds get caught.
+Four eval cases grade a reviewer against a no-plugin baseline. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
 - `noise-filter-planted-triage` seeds a small Node rate limiter, one change under review and five pre-written reports with 15 findings: real bugs worded differently, folklore, a wrong line, a mis-stated duplicate, a doc mismatch that is really a code bug, a pre-existing bug, nits and process noise. Both arms are told the triage format, so the score compares judgement, not format.
+- `goal-auditor-fix-claim` seeds a small Node repo whose branch claims to fix two issues. One fix has a test that passes without it, misses a post-URL path behind a legacy helper and trims only the issue's exact spacing; the other is sound. Every defect can be decided by reading, so the case measures T1, not the revert check.
 
-The first and third cases each have a control that should survive: a sound rule, and a real BLOCK raised by one hedged, low-confidence reviewer. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
+The first, third and fourth cases each have a control that should survive: a sound rule, a real BLOCK raised by one hedged, low-confidence reviewer, and a sound fix. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
 
 ```bash
 claude plugin eval plugins/review-panel --case 'rules-lawyer-*' --scaffold --runs 1 --allow-tools Bash Write WebFetch WebSearch
 claude plugin eval plugins/review-panel --case 'noise-filter-*' --scaffold --runs 3 --allow-tools Bash Write
+claude plugin eval plugins/review-panel --case 'goal-auditor-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 ```
 
-Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran.
+Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs.
 
 ## Related
 
