@@ -8,7 +8,7 @@ Rules for every row:
 - Patterns are POSIX ERE only: no `\s`, `\d` or `\b` (TM11). A literal `|` is written `[|]`.
 - A hit is a candidate, never a finding. It becomes a finding only through the kill chain in `method.md`.
 - **A secret-bearing pattern runs only in `-c`, `-l` or `-o` mode, or the Grep tool's `count`/`files_with_matches` mode** (TM25). Never widen an `-o` pattern past the end of a key name.
-- Rows that print whole lines (`-n` without `-o`) match code shapes, not secrets. If a printed line still holds a credential, quote it in the report with the value replaced by `<redacted>`.
+- Rows that print whole lines (`-n` without `-o`) match code shapes, not secrets, and exclude secret-bearing files (`.env*`, `*.pem`, `*credentials*`, `*secret*`) by pathspec; in the Grep tool form set `glob: "!{**/.env*,**/*.pem,**/*credentials*,**/*secret*}"`. Run the excluded files only through the `-c`/`-l` rows. If a printed line still holds a credential, quote it in the report with the value replaced by `<redacted>`.
 - Each runnable command sits on one line in a `sh` block; the plugin's tests run every one against a planted fake secret and fail if its value is printed.
 - No Bash: use the Grep tool form. It is a ripgrep search; if a search returns nothing under dot-directories (`.claude`, `.github`), search them again with `path` set to that directory before you clear the row.
 - Order follows the owner's real failures: credential scope and binds first (TM24).
@@ -24,8 +24,8 @@ Grep tool: same pattern, `output_mode: content` (these keys hold no secret value
 ## 2. Binds
 
 ```sh
-git grep -n -E "0\.0\.0\.0|INADDR_ANY|--host[= ]0|host *[:=] *['\"]?::['\"]?"
-git grep -n -E 'listen\(|\.run\(|serve\('
+git grep -n -E "0\.0\.0\.0|INADDR_ANY|--host[= ]0|host *[:=] *['\"]?::['\"]?" -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
+git grep -n -E 'listen\(|\.run\(|serve\(' -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
 ```
 
 Grep tool: same patterns. A port or host in a variable is a blind spot (R16 §5): read the call. FP trap: a container behind a `127.0.0.1:` port mapping (read the compose `ports:`). TM15, TM24.
@@ -58,7 +58,7 @@ Grep tool: one `files_with_matches` call for the server pattern, then one `count
 ## 6. CORS wildcard
 
 ```sh
-git grep -n -E "(Access-Control-Allow-Origin|allow_origins|allowedOrigins|cors).{0,80}\*"
+git grep -n -E "(Access-Control-Allow-Origin|allow_origins|allowedOrigins|cors).{0,80}\*" -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
 ```
 
 Grep tool: same pattern. FP trap: public, credential-less assets. TM19.
@@ -66,7 +66,7 @@ Grep tool: same pattern. FP trap: public, credential-less assets. TM19.
 ## 7. Code, command and template sinks
 
 ```sh
-git grep -n -E "(^|[^A-Za-z_.])eval\(|new Function\(|shell=True|os\.system\(|execSync\(|child_process|render_template_string|subprocess\.(run|Popen|call)\("
+git grep -n -E "(^|[^A-Za-z_.])eval\(|new Function\(|shell=True|os\.system\(|execSync\(|child_process|render_template_string|subprocess\.(run|Popen|call)\(" -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
 ```
 
 Grep tool: same pattern. FP trap: constant arguments; input only the repo's own code produces (TM10). TM19.
@@ -74,7 +74,7 @@ Grep tool: same pattern. FP trap: constant arguments; input only the repo's own 
 ## 8. Fetched-and-executed code
 
 ```sh
-git grep -n -E "(curl|wget)[^|]*[|] *(sudo +)?(ba|z)?sh|npx +-y|uvx +[a-z]|pip install +git\+|@latest"
+git grep -n -E "(curl|wget)[^|]*[|] *(sudo +)?(ba|z)?sh|npx +-y|uvx +[a-z]|pip install +git\+|@latest" -- . ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
 ```
 
 Grep tool: same pattern. FP trap: a version pin with a checksum beside it. TM19, E26.
@@ -90,8 +90,8 @@ Grep tool: read each `package.json`. FP trap: `prepare` for a local build. TM19.
 ## 10. GitHub Actions pwn request
 
 ```sh
-git grep -n -E "pull_request_target|workflow_run" -- .github/workflows
-for f in $(git grep -l -E "pull_request_target|workflow_run" -- .github/workflows); do git grep -n -E "head\.(sha|ref)|pull_request\.head|refs/pull/|allow-unsafe-pr-checkout|gh pr checkout|git fetch" -- "$f"; done
+git grep -n -E "pull_request_target|workflow_run" -- .github/workflows ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
+for f in $(git grep -l -E "pull_request_target|workflow_run" -- .github/workflows); do git grep -n -E "head\.(sha|ref)|pull_request\.head|refs/pull/|allow-unsafe-pr-checkout|gh pr checkout|git fetch" -- "$f" ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'; done
 ```
 
 Grep tool: same patterns. FP trap: the head checked out as data only, with no build, install or agent step. actions/checkout's default protection refuses fork head refs unless `allow-unsafe-pr-checkout: true`: check the checkout version and that input before claiming link (b) ⟳. TM18.
@@ -99,7 +99,7 @@ Grep tool: same patterns. FP trap: the head checked out as data only, with no bu
 ## 11. GitHub Actions untrusted interpolation, including into prompts
 
 ```sh
-git grep -n -E '\$\{\{ *github\.event\.(issue|pull_request|comment|review|discussion)[a-z_.]*\.(title|body)|github\.head_ref' -- .github/workflows
+git grep -n -E '\$\{\{ *github\.event\.(issue|pull_request|comment|review|discussion)[a-z_.]*\.(title|body)|github\.head_ref' -- .github/workflows ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
 ```
 
 Grep tool: same pattern. FP trap: the value is passed via `env:` to a consumer that is neither a shell nor an agent. TM14, TM18.
@@ -107,7 +107,7 @@ Grep tool: same pattern. FP trap: the value is passed via `env:` to a consumer t
 ## 12. Unpinned actions
 
 ```sh
-git grep -n -E 'uses: *[^ @]+@' -- .github/workflows | grep -v -E '@[0-9a-f]{40}'
+git grep -n -E 'uses: *[^ @]+@' -- .github/workflows ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*' | grep -v -E '@[0-9a-f]{40}'
 ```
 
 Grep tool: same pattern, then read the hits. FP trap: first-party `actions/*` at a major tag is COULD. TM18.
@@ -123,7 +123,7 @@ Grep tool: `output_mode: files_with_matches` (the Grep tool has no `-o`), then `
 ## 14. Agent in CI
 
 ```sh
-git grep -n -E 'claude +-p|claude-code-action|anthropics/claude|gemini-cli|codex' -- .github .gitlab-ci.yml
+git grep -n -E 'claude +-p|claude-code-action|anthropics/claude|gemini-cli|codex' -- .github .gitlab-ci.yml ':(glob,exclude)**/.env*' ':(glob,exclude)**/*.pem' ':(glob,exclude)**/*credentials*' ':(glob,exclude)**/*secret*'
 ```
 
 Grep tool: same pattern. FP trap: `--setting-sources user` or a read-only token. `--bare` clears hooks and `.mcp.json` but not a committed `env` (for example `ANTHROPIC_BASE_URL`). TM12.

