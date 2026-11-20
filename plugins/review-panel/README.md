@@ -19,7 +19,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | `grumpy-senior` | agent | Hunts over-engineering; delivers a "ship it on Friday" cut-down version |
 | `paranoid-sre` | agent | Failure modes (restarts, partial failure, races, ports, locks, rollback) as concrete event sequences |
 | `fact-checker` | agent | Builds a capped, version-anchored claim ledger (CONFIRMED / WRONG / UNVERIFIED) from harmless probes, source at the matching tag and fetched versioned docs; a WRONG needs a quoted contradiction and survives a refutation pass |
-| `dx-advocate` | agent | Walks a new engineer and an unattended agent through each journey; finds stale docs and repo-rule breaches |
+| `dx-advocate` | agent | Resolves every command, flag, path, env var and link the docs name; walks a new engineer and an unattended agent through each journey the change touches; stale-name sweep and repo-rule ledger |
 | `threat-modeller` | agent | Trust boundaries, auth, secrets, agent/CI/MCP and supply-chain attack paths, each with a traced source and sink; locate-only checks that never print secret values |
 | `goal-auditor` | agent | Re-derives "fixed"/"done" claims: reads the pre-fix code, runs a fail-before/pass-after check in a temp copy, hunts missed callers, wrappers and siblings; scores the goal with evidence per row |
 | `outsider` | agent | Cold take before reading the artifact; build vs buy; prior art and competitors |
@@ -103,7 +103,7 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Seven eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
+Eight eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
@@ -113,6 +113,7 @@ Seven eval cases grade a reviewer against a no-plugin baseline, and six grade th
 - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the roster, claim owner and status line the skill prints before it would dispatch, so no reviewer runs. `assemble-panel-route-typo-control` is the control: a one-word fix that should get no panel. `assemble-panel-blocked-add-persona` checks that adding a reviewer doesn't re-read the earlier reports. The blocked-dispatch fallback (`Panel blocked:`) isn't covered, because plugin eval can't stage a refused `Agent` call. Run with `--ablation none` and compare against the same cases on `main`'s skill.
 - `threat-modeller-homelab-agent` seeds a homelab-agent repo whose plan and first cut add a PR review bot, an issue-triage agent, a LAN ops API, a localhost dashboard bridge, a research agent with team memory and a shared MCP setup: ten agentic and design-level attack paths, one restraint item (a committed permission mode that doesn't take effect), a control (AWS's documentation example key in a test fixture) and a grader that fails if the report reproduces the committed ops token.
 - `contract-keeper-orders-v2` seeds a small orders service whose latest commit breaks eight consumers: a response enum value hitting an exhaustive switch, a required request field "safe because it has a default", a field turned nullable, an env var a cron script still reads, a volatile column default, a constant default on a database pinned to Postgres 10, a request enum value an old mobile build still sends, and an ordinal enum insert. Its two controls (an optional response field, an unused export removed) must not be graded BLOCK or SHOULD.
+- `dx-advocate-planted-defects` seeds a small repo whose 1.4.0 docs name a removed flag, a renamed env var, a Make target that passes without doing anything and other stale instructions; the 14 doc checks in `references/dx-advocate/doc-checks.md` each find one.
 
 `rules-lawyer-planted-defects`, `fact-checker-planted-claims`, `noise-filter-planted-triage`, `goal-auditor-fix-claim` and `threat-modeller-homelab-agent` each have controls that should survive: a sound rule, two true claims that recall tends to mark wrong, a real BLOCK raised by one hedged, low-confidence reviewer, a sound fix, and a documented example key in a test fixture that should be left alone. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
 
@@ -124,6 +125,7 @@ claude plugin eval plugins/review-panel --case 'assemble-panel-*' --scaffold --r
 claude plugin eval plugins/review-panel --case 'fact-checker-*' --scaffold --runs 2 --allow-tools Write WebFetch WebSearch --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'threat-modeller-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'contract-keeper-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
+claude plugin eval plugins/review-panel --case 'dx-advocate-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 ```
 
 Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs. The threat-modeller case always runs without Bash, so its checks go through the Grep tool.
