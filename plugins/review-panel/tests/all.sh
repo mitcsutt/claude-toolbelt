@@ -440,6 +440,115 @@ for s in 'cross-confirmed' 'Spot-check' '## Dropped' '## Decisions for you' '## 
   grep -q "$s" "$AGENTS/noise-filter.md"; assert_true "$?" "noise-filter: $s"
 done
 
+# Promise: threat-modeller keeps least-privilege tools: no fetch tool (it
+# would hand the reviewer the third trifecta leg) and no Agent.
+assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/threat-modeller.md" tools)" "threat-modeller: tools unchanged (no WebFetch, no Agent)"
+
+# Promise: threat-modeller's locate-only checks never print a secret value.
+# Runs every command in checks.md's sh blocks against planted fake secrets.
+TM_CHECKS="$PLUGIN/references/threat-modeller/checks.md"
+TM_EVAL="$PLUGIN/evals/threat-modeller-homelab-agent"
+tm_run_checks() { # repo-dir out-dir -> one <n>.cmd/<n>.out per command; prints the worst exit status
+  awk '/^```sh$/{f=1;next} /^```$/{f=0} f' "$TM_CHECKS" > "$2/cmds"
+  worst=0; n=0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    printf '%s\n' "$line" > "$2/$n.cmd"
+    (cd "$1" && bash -c "$line") > "$2/$n.out" 2>&1
+    st=$?
+    [ "$st" -gt "$worst" ] && worst=$st
+  done < "$2/cmds"
+  echo "$worst"
+}
+tm_out_of() { # out-dir fixed-string -> output of the command containing it
+  for c in "$1"/*.cmd; do
+    if grep -qF -- "$2" "$c"; then cat "${c%.cmd}.out"; return; fi
+  done
+}
+if command -v git >/dev/null 2>&1 && command -v perl >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  TM_TMP=$(mktemp -d)
+  mkdir -p "$TM_TMP/repo/.claude" "$TM_TMP/out" "$TM_TMP/eval" "$TM_TMP/eval-out"
+  (
+    cd "$TM_TMP/repo" || exit 1
+    printf '%s\n' 'const http = require("http");' \
+      'const t = process.env.APP_TOKEN || "tmtest_SENTINEL_42";' \
+      'http.createServer(() => {}).listen(8080, "0.0.0.0");' > app.js
+    printf '%s\n' 'import os' 'pw = os.environ.get("DB_PASSWORD", "py_SENTINEL_7")' > app.py
+    gh=ghp_  # built at run time so no token-shaped literal is committed here
+    printf '%sSENTINEL%s\n' "$gh" abcdefghijklmnopqrstuvwxyzAB > keys.txt
+    printf '{"env": {"ANTHROPIC_API_KEY": "sk-ant-%s"}}\n' SENTINEL_99 > .claude/settings.json
+    printf '%b' 'x\0363\0240\0201\0201\n' > skill.md
+    git init -q -b main && git add -A &&
+      git -c user.name=t -c user.email=t@example.invalid commit -q -m planted
+  )
+  worst=$(tm_run_checks "$TM_TMP/repo" "$TM_TMP/out")
+  ncmd=$(grep -c . "$TM_TMP/out/cmds")
+  if [ "$ncmd" -ge 15 ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "threat-modeller checks.md has at least 15 runnable commands ($ncmd)"
+  assert_eq "" "$(cat "$TM_TMP"/out/*.out | grep SENTINEL)" "threat-modeller checks never print a planted secret value"
+  if [ "$worst" -le 1 ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "every threat-modeller check runs cleanly (worst exit $worst)"
+  if tm_out_of "$TM_TMP/out" 'perl -CSD' | grep -qx 'skill.md:1'; then ok=0; else ok=1; fi
+  assert_true "$ok" "threat-modeller tag-character scan reports skill.md:1"
+  if tm_out_of "$TM_TMP/out" 'process\.env' | grep -q 'app.js:2:process.env.APP_TOKEN ||'; then ok=0; else ok=1; fi
+  assert_true "$ok" "threat-modeller fallback-secret check locates the fallback without its value"
+
+  # The eval fixture: the checks find the planted items and never print the ops token.
+  if (cd "$TM_TMP/eval" && bash "$TM_EVAL/fixture.sh" >/dev/null 2>&1); then ok=0; else ok=1; fi
+  assert_true "$ok" "threat-modeller eval fixture builds"
+  worst=$(tm_run_checks "$TM_TMP/eval" "$TM_TMP/eval-out")
+  if [ "$worst" -le 1 ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "every threat-modeller check runs cleanly on the eval fixture (worst exit $worst)"
+  assert_eq "" "$(cat "$TM_TMP"/eval-out/*.out | grep 'Vx9TkR4p')" "threat-modeller checks never print the eval fixture's ops token"
+  assert_eq ".claude/skills/triage/SKILL.md:6" "$(tm_out_of "$TM_TMP/eval-out" 'perl -CSD')" "tag-character scan finds only the planted skill line"
+  assert_eq "tests/fixtures/aws_creds.env:1" "$(tm_out_of "$TM_TMP/eval-out" 'git grep -c')" "secret-shape check hits only the AWS example fixture"
+  if tm_out_of "$TM_TMP/eval-out" 'process\.env' | grep -q '^ops-api/server.js:'; then ok=0; else ok=1; fi
+  assert_true "$ok" "fallback-secret check finds ops-api/server.js"
+  rm -rf "$TM_TMP"
+else
+  echo "(threat-modeller check runs skipped: git, perl or node not installed)"
+fi
+
+# Promise: the threat-modeller eval's boundary grader tests the real planted
+# value, and the case has its fixture-key control.
+if python3 -c 'import yaml' >/dev/null 2>&1; then
+  tm_pat=$(python3 -I -c '
+import sys, yaml
+gs = yaml.safe_load(open(sys.argv[1]))["graders"]
+nc = [g for g in gs if g.get("type") == "regex" and g.get("match") == "not_contains"
+      and (g.get("target") or {}).get("path") == "REVIEW.md"]
+print(nc[0]["pattern"] if nc else "")
+print(any(g["name"] == "control_fixture_key_not_reported" for g in gs))
+' "$TM_EVAL/case.yaml")
+  pat=$(echo "$tm_pat" | sed -n 1p)
+  if [ -n "$pat" ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "threat-modeller eval has a not_contains regex grader on REVIEW.md"
+  if [ -n "$pat" ] && grep -qF -- "$pat" "$TM_EVAL/fixture.sh"; then ok=0; else ok=1; fi
+  assert_true "$ok" "threat-modeller boundary grader's pattern is planted in fixture.sh"
+  assert_eq "True" "$(echo "$tm_pat" | sed -n 2p)" "threat-modeller eval has control_fixture_key_not_reported"
+else
+  echo "(threat-modeller case.yaml checks skipped: python3 with PyYAML not installed)"
+fi
+
+# Promise: threat-modeller's report template carries its three tables and Coverage.
+if command -v node >/dev/null 2>&1; then
+  # Paths go in env, not argv: with an argv[1] the parser would run its CLI.
+  tm_sections=$(TM_PARSER="$PLUGIN/lib/report-parse.mjs" TM_AGENT="$AGENTS/threat-modeller.md" node -e '
+const fs = require("fs"), { pathToFileURL } = require("url");
+const parser = process.env.TM_PARSER, agent = process.env.TM_AGENT;
+import(pathToFileURL(parser).href).then(({ parseTemplate }) => {
+  const body = fs.readFileSync(agent, "utf8");
+  const m = body.slice(body.indexOf("## Output contract")).match(/```\n([\s\S]*?)\n```/);
+  console.log(m ? parseTemplate(m[1]).sections.join("\n") : "");
+});')
+  for s in 'Threat table' 'Agent contexts' 'Checks run' 'Coverage'; do
+    if printf '%s\n' "$tm_sections" | grep -qx "$s"; then ok=0; else ok=1; fi
+    assert_true "$ok" "threat-modeller template has ## $s"
+  done
+else
+  echo "(threat-modeller template checks skipped: node not installed)"
+fi
+
 # Skill structure.
 if [ -f "$SKILL" ]; then ok=0; else ok=1; fi
 assert_true "$ok" "SKILL.md exists"

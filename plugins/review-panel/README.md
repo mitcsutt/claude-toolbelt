@@ -20,7 +20,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | `paranoid-sre` | agent | Failure modes (restarts, partial failure, races, ports, locks, rollback) as concrete event sequences |
 | `fact-checker` | agent | Builds a capped, version-anchored claim ledger (CONFIRMED / WRONG / UNVERIFIED) from harmless probes, source at the matching tag and fetched versioned docs; a WRONG needs a quoted contradiction and survives a refutation pass |
 | `dx-advocate` | agent | Walks a new engineer and an unattended agent through each journey; finds stale docs and repo-rule breaches |
-| `threat-modeller` | agent | Trust boundaries, auth, injection, secrets, supply chain, each as an attack path; never prints secret values |
+| `threat-modeller` | agent | Trust boundaries, auth, secrets, agent/CI/MCP and supply-chain attack paths, each with a traced source and sink; locate-only checks that never print secret values |
 | `goal-auditor` | agent | Re-derives "fixed"/"done" claims: reads the pre-fix code, runs a fail-before/pass-after check in a temp copy, hunts missed callers, wrappers and siblings; scores the goal with evidence per row |
 | `outsider` | agent | Cold take before reading the artifact; build vs buy; prior art and competitors |
 | `contract-keeper` | agent | Every consumer of a changed interface; migrations, backfill, version skew, safe rollout order |
@@ -103,7 +103,7 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Five eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
+Six eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
@@ -111,8 +111,9 @@ Five eval cases grade a reviewer against a no-plugin baseline, and six grade the
 - `noise-filter-planted-triage` seeds a small Node rate limiter, one change under review and five pre-written reports with 15 findings: real bugs worded differently, folklore, a wrong line, a mis-stated duplicate, a doc mismatch that is really a code bug, a pre-existing bug, nits and process noise. Both arms are told the triage format, so the score compares judgement, not format.
 - `goal-auditor-fix-claim` seeds a small Node repo whose branch claims to fix two issues. One fix has a test that passes without it, misses a post-URL path behind a legacy helper and trims only the issue's exact spacing; the other is sound. Every defect can be decided by reading, so the case measures T1, not the revert check.
 - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the roster, claim owner and status line the skill prints before it would dispatch, so no reviewer runs. `assemble-panel-route-typo-control` is the control: a one-word fix that should get no panel. `assemble-panel-blocked-add-persona` checks that adding a reviewer doesn't re-read the earlier reports. The blocked-dispatch fallback (`Panel blocked:`) isn't covered, because plugin eval can't stage a refused `Agent` call. Run with `--ablation none` and compare against the same cases on `main`'s skill.
+- `threat-modeller-homelab-agent` seeds a homelab-agent repo whose plan and first cut add a PR review bot, an issue-triage agent, a LAN ops API, a localhost dashboard bridge, a research agent with team memory and a shared MCP setup: ten agentic and design-level attack paths, one restraint item (a committed permission mode that doesn't take effect), a control (AWS's documentation example key in a test fixture) and a grader that fails if the report reproduces the committed ops token.
 
-`rules-lawyer-planted-defects`, `fact-checker-planted-claims`, `noise-filter-planted-triage` and `goal-auditor-fix-claim` each have controls that should survive: a sound rule, two true claims that recall tends to mark wrong, a real BLOCK raised by one hedged, low-confidence reviewer, and a sound fix. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
+`rules-lawyer-planted-defects`, `fact-checker-planted-claims`, `noise-filter-planted-triage` and `goal-auditor-fix-claim` each have controls that should survive: a sound rule, two true claims that recall tends to mark wrong, a real BLOCK raised by one hedged, low-confidence reviewer, a sound fix, and (in `threat-modeller-homelab-agent`) a documented example key in a test fixture that should be left alone. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
 
 ```bash
 claude plugin eval plugins/review-panel --case 'rules-lawyer-*' --scaffold --runs 1 --allow-tools Bash Write WebFetch WebSearch
@@ -120,9 +121,10 @@ claude plugin eval plugins/review-panel --case 'noise-filter-*' --scaffold --run
 claude plugin eval plugins/review-panel --case 'goal-auditor-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'assemble-panel-*' --scaffold --runs 3 --ablation none --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'fact-checker-*' --scaffold --runs 2 --allow-tools Write WebFetch WebSearch --disallow-tools Bash PowerShell
+claude plugin eval plugins/review-panel --case 'threat-modeller-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 ```
 
-Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs.
+Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs. The threat-modeller case always runs without Bash, so its checks go through the Grep tool.
 
 ## Related
 
