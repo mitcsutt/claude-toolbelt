@@ -394,7 +394,8 @@ const lineOf = (g) => Number((g.pattern.match(/PLAN\\\.md:(\d+)/) || [])[1]);
 const planted = gs.map(lineOf);
 const ledger = (wrong) => ["| # | claim (quoted) | where | version | verdict | source |", "|---|---|---|---|---|---|"]
   .concat([14, 15, 16, 17, 18, 19, 20, 21].map((n, i) =>
-    `| ${i + 1} | "claim" | PLAN.md:${n} | v | ${wrong.includes(n) ? "WRONG" : "CONFIRMED"} | src |`)).join("\n");
+    `| ${i + 1} | "claim" | PLAN.md:${n} | v | ${wrong.includes(n) ? "WRONG" : "CONFIRMED"} | src |`))
+  .concat(["", "## Checked and fine"], planted.map((n) => `- PLAN.md:${n}: WRONG candidate refuted | see ledger |`)).join("\n");
 const passes = (g, text) => new RegExp(g.pattern, g.flags || "").test(text);
 const out = [];
 if (gs.length !== 6) out.push(`expected 6 file regex graders, got ${gs.length}`);
