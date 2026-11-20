@@ -168,6 +168,14 @@ the run, sandboxes not kept). The baseline's misses were accounting ones the
 parser catches: a misstated duplicate counted as confirmation, nits not
 clustered, a tradeoff neither decided nor dropped.
 
+`goal-auditor-fix-claim`, review-panel 0.5.0, 2026-11-20: `--runs 2`, Bash
+withheld (T2 revert check unmeasured), $1.27. With plugin 1.00, without
+1.00: no measurable gain. The baseline caught all three planted defects and
+kept the control in both runs, so the case doesn't discriminate. The plan's
+next step is to swap in defects the baseline misses (from R10 §4), keeping
+only defects the baseline misses in at least 1 of 3 runs. With the plugin a
+run cost about 2.4x the baseline ($0.45 vs $0.19).
+
 ## Related
 
 - [`docs/authoring-plugins.md`](authoring-plugins.md) — the README skeleton
