@@ -94,8 +94,8 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (4 cases) — all seed a repo with `fixture.sh`, so pass
-  `--scaffold`. One grader per planted defect reads the written report
+- **`review-panel`** (10 cases) — all seed a repo with `fixture.sh`, so pass
+  `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
   - `rules-lawyer-planted-defects` is a Terraform repo with familiar
@@ -116,6 +116,24 @@ document states, not a gate a script enforces.
     PowerShell` and measures T1, not the revert check. The sound #14 fix is
     the control. `tests/all.sh` runs the shipped revert-check recipe itself
     against two throwaway repos.
+  - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the
+    roster, claim owner and status line the skill prints before it would
+    dispatch, with `regex` graders on the final message. The trace also
+    holds SKILL.md's example roster, so don't grade it. Fixture hooks can't
+    stage a refused dispatch: plugin eval loads no `.claude/` directory, even
+    one a scaffold wrote. They run with `--ablation none` (the no-plugin arm
+    has no skill to follow); the comparison is the same cases run from a
+    scratch worktree of `main`:
+    `claude plugin eval plugins/review-panel --case 'assemble-panel-*' --scaffold --runs 3 --ablation none --disallow-tools Bash PowerShell`.
+    No subagent runs, so a run is one orchestrator session (estimated
+    $0.10–0.40): about $2–7 for 6 cases × 3 runs, double with `main`.
+    Bar: `control_no_panel` 3/3, `no_report_reads` 3/3, and each routing
+    grader 3/3 or no worse than on `main`. `status_line` and `claim_owner*`
+    are new behaviour that `main` should fail. Known gap: the
+    blocked-dispatch fallback (`Panel blocked:`) is untested by evals.
+    `tests/all.sh` grades golden final messages in
+    `lib/fixtures/assemble-panel/` to show every roster grader passes on a
+    right answer and fails on wrong ones.
   - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
     WebSearch`. Granting Bash needs a working sandbox backend. Where there
     isn't one (for example Ubuntu with AppArmor's
@@ -175,6 +193,18 @@ kept the control in both runs, so the case doesn't discriminate. The plan's
 next step is to swap in defects the baseline misses (from R10 §4), keeping
 only defects the baseline misses in at least 1 of 3 runs. With the plugin a
 run cost about 2.4x the baseline ($0.45 vs $0.19).
+`assemble-panel-*`, 2026-11-20, `--runs 3`, Agent and Bash withheld, graded
+from the printed roster; the `main` arm ran the same cases against the 0.4.0
+skill. A first run with the plan's new Step 0 sizing (normal plan = 3
+reviewers) routed the poller plan worse than `main` (0.60 vs 0.56, but it
+dropped cost-hawk and added threat-modeller 3/3, which `main` got right), so
+per the plan's bar the sizing change was not shipped and Step 0 keeps the
+0.4.0 bands. With that, branch vs `main` ($1.83 vs $1.53 for the five
+routing cases): agent-instructions 0.97 vs 0.69, build-vs-buy 1.00 vs 0.83,
+oauth-migration 1.00 vs 0.83, poller-plan 0.80 vs 0.56, typo-control
+(the control) 1.00 vs 1.00. `blocked-add-persona` scored 1.00 in both. Both
+arms missed contract-keeper on the poller plan 3/3. Most of the gain is the
+new claim-owner and status lines, which `main` doesn't print.
 
 ## Related
 

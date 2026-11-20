@@ -123,11 +123,11 @@ for r in "$REFROOT"/shared/*.md; do
   assert_true "$ok" "shared reference is loaded by an agent: $b"
 done
 
-# Promise: every evidence ID cited in an agent or reference resolves to
-# exactly one row across all evidence files.
+# Promise: every evidence ID cited in an agent, a skill or a reference
+# resolves to exactly one row across all evidence files.
 ID_RE='\b(E|FC|TM|GA|NF|SR|CK|CH|DX|OU|GS|AP)[0-9]{1,2}\b'
-for id in $(cat "$AGENTS"/*.md "$REFROOT"/*/*.md | grep -oE "$ID_RE" | sort -u); do
-  rows=$(cat "$REFROOT"/*/evidence.md | grep -c "^| $id |")
+for id in $(cat "$AGENTS"/*.md "$REFROOT"/*/*.md "$PLUGIN"/skills/*/SKILL.md "$PLUGIN"/skills/*/references/*.md | grep -oE "$ID_RE" | sort -u); do
+  rows=$(cat "$REFROOT"/*/evidence.md "$PLUGIN"/skills/*/references/evidence.md | grep -c "^| $id |")
   assert_eq "1" "$rows" "evidence ID $id has exactly one row"
 done
 
@@ -141,6 +141,7 @@ assert_eq "true" "$(fm "$FOL" omitClaudeMd)" "instruction-follower: omits CLAUDE
 # names, targets every regex grader, and has a control grader or says why not.
 for EVAL in "$PLUGIN"/evals/*/; do
   c=$(basename "$EVAL")
+  [ "$c" = results ] && continue # claude plugin eval output, gitignored
   if [ -f "$EVAL/case.yaml" ]; then ok=0; else ok=1; fi
   assert_true "$ok" "eval case exists: $c"
   [ -f "$EVAL/case.yaml" ] || continue
@@ -172,6 +173,83 @@ print(all(f and f in prompt for f in files))
     echo "($c case.yaml checks skipped — python3 with PyYAML not installed)"
   fi
 done
+
+# Promise: the assemble-panel eval cases run without Agent (fixture hooks
+# don't load under plugin eval) and grade the roster the skill prints. Each
+# case's last_message graders pass on a golden final message, fail on wrong
+# ones, name only real agents, and compile in JavaScript; exactly one case
+# is the control.
+AP_GOLDEN="$PLUGIN/lib/fixtures/assemble-panel"
+AP_EVALS=$(find "$PLUGIN/evals" -mindepth 1 -maxdepth 1 -type d -name 'assemble-panel-*' | sort)
+AP_COUNT=$(printf '%s\n' "$AP_EVALS" | grep -c .)
+if [ "$AP_COUNT" -gt 0 ]; then ok=0; else ok=1; fi
+assert_true "$ok" "assemble-panel eval cases exist"
+AP_JS='
+const fs = require("fs");
+const [graderFile, goldenDir, caseName, agentsDir] = process.argv.slice(1);
+const graders = JSON.parse(fs.readFileSync(graderFile, "utf8"));
+const read = (n) => fs.readFileSync(`${goldenDir}/${n}.md`, "utf8");
+const grade = (g, text) => {
+  const n = (text.match(new RegExp(g.pattern, (g.flags || "") + "g")) || []).length;
+  const m = g.match || "contains";
+  return m === "contains" ? n > 0 : m === "not_contains" ? n === 0 : n === Number(m.slice(6));
+};
+const out = [];
+for (const g of graders) {
+  try { new RegExp(g.pattern, g.flags || ""); } catch (e) { out.push(`bad-regex ${g.name}`); continue; }
+  if (g.target !== "last_message") continue;
+  const golden = read(caseName);
+  if (!grade(g, golden)) out.push(`golden-fails ${g.name}`);
+  const roster = g.pattern.startsWith("Panel \\(");
+  const agent = (g.pattern.match(/`\?([a-z][a-z-]*)\\b$/) || [])[1];
+  if (agent && !fs.existsSync(`${agentsDir}/${agent}.md`)) out.push(`unknown-agent ${g.name} ${agent}`);
+  if (agent && g.match === "not_contains") {
+    const bad = golden.replace(/(Panel \(\d+ \+ filter\)[^\n]*\n)/, `$1- ${agent}: added by mistake\n`);
+    if (grade(g, bad)) out.push(`not-discriminating ${g.name}`);
+  }
+  if (roster && (g.match || "contains") === "contains" && caseName !== "route-typo-control"
+      && grade(g, read("route-typo-control"))) out.push(`passes-without-roster ${g.name}`);
+  if (g.name.startsWith("control_") && grade(g, read("route-poller-plan"))) out.push(`control-passes-on-a-panel ${g.name}`);
+}
+console.log(out.join("\n"));'
+if python3 -c 'import yaml' >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  controls=0
+  for EVAL in $AP_EVALS; do
+    c=$(basename "$EVAL")
+    short=${c#assemble-panel-}
+    GR_JSON=$(mktemp)
+    facts=$(python3 -I -c '
+import sys, json, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+gs = c.get("graders", [])
+tools = (c.get("execution") or {}).get("allowed_tools") or []
+print("Skill" in tools and "Agent" not in tools)
+print(sum(1 for g in gs if g["name"].startswith("control_")))
+json.dump([g for g in gs if g.get("type") == "regex"], open(sys.argv[2], "w"))
+' "$EVAL/case.yaml" "$GR_JSON")
+    assert_eq "True" "$(echo "$facts" | sed -n 1p)" "$c: allowed_tools include Skill and withhold Agent"
+    controls=$((controls + $(echo "$facts" | sed -n 2p)))
+    if [ -f "$AP_GOLDEN/$short.md" ]; then ok=0; else ok=1; fi
+    assert_true "$ok" "$c: has a golden final message"
+    if [ "$ok" -eq 0 ]; then
+      problems=$(node -e "$AP_JS" "$GR_JSON" "$AP_GOLDEN" "$short" "$AGENTS" 2>&1)
+      assert_eq "" "$problems" "$c: graders compile, pass on the golden, fail on wrong answers, name real agents"
+    fi
+    rm -f "$GR_JSON"
+
+    AP_TMP=$(mktemp -d)
+    if (cd "$AP_TMP" && bash "$EVAL/fixture.sh" >/dev/null 2>&1); then ok=0; else ok=1; fi
+    assert_true "$ok" "$c: fixture builds"
+    if [ "$c" = assemble-panel-blocked-add-persona ]; then
+      if (cd "$AP_TMP" && node "$PLUGIN/lib/report-parse.mjs" findings .panel/digest/goal-auditor.md .panel/digest/grumpy-senior.md .panel/digest/fact-checker.md .panel/digest/contract-keeper.md >/dev/null 2>&1); then ok=0; else ok=1; fi
+      assert_true "$ok" "$c: the earlier panel's reports parse with no problems"
+    fi
+    rm -rf "$AP_TMP"
+  done
+  assert_eq "1" "$controls" "exactly one assemble-panel case has a control_ grader"
+else
+  echo "(assemble-panel case checks skipped: python3 with PyYAML or node not installed)"
+fi
 
 # Promise: noise-filter's eval fixture builds, its five reports parse, and
 # the golden triage accounts for every finding (check-triage).

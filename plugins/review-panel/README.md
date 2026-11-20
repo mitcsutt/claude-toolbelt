@@ -58,14 +58,17 @@ Ask the way you normally would:
 What the skill does:
 
 1. Classifies the artifact and its risk signals.
-2. Picks the core reviewers plus one per signal: 3 to 4 for normal work, 5 to 6 for high-stakes work.
+2. Picks the core reviewers plus one per signal: 2 for small changes, 3 for normal work, 4 to 6 for high-stakes work, each past 3 for a signal no one else covers.
 3. Prints the roster, with why each reviewer was picked and what was skipped.
-4. Dispatches them all in parallel, then runs `noise-filter` over their reports.
-5. Hands back:
+4. Prints one status line with the expected wall time; if a hook or permission refuses the dispatch, it stops and asks instead of working around it.
+5. Dispatches them all in parallel, then runs `noise-filter` over their reports.
+6. Hands back:
    - the triage's at-a-glance block;
    - Fix before merge;
    - Decisions for you;
    - counts for "worth doing", "pre-existing" and "dropped".
+
+Cost: one measured panel (six reviewers plus the filter) took about 50 minutes and about $20–35 at list price; see the skill's Step 0.
 
 For a lens the roster doesn't cover, the skill writes an ad-hoc persona from `references/persona-contract.md`.
 
@@ -100,12 +103,13 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Four eval cases grade a reviewer against a no-plugin baseline. Each planted defect has its own grader, so the score shows which kinds get caught.
+Four eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
 - `noise-filter-planted-triage` seeds a small Node rate limiter, one change under review and five pre-written reports with 15 findings: real bugs worded differently, folklore, a wrong line, a mis-stated duplicate, a doc mismatch that is really a code bug, a pre-existing bug, nits and process noise. Both arms are told the triage format, so the score compares judgement, not format.
 - `goal-auditor-fix-claim` seeds a small Node repo whose branch claims to fix two issues. One fix has a test that passes without it, misses a post-URL path behind a legacy helper and trims only the issue's exact spacing; the other is sound. Every defect can be decided by reading, so the case measures T1, not the revert check.
+- `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the roster, claim owner and status line the skill prints before it would dispatch, so no reviewer runs. `assemble-panel-route-typo-control` is the control: a one-word fix that should get no panel. `assemble-panel-blocked-add-persona` checks that adding a reviewer doesn't re-read the earlier reports. The blocked-dispatch fallback (`Panel blocked:`) isn't covered, because plugin eval can't stage a refused `Agent` call. Run with `--ablation none` and compare against the same cases on `main`'s skill.
 
 The first, third and fourth cases each have a control that should survive: a sound rule, a real BLOCK raised by one hedged, low-confidence reviewer, and a sound fix. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
 
@@ -113,6 +117,7 @@ The first, third and fourth cases each have a control that should survive: a sou
 claude plugin eval plugins/review-panel --case 'rules-lawyer-*' --scaffold --runs 1 --allow-tools Bash Write WebFetch WebSearch
 claude plugin eval plugins/review-panel --case 'noise-filter-*' --scaffold --runs 3 --allow-tools Bash Write
 claude plugin eval plugins/review-panel --case 'goal-auditor-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
+claude plugin eval plugins/review-panel --case 'assemble-panel-*' --scaffold --runs 3 --ablation none --disallow-tools Bash PowerShell
 ```
 
 Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs.

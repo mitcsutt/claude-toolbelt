@@ -1,0 +1,42 @@
+schema_version: "1.1"
+name: assemble-panel-route-poller-plan
+description: >-
+  Plan for a background job that calls an existing paid LLM client every
+  60 s and adds a config key. Grades the roster (cost-hawk and
+  contract-keeper added, no outsider or threat-modeller, 4-5 reviewers),
+  the claim-owner line and the status line. Agent is withheld (fixture
+  hooks don't load under claude plugin eval), so routing is graded from
+  the roster the skill prints before dispatch, in the final message (the
+  trace also holds SKILL.md's example roster). This case has no control;
+  the routing control is assemble-panel-route-typo-control.
+tags: [review-panel, assemble-panel, routing]
+runs: 3
+expected_outcome: >-
+  Prints a roster of 4-5 reviewers including cost-hawk and
+  contract-keeper, with no outsider or threat-modeller, a claim owner of
+  fact-checker or goal-auditor, and the status line.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: >-
+    Assemble a review panel for PLAN.md before I start building it.
+    Subagent dispatch isn't available in this session, so don't try it.
+    Follow the skill up to the point where it would dispatch reviewers,
+    make your final reply exactly what it prints there (or your answer, if
+    no panel is warranted), and stop.
+  allowed_tools: [Skill, Read, Grep, Glob]
+  max_turns: 25
+  timeout_seconds: 600
+graders:
+  - { name: skill_fired, type: tool_used, tool: Skill, input_match: 'assemble-panel' }
+  - { name: adds_cost_hawk, type: regex, target: last_message, flags: s, weight: 2, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?cost-hawk\b' }
+  - { name: adds_contract_keeper, type: regex, target: last_message, flags: s, weight: 2, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?contract-keeper\b' }
+  - { name: core_goal_auditor, type: regex, target: last_message, flags: s, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?goal-auditor\b' }
+  - { name: core_grumpy_senior, type: regex, target: last_message, flags: s, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?grumpy-senior\b' }
+  - { name: no_outsider, type: regex, target: last_message, flags: s, match: not_contains, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?outsider\b' }
+  - { name: no_threat_modeller, type: regex, target: last_message, flags: s, match: not_contains, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?threat-modeller\b' }
+  - { name: size_4_to_5, type: regex, target: last_message, weight: 1, pattern: 'Panel \((4|5) \+ filter\)' }
+  - { name: claim_owner, type: regex, target: last_message, flags: m, weight: 2, pattern: '^\W*Claim owner\W*\s*`?(fact-checker|goal-auditor)\b' }
+  # shared graders, in every case that prints a roster:
+  - { name: roster_printed, type: regex, target: last_message, pattern: 'Panel \(\d+ \+ filter\)' }
+  - { name: status_line, type: regex, target: last_message, weight: 2, pattern: 'Expect about \d+\s*[–-]\s*\d+ min' }

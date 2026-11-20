@@ -1,0 +1,30 @@
+schema_version: "1.1"
+name: assemble-panel-route-typo-control
+description: >-
+  Control for assemble-panel routing. The change fixes one word in a
+  README heading and no signal row applies, so Step 0's trivial row says a
+  panel isn't worth it even though the user asked for one. Agent is
+  withheld (fixture hooks don't load under claude plugin eval), so routing
+  is graded from the roster the skill prints before dispatch, in the final
+  message (the trace also holds SKILL.md's example roster).
+tags: [review-panel, assemble-panel, routing, control]
+runs: 3
+expected_outcome: >-
+  Prints no panel roster, says a panel isn't worth it for a one-word fix
+  and offers goal-auditor alone or nothing.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: >-
+    Run a review panel on the change in CHANGE.diff before I merge it.
+    Subagent dispatch isn't available in this session, so don't try it.
+    Follow the skill up to the point where it would dispatch reviewers,
+    make your final reply exactly what it prints there (or your answer, if
+    no panel is warranted), and stop.
+  allowed_tools: [Skill, Read, Grep, Glob]
+  max_turns: 25
+  timeout_seconds: 600
+graders:
+  - { name: skill_fired, type: tool_used, tool: Skill, input_match: 'assemble-panel' }
+  - { name: control_no_panel, type: regex, target: last_message, match: not_contains, weight: 3, pattern: 'Panel \(\d+ \+ filter\)' }
+  - { name: offers_goal_auditor, type: regex, target: last_message, pattern: 'goal-auditor' }

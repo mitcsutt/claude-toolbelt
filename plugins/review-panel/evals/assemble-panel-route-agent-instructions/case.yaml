@@ -1,0 +1,39 @@
+schema_version: "1.1"
+name: assemble-panel-route-agent-instructions
+description: >-
+  A diff adding a release skill, a push-guard hook script and its
+  PreToolUse entry. Agent instructions: rules-lawyer and goal-auditor are
+  core, paranoid-sre comes in for the hook, and rules-lawyer owns the
+  claim checks, so fact-checker and dx-advocate stay off. Agent is
+  withheld (fixture hooks don't load under claude plugin eval), so routing
+  is graded from the roster the skill prints before dispatch, in the final
+  message (the trace also holds SKILL.md's example roster). This case has
+  no control; the routing control is assemble-panel-route-typo-control.
+tags: [review-panel, assemble-panel, routing]
+runs: 3
+expected_outcome: >-
+  Prints a roster with rules-lawyer, goal-auditor and paranoid-sre, no
+  fact-checker or dx-advocate, rules-lawyer as claim owner, and the status
+  line.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: >-
+    Panel review of CHANGE.diff, please. Subagent dispatch isn't available
+    in this session, so don't try it. Follow the skill up to the point
+    where it would dispatch reviewers, make your final reply exactly what
+    it prints there (or your answer, if no panel is warranted), and stop.
+  allowed_tools: [Skill, Read, Grep, Glob]
+  max_turns: 25
+  timeout_seconds: 600
+graders:
+  - { name: skill_fired, type: tool_used, tool: Skill, input_match: 'assemble-panel' }
+  - { name: adds_rules_lawyer, type: regex, target: last_message, flags: s, weight: 2, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?rules-lawyer\b' }
+  - { name: core_goal_auditor, type: regex, target: last_message, flags: s, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?goal-auditor\b' }
+  - { name: adds_paranoid_sre, type: regex, target: last_message, flags: s, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?paranoid-sre\b' }
+  - { name: no_fact_checker, type: regex, target: last_message, flags: s, match: not_contains, weight: 2, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?fact-checker\b' }
+  - { name: no_dx_advocate, type: regex, target: last_message, flags: s, match: not_contains, weight: 1, pattern: 'Panel \(\d+ \+ filter\)(?:(?!Skipped|Claim owner).)*?\n\s*(?:[-*]|\d+\.) \**`?dx-advocate\b' }
+  - { name: claim_owner_rl, type: regex, target: last_message, flags: m, weight: 2, pattern: '^\W*Claim owner\W*\s*`?(rules-lawyer)\b' }
+  # shared graders, in every case that prints a roster:
+  - { name: roster_printed, type: regex, target: last_message, pattern: 'Panel \(\d+ \+ filter\)' }
+  - { name: status_line, type: regex, target: last_message, weight: 2, pattern: 'Expect about \d+\s*[–-]\s*\d+ min' }
