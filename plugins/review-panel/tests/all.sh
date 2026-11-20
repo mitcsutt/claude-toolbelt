@@ -592,4 +592,75 @@ grep -q 'Severity: BLOCK | SHOULD | COULD' "$REFS/persona-contract.md"; assert_t
 # Promise: never publishes without the user's go-ahead.
 grep -qi "Don't apply fixes, post comments or publish" "$SKILL"; assert_true "$?" "skill never posts without approval"
 
+# Promise: contract-keeper stays read-only, spawns nothing and has no web tools.
+assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/contract-keeper.md" tools)" "contract-keeper: read-only tools, no Agent, no web"
+
+# Promise: every contract-keeper reference carries a dated verification stamp.
+for r in "$REFROOT"/contract-keeper/*.md; do
+  if grep -Eq '^Verified on [0-9]{4}-[0-9]{2}-[0-9]{2}' "$r"; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper reference has a dated stamp: $(basename "$r")"
+done
+
+# Promise: the contract-keeper eval fixture builds and its ground truth holds:
+# each planted break and control is really in the scaffolded repo, and each
+# regex grader's pattern matches the fixture file it names.
+CK_EVAL="$PLUGIN/evals/contract-keeper-orders-v2"
+if command -v git >/dev/null 2>&1 && command -v node >/dev/null 2>&1 && python3 -c 'import yaml' >/dev/null 2>&1; then
+  CK_TMP=$(mktemp -d)
+  if (cd "$CK_TMP" && bash "$CK_EVAL/fixture.sh" >/dev/null 2>&1); then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture builds"
+  git -C "$CK_TMP" show base:api/openapi.yaml > "$CK_TMP/.base-openapi.yaml" 2>/dev/null
+  spec=$(python3 -I -c '
+import sys, yaml
+base = yaml.safe_load(open(sys.argv[1]))["components"]["schemas"]
+head = yaml.safe_load(open(sys.argv[2]))["components"]["schemas"]
+def st(s): return s["Order"]["properties"]["status"]
+ship_b, ship_h = base["Order"]["properties"]["shippedAt"], head["Order"]["properties"]["shippedAt"]
+cur = head["OrderCreate"]["properties"].get("currency", {})
+print("K1", "archived" in st(head)["enum"] and "archived" not in st(base)["enum"] and "x-extensible-enum" not in st(head))
+print("K2", "currency" in head["OrderCreate"]["required"] and "default" in cur and "currency" not in base["OrderCreate"].get("required", []))
+print("K3", ship_h.get("nullable") is True and not ship_b.get("nullable") and "shippedAt" in head["Order"]["required"])
+print("K7", "rush" in base["Priority"]["enum"] and "rush" not in head["Priority"]["enum"])
+print("C1", "notes" in head["Order"]["properties"] and "notes" not in head["Order"]["required"] and "notes" not in base["Order"]["properties"])
+' "$CK_TMP/.base-openapi.yaml" "$CK_TMP/api/openapi.yaml" 2>&1)
+  for k in K1 K2 K3 K7 C1; do
+    assert_eq "$k True" "$(printf '%s\n' "$spec" | grep "^$k ")" "contract-keeper fixture: $k holds in the spec"
+  done
+  n=$(git -C "$CK_TMP" grep -c APP_DB_URL HEAD -- scripts/nightly-report.sh | awk -F: '{s += $NF} END {print s + 0}')
+  if [ "$n" -ge 1 ] && ! git -C "$CK_TMP" grep -q APP_DB_URL HEAD -- src/config.js; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture: K4 cron script reads APP_DB_URL, config no longer does"
+  if grep -q 'nightly-report.sh' "$CK_TMP/deploy/crontab"; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture: K4 crontab runs the script"
+  if grep -q 'clock_timestamp()' "$CK_TMP/migrations/004.sql" && git -C "$CK_TMP" grep -q 'postgres:16' HEAD -- deploy/compose.yaml; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture: K5 volatile default on a PG 16 db"
+  if grep -q "DEFAULT 'free'" "$CK_TMP/migrations/accounts/005.sql" && git -C "$CK_TMP" grep -q 'postgres:10.23' HEAD -- deploy/compose.yaml; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture: K6 constant default on accounts-db pinned to PG 10"
+  if grep -q "'rush'" "$CK_TMP/apps/mobile/src/api.ts"; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture: K7 mobile client still sends rush"
+  kinds=$(node -e 'const c = require(process.argv[1]); console.log(c.decode(1), c.encode("sms"))' "$CK_TMP/src/codec.js" 2>/dev/null)
+  assert_eq "webhook 2" "$kinds" "contract-keeper fixture: K8 stored kind 1 now decodes as webhook"
+  if git -C "$CK_TMP" grep -q formatLegacyId HEAD; then ok=1; else ok=0; fi
+  assert_true "$ok" "contract-keeper fixture: control 2 formatLegacyId has no reference at HEAD"
+  if git -C "$CK_TMP" grep -q formatLegacyId base -- src/util/ids.js; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture: control 2 formatLegacyId existed at base"
+  if [ -s "$CK_TMP/CHANGE.diff" ] && [ -f "$CK_TMP/PR.md" ] && [ -z "$(git -C "$CK_TMP" status --porcelain --untracked-files=no)" ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "contract-keeper fixture: CHANGE.diff and PR.md written, tree committed"
+  anchors=$(python3 -I -c '
+import re, sys, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+want = {"k4_cron_consumer_regex": "deploy/crontab", "k6_pg10_regex": "deploy/compose.yaml"}
+for g in c["graders"]:
+    if g.get("type") != "regex": continue
+    f = want.get(g["name"])
+    flags = re.I if "i" in g.get("flags", "") else 0
+    text = open(sys.argv[2] + "/" + f).read() if f else ""
+    print(g["name"], bool(f) and re.search(g["pattern"], text, flags) is not None)
+' "$CK_EVAL/case.yaml" "$CK_TMP" 2>&1)
+  assert_eq "k4_cron_consumer_regex True
+k6_pg10_regex True" "$anchors" "contract-keeper eval: every regex grader's pattern matches the fixture file it names"
+  rm -rf "$CK_TMP"
+else
+  echo "(contract-keeper fixture checks skipped: git, node or python3 with PyYAML not installed)"
+fi
+
 assert_summary

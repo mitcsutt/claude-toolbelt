@@ -94,7 +94,7 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (12 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (13 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
@@ -145,6 +145,14 @@ document states, not a gate a script enforces.
     fixture-key control and a `not_contains` grader on the committed ops
     token. Run it with `--runs 2 --allow-tools Write --disallow-tools Bash
     PowerShell`, so its checks go through the Grep tool.
+  - `contract-keeper-orders-v2` seeds an orders service (HEAD vs tag
+    `base`, plus `CHANGE.diff` and `PR.md`) with eight planted interface
+    breaks and two controls, graded on `REVIEW.md`. Run it with Bash
+    withheld (`--allow-tools Write --disallow-tools Bash PowerShell`), so
+    both arms census consumers with Grep/Glob. Before its first scored run,
+    pilot the baseline (`--runs 3`, read the no-plugin column) and drop any
+    planted item the unaided model already scores >= 0.8 on. Pilot and eval
+    scores: none recorded yet.
   - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
     WebSearch`. Granting Bash needs a working sandbox backend. Where there
     isn't one (for example Ubuntu with AppArmor's
@@ -230,6 +238,14 @@ $2.84. With plugin 1.00, without 0.85, delta +0.15, which clears the plan's
 also missed `bypass_mode_not_overstated` twice and the ops-API fallback
 token once. Cost is over the plan's cap: about $1.09 per run with the plugin
 against $0.34 for the baseline (+$0.75, cap +$0.35).
+`contract-keeper-orders-v2`, 2026-11-20: `--runs 2`, Bash withheld (T2
+unmeasured), $2.01. With plugin 0.95, without 0.91, delta +0.05: no
+measurable gain against the plan's +0.10 bar (one weight-2 grader flip).
+The only grader that moved was the control `control_optional_field_not_flagged`:
+the plugin passed it 1/2 and the baseline 0/2, so neither arm meets the
+plan's "both controls in at least 3/4 runs". Every planted break was caught
+in both arms. With the plugin a run cost about $0.62, against $0.38 for the
+baseline.
 
 ## Related
 

@@ -23,7 +23,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | `threat-modeller` | agent | Trust boundaries, auth, secrets, agent/CI/MCP and supply-chain attack paths, each with a traced source and sink; locate-only checks that never print secret values |
 | `goal-auditor` | agent | Re-derives "fixed"/"done" claims: reads the pre-fix code, runs a fail-before/pass-after check in a temp copy, hunts missed callers, wrappers and siblings; scores the goal with evidence per row |
 | `outsider` | agent | Cold take before reading the artifact; build vs buy; prior art and competitors |
-| `contract-keeper` | agent | Every consumer of a changed interface; migrations, backfill, version skew, safe rollout order |
+| `contract-keeper` | agent | Every consumer of a changed interface, named and quoted; break rules borrowed per interface type (OpenAPI, protobuf, GraphQL, events, exports, CLI, env, config); dated migration-safety rules; version skew and safe rollout order |
 | `cost-hawk` | agent | Steady-state cost, growth, hot paths, token and dollar spend, as a cost sheet |
 | `rules-lawyer` | agent | Agent instructions (CLAUDE.md, AGENTS.md, rules, skills, commands, hooks, subagents, output styles, MCP descriptions): a load map, literal readings, a claim ledger, hook fixture runs and follower runs on risky lines |
 | `instruction-follower` | agent (helper) | Dispatched only by `rules-lawyer`: follows an artifact on paper for one scenario and reports where it had to guess |
@@ -103,7 +103,7 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Six eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
+Seven eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
@@ -112,6 +112,7 @@ Six eval cases grade a reviewer against a no-plugin baseline, and six grade the 
 - `goal-auditor-fix-claim` seeds a small Node repo whose branch claims to fix two issues. One fix has a test that passes without it, misses a post-URL path behind a legacy helper and trims only the issue's exact spacing; the other is sound. Every defect can be decided by reading, so the case measures T1, not the revert check.
 - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the roster, claim owner and status line the skill prints before it would dispatch, so no reviewer runs. `assemble-panel-route-typo-control` is the control: a one-word fix that should get no panel. `assemble-panel-blocked-add-persona` checks that adding a reviewer doesn't re-read the earlier reports. The blocked-dispatch fallback (`Panel blocked:`) isn't covered, because plugin eval can't stage a refused `Agent` call. Run with `--ablation none` and compare against the same cases on `main`'s skill.
 - `threat-modeller-homelab-agent` seeds a homelab-agent repo whose plan and first cut add a PR review bot, an issue-triage agent, a LAN ops API, a localhost dashboard bridge, a research agent with team memory and a shared MCP setup: ten agentic and design-level attack paths, one restraint item (a committed permission mode that doesn't take effect), a control (AWS's documentation example key in a test fixture) and a grader that fails if the report reproduces the committed ops token.
+- `contract-keeper-orders-v2` seeds a small orders service whose latest commit breaks eight consumers: a response enum value hitting an exhaustive switch, a required request field "safe because it has a default", a field turned nullable, an env var a cron script still reads, a volatile column default, a constant default on a database pinned to Postgres 10, a request enum value an old mobile build still sends, and an ordinal enum insert. Its two controls (an optional response field, an unused export removed) must not be graded BLOCK or SHOULD.
 
 `rules-lawyer-planted-defects`, `fact-checker-planted-claims`, `noise-filter-planted-triage`, `goal-auditor-fix-claim` and `threat-modeller-homelab-agent` each have controls that should survive: a sound rule, two true claims that recall tends to mark wrong, a real BLOCK raised by one hedged, low-confidence reviewer, a sound fix, and a documented example key in a test fixture that should be left alone. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
 
@@ -122,6 +123,7 @@ claude plugin eval plugins/review-panel --case 'goal-auditor-*' --scaffold --run
 claude plugin eval plugins/review-panel --case 'assemble-panel-*' --scaffold --runs 3 --ablation none --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'fact-checker-*' --scaffold --runs 2 --allow-tools Write WebFetch WebSearch --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'threat-modeller-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
+claude plugin eval plugins/review-panel --case 'contract-keeper-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 ```
 
 Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs. The threat-modeller case always runs without Bash, so its checks go through the Grep tool.
