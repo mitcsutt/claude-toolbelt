@@ -58,7 +58,7 @@ Ask the way you normally would:
 What the skill does:
 
 1. Classifies the artifact and its risk signals.
-2. Picks the core reviewers plus one per signal: 2 for small changes, 3 for normal work, 4 to 6 for high-stakes work, each past 3 for a signal no one else covers.
+2. Picks the core reviewers plus one per signal: 3 to 4 for normal work, 5 to 6 for high-stakes work.
 3. Prints the roster, with why each reviewer was picked and what was skipped.
 4. Prints one status line with the expected wall time; if a hook or permission refuses the dispatch, it stops and asks instead of working around it.
 5. Dispatches them all in parallel, then runs `noise-filter` over their reports.

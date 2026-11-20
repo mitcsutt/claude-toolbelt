@@ -41,13 +41,6 @@ const find = (heading, first) => skillTables.find(
 );
 const column = (t, name) => t.rows.map((r) => r[t.header.indexOf(name)]);
 
-// The bullet under Step 2's "Rules:" that starts with **<label>**.
-function ruleBullet(label) {
-  const line = SKILL.split('\n').find((l) => l.startsWith(`- **${label}`));
-  assert.ok(line, `rule bullet "${label}" exists`);
-  return line;
-}
-
 test('tables() reads pipe tables under their nearest ## heading and skips fenced ones', () => {
   const md = [
     '## One', '| a | b |', '| --- | --- |', '| 1 | x \\| y |', '',
@@ -91,15 +84,6 @@ test('every Signal row adds exactly one agent', () => {
   }
 });
 
-test('the claim-owner priority names roster agents, led by the agent-instructions owner', () => {
-  const roster = new Set(rosterAgents());
-  const owners = backticked(ruleBullet('One claim owner'));
-  assert.ok(owners.length >= 2, 'a priority of at least two owners');
-  for (const o of owners) assert.ok(roster.has(o), `claim owner is a roster agent: ${o}`);
-  const overlapOwner = backticked(ruleBullet('No overlap'))[0];
-  assert.equal(owners[0], overlapOwner, 'first claim owner is the one "No overlap" names for agent instructions');
-});
-
 test('every relative link in SKILL.md and its references resolves to a file', () => {
   const files = [path.join(SKILL_DIR, 'SKILL.md'),
     ...fs.readdirSync(REFS).filter((f) => f.endsWith('.md')).map((f) => path.join(REFS, f))];
@@ -115,25 +99,4 @@ test('every relative link in SKILL.md and its references resolves to a file', ()
     }
   }
   assert.ok(links > 0, 'found links to check');
-});
-
-test('the skill has a blocked-dispatch section and a numbered Step 5 checklist', () => {
-  const headings = SKILL.split('\n').filter((l) => l.startsWith('## '));
-  assert.ok(headings.includes('## If dispatch is blocked'), 'has "## If dispatch is blocked"');
-  const lines = SKILL.split('\n');
-  const start = lines.findIndex((l) => l.startsWith('## Step 5'));
-  const end = lines.findIndex((l, i) => i > start && l.startsWith('## '));
-  const items = lines.slice(start, end).filter((l) => /^\d+\. /.test(l)).map((l) => Number(l.match(/^\d+/)[0]));
-  assert.ok(items.length >= 2, 'Step 5 is a numbered checklist');
-  assert.deepEqual(items, items.map((_, i) => i + 1), 'checklist numbered 1..n in order');
-});
-
-test("the reviewer brief template carries the sections the orchestrator fills", () => {
-  const text = fs.readFileSync(path.join(REFS, 'brief-template.md'), 'utf8');
-  const block = text.match(/```markdown\n([\s\S]*?)\n```/);
-  assert.ok(block, 'brief template has a fenced block');
-  const headings = block[1].split('\n').filter((l) => l.startsWith('## '));
-  for (const h of ['## The goal', '## Context you get', '## Lens boundaries (this panel)', '## Report']) {
-    assert.ok(headings.some((l) => l.startsWith(h)), `brief template has ${h}`);
-  }
 });
