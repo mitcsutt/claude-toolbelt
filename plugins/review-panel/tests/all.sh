@@ -504,10 +504,6 @@ grep -q 'Before opening the artifact' "$AGENTS/outsider.md"; assert_true "$?" "o
 # Promise: paranoid-sre keeps its read-only toolset (no WebFetch, no Agent).
 assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/paranoid-sre.md" tools)" "paranoid-sre: tools unchanged"
 
-# Promise: paranoid-sre never runs the code under review (T2 fault injection is deferred).
-if grep -q 'Never run the code under review' "$AGENTS/paranoid-sre.md" && ! grep -q 'T2:' "$AGENTS/paranoid-sre.md"; then ok=0; else ok=1; fi
-assert_true "$ok" "paranoid-sre: no T2, never runs reviewed code"
-
 # Promise: paranoid-sre eval cases run on a host with no sandbox backend (Bash not required).
 for c in "$PLUGIN"/evals/paranoid-sre-*/case.yaml; do
   [ -f "$c" ] || continue

@@ -10,9 +10,10 @@ description: >-
   health, a temp name shared by two writers, retry layers multiplying a
   non-idempotent charge, a wall-clock lease, a DST catch-up job that double-runs
   under Debian cron, and Node fetch's 300 s default. One control script
-  (setup-dirs.sh) is sound and should get no BLOCK or SHOULD. Graders the
-  unaided baseline passes 3/3 in the pilot are removed before shipping and
-  listed here (pilot not yet run).
+  (setup-dirs.sh) is sound and should get no BLOCK or SHOULD. No baseline
+  pilot ran; the first scored run (docs/testing.md) found the unaided baseline
+  passes every grader, so the case ships non-discriminating and needs harder
+  failure modes before it can show a gain.
 tags: [review-panel, paranoid-sre, recall]
 runs: 1
 expected_outcome: >-

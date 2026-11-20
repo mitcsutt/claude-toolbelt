@@ -165,9 +165,8 @@ document states, not a gate a script enforces.
     PowerShell`); it grades the references and method (T0/T1). T2 fault
     injection deferred: a deny-list gate isn't confinement (threat-model
     review 2026-11-20); needs OS confinement (Landlock / sandbox-exec) in
-    its own plan. Before it ships, a baseline-only pilot (3 runs) drops every
-    planted-defect grader the unaided baseline passes 3/3, and the case's
-    `description` lists the dropped graders.
+    its own plan. It ships non-discriminating: no baseline pilot ran, and
+    the scored run below shows the unaided baseline passing every grader.
   - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
     WebSearch`. Granting Bash needs a working sandbox backend. Where there
     isn't one (for example Ubuntu with AppArmor's
