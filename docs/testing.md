@@ -151,8 +151,8 @@ document states, not a gate a script enforces.
     withheld (`--allow-tools Write --disallow-tools Bash PowerShell`), so
     both arms census consumers with Grep/Glob. Before its first scored run,
     pilot the baseline (`--runs 3`, read the no-plugin column) and drop any
-    planted item the unaided model already scores >= 0.8 on. Pilot and eval
-    scores: none recorded yet.
+    planted item the unaided model already scores >= 0.8 on. Its scored run
+    is recorded under `review-panel` scores below.
   - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
     WebSearch`. Granting Bash needs a working sandbox backend. Where there
     isn't one (for example Ubuntu with AppArmor's
@@ -245,7 +245,9 @@ The only grader that moved was the control `control_optional_field_not_flagged`:
 the plugin passed it 1/2 and the baseline 0/2, so neither arm meets the
 plan's "both controls in at least 3/4 runs". Every planted break was caught
 in both arms. With the plugin a run cost about $0.62, against $0.38 for the
-baseline.
+baseline. No baseline pilot ran before this scored run, so the drop rule
+wasn't applied; by that rule every planted break would now be dropped, so
+the case needs harder breaks before it can show a gain.
 
 ## Related
 

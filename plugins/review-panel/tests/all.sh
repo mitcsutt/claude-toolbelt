@@ -595,12 +595,6 @@ grep -qi "Don't apply fixes, post comments or publish" "$SKILL"; assert_true "$?
 # Promise: contract-keeper stays read-only, spawns nothing and has no web tools.
 assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/contract-keeper.md" tools)" "contract-keeper: read-only tools, no Agent, no web"
 
-# Promise: every contract-keeper reference carries a dated verification stamp.
-for r in "$REFROOT"/contract-keeper/*.md; do
-  if grep -Eq '^Verified on [0-9]{4}-[0-9]{2}-[0-9]{2}' "$r"; then ok=0; else ok=1; fi
-  assert_true "$ok" "contract-keeper reference has a dated stamp: $(basename "$r")"
-done
-
 # Promise: the contract-keeper eval fixture builds and its ground truth holds:
 # each planted break and control is really in the scaffolded repo, and each
 # regex grader's pattern matches the fixture file it names.

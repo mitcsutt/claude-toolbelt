@@ -7,7 +7,7 @@ The only commands contract-keeper runs, and how far the consumer census goes. Ev
 ## Allowed
 
 - git: `git rev-parse`, `git merge-base`, `git diff`, `git show <ref>:<path>`, `git grep`, `git log --oneline` and `git log -S`, `git ls-files`, `git tag -l`.
-- Text: `wc`, `sed -n`, `head`, `sort`, `uniq`, `diff`, `find` (read-only), `mktemp -d`; `yq` if installed.
+- Text: `grep`, `wc`, `sed -n`, `head`, `sort`, `uniq`, `diff`, `find` (read-only), `mktemp -d`; `yq` if installed.
 - Snippets: `node -e` and `python3 -I -c` that read only files given as arguments, import no repo code and touch no network (for example `node -e 'console.log(new Date(null).toISOString())'` to show what a consumer does with null).
 - T2 only: a no-op probe of a consumer tool that is already installed, in a form that installs nothing (`exec true`, `--help`, `--version`, a dry run).
 
