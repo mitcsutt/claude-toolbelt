@@ -18,7 +18,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | --- | --- | --- |
 | `grumpy-senior` | agent | Hunts over-engineering; delivers a "ship it on Friday" cut-down version |
 | `paranoid-sre` | agent | Failure modes (restarts, partial failure, races, ports, locks, rollback) as concrete event sequences |
-| `fact-checker` | agent | Marks every technical claim CONFIRMED / WRONG / UNVERIFIED against live docs, source or a real run |
+| `fact-checker` | agent | Builds a capped, version-anchored claim ledger (CONFIRMED / WRONG / UNVERIFIED) from harmless probes, source at the matching tag and fetched versioned docs; a WRONG needs a quoted contradiction and survives a refutation pass |
 | `dx-advocate` | agent | Walks a new engineer and an unattended agent through each journey; finds stale docs and repo-rule breaches |
 | `threat-modeller` | agent | Trust boundaries, auth, injection, secrets, supply chain, each as an attack path; never prints secret values |
 | `goal-auditor` | agent | Re-derives "fixed"/"done" claims: reads the pre-fix code, runs a fail-before/pass-after check in a temp copy, hunts missed callers, wrappers and siblings; scores the goal with evidence per row |
@@ -72,7 +72,7 @@ Cost: one measured panel (six reviewers plus the filter) took about 50 minutes a
 
 For a lens the roster doesn't cover, the skill writes an ad-hoc persona from `references/persona-contract.md`.
 
-You can dispatch any agent directly too, e.g. `review-panel:fact-checker` on a spec.
+You can dispatch any agent directly too, e.g. `review-panel:fact-checker` on a spec. It checks at most 15 claims, most consequential first; for a full pass over reference docs, say "check every claim" in the brief.
 
 Reviewers load your CLAUDE.md chain like any subagent. The skill passes rules that live elsewhere in each brief.
 
@@ -103,21 +103,23 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Four eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
+Five eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
+- `fact-checker-planted-claims` seeds a build plan with six version-qualified claims that were true or widely believed before mid-2026 and are wrong for the versions it names, plus two true-but-surprising controls. Regex graders check the verdict on each planted `PLAN.md:<line>`.
 - `noise-filter-planted-triage` seeds a small Node rate limiter, one change under review and five pre-written reports with 15 findings: real bugs worded differently, folklore, a wrong line, a mis-stated duplicate, a doc mismatch that is really a code bug, a pre-existing bug, nits and process noise. Both arms are told the triage format, so the score compares judgement, not format.
 - `goal-auditor-fix-claim` seeds a small Node repo whose branch claims to fix two issues. One fix has a test that passes without it, misses a post-URL path behind a legacy helper and trims only the issue's exact spacing; the other is sound. Every defect can be decided by reading, so the case measures T1, not the revert check.
 - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the roster, claim owner and status line the skill prints before it would dispatch, so no reviewer runs. `assemble-panel-route-typo-control` is the control: a one-word fix that should get no panel. `assemble-panel-blocked-add-persona` checks that adding a reviewer doesn't re-read the earlier reports. The blocked-dispatch fallback (`Panel blocked:`) isn't covered, because plugin eval can't stage a refused `Agent` call. Run with `--ablation none` and compare against the same cases on `main`'s skill.
 
-The first, third and fourth cases each have a control that should survive: a sound rule, a real BLOCK raised by one hedged, low-confidence reviewer, and a sound fix. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
+`rules-lawyer-planted-defects`, `fact-checker-planted-claims`, `noise-filter-planted-triage` and `goal-auditor-fix-claim` each have controls that should survive: a sound rule, two true claims that recall tends to mark wrong, a real BLOCK raised by one hedged, low-confidence reviewer, and a sound fix. The cases cost real model calls, so run them by hand (see [`docs/testing.md`](../../docs/testing.md)):
 
 ```bash
 claude plugin eval plugins/review-panel --case 'rules-lawyer-*' --scaffold --runs 1 --allow-tools Bash Write WebFetch WebSearch
 claude plugin eval plugins/review-panel --case 'noise-filter-*' --scaffold --runs 3 --allow-tools Bash Write
 claude plugin eval plugins/review-panel --case 'goal-auditor-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'assemble-panel-*' --scaffold --runs 3 --ablation none --disallow-tools Bash PowerShell
+claude plugin eval plugins/review-panel --case 'fact-checker-*' --scaffold --runs 2 --allow-tools Write WebFetch WebSearch --disallow-tools Bash PowerShell
 ```
 
 Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs.
