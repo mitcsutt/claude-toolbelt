@@ -59,6 +59,9 @@ for a in $ROSTER; do
 done
 assert_eq "$want" "$n" "every roster agent present"
 
+# Promise: fact-checker keeps a read-and-fetch tool set: no Agent, no MCP tools.
+assert_eq "Read, Grep, Glob, Bash, Write, WebFetch, WebSearch" "$(fm "$AGENTS/fact-checker.md" tools)" "fact-checker: tools allowlist (no MCP, no Agent)"
+
 # No stray agent files beyond the roster and its helpers.
 extra=0
 for f in "$AGENTS"/*.md; do
@@ -348,6 +351,75 @@ for mode in commit WORKTREE; do
   assert_eq "0" "$(echo "$res" | sed -n 2p)" "goal-auditor: recipe ($mode) leaves .git and tracked files unchanged"
 done
 rm -rf "$GA_TMP"
+# Promise: each fact-checker eval grader names the PLAN.md line that holds its planted claim.
+FC_EVAL="$PLUGIN/evals/fact-checker-planted-claims"
+if python3 -c 'import yaml' >/dev/null 2>&1; then
+  tmp=$(mktemp -d)
+  (cd "$tmp" && bash "$FC_EVAL/fixture.sh") >/dev/null 2>&1
+  bad=$(python3 -I - "$FC_EVAL/case.yaml" "$tmp/PLAN.md" <<'PY'
+import re, sys, yaml
+case = yaml.safe_load(open(sys.argv[1]))
+lines = open(sys.argv[2]).read().split("\n")
+keys = {"p1": "MappingProxyType", "p2": "PYTHONUTF8", "p3": "AGENTS.md",
+        "p4": "experimental-strip-types", "p5": "ERR_REQUIRE_ESM", "p6": "cp -n",
+        "control_c1": "print_counts", "control_c2": "Agent(explorer)"}
+seen = set()
+for g in case["graders"]:
+    key = next((k for k in keys if g["name"].startswith(k + "_")), None)
+    if key is None:
+        continue
+    seen.add(key)
+    m = re.search(r"PLAN\\?\.md:(\d+)", g.get("pattern", "") + g.get("criteria", ""))
+    n = int(m.group(1)) if m else 0
+    if not (0 < n <= len(lines)) or keys[key] not in lines[n - 1]:
+        print("%s: line %d lacks %r" % (g["name"], n, keys[key]))
+for k in sorted(set(keys) - seen):
+    print("no grader for " + k)
+PY
+)
+  rm -rf "$tmp"
+  assert_eq "" "$bad" "fact-checker eval: graders point at their planted lines"
+else
+  echo "(fact-checker eval line-map check skipped — python3 with PyYAML not installed)"
+fi
+
+# Promise: the fact-checker eval's verdict graders discriminate by line: on a
+# ledger marking every planted line WRONG and the controls CONFIRMED, every
+# regex grader passes; flipping one planted line to CONFIRMED fails exactly
+# that line's grader.
+FC_DISC_JS='
+const fs = require("fs");
+const gs = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).filter((g) => g.target && g.target.source === "file");
+const lineOf = (g) => Number((g.pattern.match(/PLAN\\\.md:(\d+)/) || [])[1]);
+const planted = gs.map(lineOf);
+const ledger = (wrong) => ["| # | claim (quoted) | where | version | verdict | source |", "|---|---|---|---|---|---|"]
+  .concat([14, 15, 16, 17, 18, 19, 20, 21].map((n, i) =>
+    `| ${i + 1} | "claim" | PLAN.md:${n} | v | ${wrong.includes(n) ? "WRONG" : "CONFIRMED"} | src |`)).join("\n");
+const passes = (g, text) => new RegExp(g.pattern, g.flags || "").test(text);
+const out = [];
+if (gs.length !== 6) out.push(`expected 6 file regex graders, got ${gs.length}`);
+const golden = ledger(planted);
+for (const g of gs) if (!passes(g, golden)) out.push(`${g.name} fails on the golden ledger`);
+for (const flip of planted) {
+  const text = ledger(planted.filter((n) => n !== flip));
+  for (const g of gs) {
+    const want = lineOf(g) !== flip;
+    if (passes(g, text) !== want) out.push(`${g.name} ${want ? "fails" : "passes"} with PLAN.md:${flip} CONFIRMED`);
+  }
+}
+console.log(out.join("\n"));'
+if python3 -c 'import yaml' >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  GR_JSON=$(mktemp)
+  python3 -I -c '
+import sys, json, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+json.dump([g for g in c["graders"] if g.get("type") == "regex"], open(sys.argv[2], "w"))
+' "$FC_EVAL/case.yaml" "$GR_JSON"
+  assert_eq "" "$(node -e "$FC_DISC_JS" "$GR_JSON" 2>&1)" "fact-checker eval: each verdict grader passes only when its line is WRONG"
+  rm -f "$GR_JSON"
+else
+  echo "(fact-checker grader checks skipped: python3 with PyYAML or node not installed)"
+fi
 
 # Promise: fact-checker uses the CONFIRMED / WRONG / UNVERIFIED ledger.
 grep -q 'CONFIRMED' "$AGENTS/fact-checker.md" && grep -q 'WRONG' "$AGENTS/fact-checker.md" && grep -q 'UNVERIFIED' "$AGENTS/fact-checker.md"

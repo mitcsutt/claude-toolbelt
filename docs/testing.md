@@ -94,7 +94,7 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (10 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (11 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
@@ -134,6 +134,12 @@ document states, not a gate a script enforces.
     `tests/all.sh` grades golden final messages in
     `lib/fixtures/assemble-panel/` to show every roster grader passes on a
     right answer and fails on wrong ones.
+  - `fact-checker-planted-claims` checks a build plan's version-qualified
+    claims into `REVIEW.md`: six planted WRONG claims and two controls, with
+    regex verdict graders keyed to `PLAN.md:<line>`. Run it with
+    `--allow-tools Write WebFetch WebSearch --disallow-tools Bash PowerShell`,
+    and re-check its ground truth (the URLs in the case description) first:
+    a platform change can make a planted claim true.
   - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
     WebSearch`. Granting Bash needs a working sandbox backend. Where there
     isn't one (for example Ubuntu with AppArmor's
@@ -205,6 +211,13 @@ oauth-migration 1.00 vs 0.83, poller-plan 0.80 vs 0.56, typo-control
 (the control) 1.00 vs 1.00. `blocked-add-persona` scored 1.00 in both. Both
 arms missed contract-keeper on the poller plan 3/3. Most of the gain is the
 new claim-owner and status lines, which `main` doesn't print.
+`fact-checker-planted-claims`, 2026-11-20: `--runs 2`, Bash withheld (so
+probes, the version gate and the shell-only trap are unexercised), $2.16.
+With plugin 1.00, without 0.97, delta +0.03: no measurable gain at n=2
+against the plan's bar of +0.15. The baseline missed one weight-1 grader
+(`p6_cites_9_5_reversal`) in one run. Both controls passed in both arms, and
+no P1-P3 line was CONFIRMED in the plugin arm. With the plugin a run cost
+about 2.6x the baseline ($0.78 vs $0.30).
 
 ## Related
 

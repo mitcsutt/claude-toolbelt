@@ -1,0 +1,70 @@
+schema_version: "1.1"
+name: fact-checker-planted-claims
+description: >-
+  A build plan for a small Node + Python + bash CLI with six technical claims that were true or widely
+  believed before mid-2026 and are wrong for the versions the plan names, plus two true-but-surprising
+  controls that a recall-based checker tends to mark wrong. Regex graders check the verdict on each planted
+  line (PLAN.md:<n>); llm graders check one reason and the two controls. Ground truth checked 2026-11-20
+  against python.org 3.15 What's New, nodejs/node doc/api, coreutils NEWS, bash NEWS and the Claude Code
+  2.1.329 docs. Re-check before each run.
+tags: [review-panel, fact-checker, versions]
+runs: 1
+expected_outcome: >-
+  REVIEW.md's ledger marks PLAN.md:14-18 and :20 WRONG with a quoted, version-matched source, and does not
+  mark :19 or :21 WRONG.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    PLAN.md is the build plan for a small CLI. Before anyone builds it, check its technical claims. If the
+    review-panel:fact-checker agent is available to you, delegate the check to it and give it REVIEW.md in the
+    repository root as its report path; otherwise do the check yourself. Either way, REVIEW.md must contain a
+    claim ledger with one table row per claim, giving its location as PLAN.md:<line> and a verdict of
+    CONFIRMED, WRONG or UNVERIFIED. Then reply with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Bash, Write, WebFetch, WebSearch]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - { name: delegated_to_fact_checker, type: tool_used, tool: Agent, input_match: fact-checker, arm: with-only }
+  - { name: p1_python_frozendict_wrong, type: regex, weight: 3, target: { source: file, path: REVIEW.md },
+      pattern: 'PLAN\.md:14\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:14\b' }
+  - { name: p2_utf8_default_wrong, type: regex, weight: 2, target: { source: file, path: REVIEW.md },
+      pattern: 'PLAN\.md:15\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:15\b' }
+  - { name: p4_strip_types_wrong, type: regex, weight: 1, target: { source: file, path: REVIEW.md },
+      pattern: 'PLAN\.md:16\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:16\b' }
+  - { name: p5_require_esm_wrong, type: regex, weight: 1, target: { source: file, path: REVIEW.md },
+      pattern: 'PLAN\.md:17\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:17\b' }
+  - { name: p6_cp_n_wrong, type: regex, weight: 2, target: { source: file, path: REVIEW.md },
+      pattern: 'PLAN\.md:18\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:18\b' }
+  - { name: p3_agents_md_wrong, type: regex, weight: 3, target: { source: file, path: REVIEW.md },
+      pattern: 'PLAN\.md:20\b[^\n]*\bWRONG\b|\bWRONG\b[^\n]*PLAN\.md:20\b' }
+  - name: p6_cites_9_5_reversal
+    type: llm
+    weight: 1
+    focus: { source: file, path: REVIEW.md }
+    criteria: >-
+      PASS if the report says the claim at PLAN.md:18 is wrong because coreutils 9.5 reverted the 9.2 change,
+      so `cp -n` silently skips existing files and exits 0, citing coreutils NEWS or release notes for 9.5 or
+      later. FAIL if its only evidence is running the local `cp`, or if it doesn't say that 9.5 changed or
+      reverted the behaviour.
+  - name: control_c1_bash_funsub_true
+    type: llm
+    weight: 2
+    focus: { source: file, path: REVIEW.md }
+    criteria: >-
+      The claim at PLAN.md:19 is TRUE: bash 5.3 added `${ command; }` command substitution, which captures
+      output without forking a child process. PASS if the report marks it CONFIRMED or UNVERIFIED, doesn't
+      mention it, or only notes portability (for example that macOS or Ubuntu 24.04 ship an older bash). FAIL
+      if it marks it WRONG, or says the syntax is invalid, doesn't exist in bash, or still forks a subshell.
+  - name: control_c2_agent_type_list_true
+    type: llm
+    weight: 2
+    focus: { source: file, path: REVIEW.md }
+    criteria: >-
+      The claim at PLAN.md:21 is TRUE: in a Claude Code subagent definition, a type list in `Agent(...)`
+      inside `tools` is ignored, so the platform doesn't restrict which agents it spawns. PASS if the report
+      marks it CONFIRMED or UNVERIFIED or doesn't mention it. FAIL if it marks it WRONG or says
+      `Agent(explorer)` does restrict a subagent to explorer.
