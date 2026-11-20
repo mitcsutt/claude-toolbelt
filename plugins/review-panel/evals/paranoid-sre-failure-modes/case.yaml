@@ -1,0 +1,136 @@
+schema_version: "1.1"
+name: paranoid-sre-failure-modes
+description: >-
+  "ledgerd", a small billing service (Debian 12 with systemd and Debian cron in
+  production, Docker Compose in staging), whose scripts, unit, compose file,
+  cron file and code carry planted failure modes. Their ground truth is a
+  documented default or semantic that an unaided reviewer tends to get wrong:
+  set -e switched off inside an `if`, `local` masking a failed pg_dump, ln -s
+  onto an existing directory symlink, systemd's start limit, Compose restart vs
+  health, a temp name shared by two writers, retry layers multiplying a
+  non-idempotent charge, a wall-clock lease, a DST catch-up job that double-runs
+  under Debian cron, and Node fetch's 300 s default. One control script
+  (setup-dirs.sh) is sound and should get no BLOCK or SHOULD. Graders the
+  unaided baseline passes 3/3 in the pilot are removed before shipping and
+  listed here (pilot not yet run).
+tags: [review-panel, paranoid-sre, recall]
+runs: 1
+expected_outcome: >-
+  REVIEW.md names each planted failure with its event sequence and gives
+  setup-dirs.sh no BLOCK or SHOULD finding.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: >-
+    This repository (ledgerd) is about to go to production. Review its scripts,
+    systemd unit, Compose file, cron file and source code for how it will fail
+    in the real world: restarts, crashes part-way through, re-runs, two copies
+    running at once, slow or missing dependencies, clocks, and rollback. For
+    each problem give the file, the sequence of events, the consequence and a
+    severity of BLOCK, SHOULD or COULD. If the review-panel:paranoid-sre agent
+    is available to you, delegate the review to it and give it REVIEW.md in the
+    repository root as its report path; otherwise do the review yourself.
+    Either way, the full review must end up in REVIEW.md. Then reply with a
+    one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Write]
+  max_turns: 60
+  timeout_seconds: 2700
+graders:
+  - name: delegated_to_paranoid_sre
+    type: tool_used
+    tool: Agent
+    input_match: paranoid-sre
+    arm: with-only
+  - name: p1_ln_rerun_nests_link
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: 'ln -[a-zA-Z]*[nT][a-zA-Z]*|--no-dereference|--no-target-directory'
+    weight: 2
+  - name: p2_set_e_off_inside_if
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says that in scripts/deploy.sh, because deploy() is
+      called as the condition of an `if`, set -e is ignored for the whole
+      function body, so a failing migrate_db does not stop restart_app and the
+      script can still print "deploy ok". FAIL if it only says the script lacks
+      error handling, or doesn't connect the failure to the `if`.
+  - name: p3_local_masks_pg_dump
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says that in scripts/backup.sh `local out=$(pg_dump …)`
+      hides pg_dump's failure (local's own exit status is 0), so an empty backup
+      is written, uploaded and can lead prune to delete good backups. FAIL if it
+      only mentions missing pipefail or general error handling.
+  - name: p4_compose_restart_ignores_health
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says deploy/compose.yaml's `restart: always` does not
+      restart the app when its healthcheck reports unhealthy (restart acts on
+      container exit), contradicting the README. Also mentioning that the short
+      depends_on form waits only for the db container to start is fine but not
+      required. FAIL if it accepts that Compose restarts unhealthy containers.
+  - name: p5_systemd_start_limit
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says ledgerd.service, which restarts every 100 ms while
+      the database is down and the app exits at startup, hits systemd's start
+      limit (default 5 starts in 10 s) and then stays stopped even after the
+      database returns, contradicting "always comes back". FAIL if it only says
+      to add RestartSec without describing the unit giving up.
+  - name: p6_shared_temp_or_fsync
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review flags src/state.js for either (a) the fixed temp name
+      state.json.tmp shared by the two dispatcher processes, so one can rename
+      the other's half-written file, or (b) no fsync of the file and its
+      directory, so a crash or power loss can leave state.json empty or torn.
+  - name: p7_retry_layers_duplicate_charges
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says the in-function retries in src/charge.py multiply
+      with the queue's redeliveries (up to 16 POSTs per job) and/or that
+      retrying a charge with no idempotency key can charge a customer more than
+      once. FAIL if it only says "add retries" or "add backoff".
+  - name: p8_wall_clock_lease
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: 'monotonic'
+    flags: i
+    weight: 2
+  - name: p9_cron_dst_double_run
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says the README's premise is wrong: Debian cron runs a
+      job from the skipped spring-forward hour soon after the change, so the
+      01:30 billing run still happens and scripts/dst-catchup.sh makes it run a
+      second time (duplicate invoices). FAIL if it accepts that cron skips the
+      job, or only criticises how dst-catchup detects the date.
+  - name: p10_fetch_default_timeout
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: '300 ?s\b|300 ?sec|300e3|300000|300,000|five minutes|(^|[^0-9])5 ?min'
+    flags: i
+    weight: 1
+  - name: control_setup_dirs_left_alone
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      FAIL if the review rates any problem in scripts/setup-dirs.sh as BLOCK or
+      SHOULD, or recommends changing it before release without a severity. PASS
+      if it doesn't mention setup-dirs.sh, calls it fine, or raises only COULD
+      notes about it.

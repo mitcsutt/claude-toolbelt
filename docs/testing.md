@@ -94,7 +94,7 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (14 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (15 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
@@ -159,6 +159,15 @@ document states, not a gate a script enforces.
     pilot the baseline (`--runs 3`, read the no-plugin column) and drop any
     planted item the unaided model already scores >= 0.8 on. Its scored run
     is recorded under `review-panel` scores below.
+  - `paranoid-sre-failure-modes` seeds a billing service with planted
+    shell, supervisor, retry and clock failures and grades `REVIEW.md`.
+    It needs no Bash (`--allow-tools Write --disallow-tools Bash
+    PowerShell`); it grades the references and method (T0/T1). T2 fault
+    injection deferred: a deny-list gate isn't confinement (threat-model
+    review 2026-11-20); needs OS confinement (Landlock / sandbox-exec) in
+    its own plan. Before it ships, a baseline-only pilot (3 runs) drops every
+    planted-defect grader the unaided baseline passes 3/3, and the case's
+    `description` lists the dropped graders.
   - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
     WebSearch`. Granting Bash needs a working sandbox backend. Where there
     isn't one (for example Ubuntu with AppArmor's
@@ -262,6 +271,7 @@ defects separated the arms: the baseline missed the phony-target false green
 (D6) in both runs; D2, D3 and D7 were caught in both arms. So it's a partial
 pass of the plan's bar (it asks for two). With the plugin a run cost about
 2.4x the baseline ($0.70 vs $0.30).
+`paranoid-sre-failure-modes`, 2026-11-20: `--runs 2`, Bash withheld (no T2 in this release), $2.88. With plugin 1.00, without 1.00: no measurable gain. The baseline caught every planted failure mode and kept the control in both runs, so the case does not discriminate. A run with the plugin cost about 1.6x the baseline ($0.88 vs $0.56). An earlier attempt run in parallel with three other evals lost runs to an OAuth token refresh race and was discarded.
 
 ## Related
 

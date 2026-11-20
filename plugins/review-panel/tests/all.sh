@@ -501,6 +501,22 @@ grep -q '## Ship it on Friday' "$AGENTS/grumpy-senior.md"; assert_true "$?" "gru
 # Promise: outsider writes its cold take before reading the artifact.
 grep -q 'Before opening the artifact' "$AGENTS/outsider.md"; assert_true "$?" "outsider takes a cold read first"
 
+# Promise: paranoid-sre keeps its read-only toolset (no WebFetch, no Agent).
+assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/paranoid-sre.md" tools)" "paranoid-sre: tools unchanged"
+
+# Promise: paranoid-sre never runs the code under review (T2 fault injection is deferred).
+if grep -q 'Never run the code under review' "$AGENTS/paranoid-sre.md" && ! grep -q 'T2:' "$AGENTS/paranoid-sre.md"; then ok=0; else ok=1; fi
+assert_true "$ok" "paranoid-sre: no T2, never runs reviewed code"
+
+# Promise: paranoid-sre eval cases run on a host with no sandbox backend (Bash not required).
+for c in "$PLUGIN"/evals/paranoid-sre-*/case.yaml; do
+  [ -f "$c" ] || continue
+  if python3 -c 'import yaml' >/dev/null 2>&1; then
+    nobash=$(python3 -I -c 'import sys, yaml; print("Bash" not in (yaml.safe_load(open(sys.argv[1])).get("execution") or {}).get("allowed_tools", []))' "$c")
+    assert_eq "True" "$nobash" "$(basename "$(dirname "$c")"): allowed_tools leaves out Bash"
+  fi
+done
+
 # Promise: noise-filter runs the parser through Bash and writes only its triage.
 assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/noise-filter.md" tools)" "noise-filter: tools are exactly Read, Grep, Glob, Bash, Write"
 
