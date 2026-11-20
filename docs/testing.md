@@ -94,9 +94,9 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (3 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (4 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. One grader per planted defect reads the written report
-  (`AUDIT.md` or `TRIAGE.md`), and the no-plugin arm is the same model
+  (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
   - `rules-lawyer-planted-defects` is a Terraform repo with familiar
     defects: wrong CLI claims, a guard hook that exits 1, a lowercase
@@ -108,6 +108,14 @@ document states, not a gate a script enforces.
     small rate limiter into `TRIAGE.md`; it needs Bash for the parser path
     (`--allow-tools Bash Write`), and without it grades the no-shell T0
     fallback (`--allow-tools Write --disallow-tools Bash PowerShell`).
+  - `goal-auditor-fix-claim` audits a branch that claims to fix two issues
+    in a small Node repo, into `REVIEW.md`. Its three planted defects (a
+    test that passes on the pre-fix code, a post-URL path behind a legacy
+    helper, trimming fitted to the issue's example) can all be decided by
+    reading, so it runs with `--allow-tools Write --disallow-tools Bash
+    PowerShell` and measures T1, not the revert check. The sound #14 fix is
+    the control. `tests/all.sh` runs the shipped revert-check recipe itself
+    against two throwaway repos.
   - For the rules-lawyer cases, grant `--allow-tools Bash Write WebFetch
     WebSearch`. Granting Bash needs a working sandbox backend. Where there
     isn't one (for example Ubuntu with AppArmor's

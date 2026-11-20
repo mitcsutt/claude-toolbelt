@@ -20,7 +20,7 @@ Agents are dispatched as `review-panel:<name>`.
 | `fact-checker` | Every concrete technical claim | Claim ledger: CONFIRMED / WRONG / UNVERIFIED |
 | `dx-advocate` | New engineer + unattended agent journeys, stale docs, repo rules | Journey walk + stale-docs list |
 | `threat-modeller` | Trust boundaries, auth, injection, secrets, supply chain | Threat table with attack paths |
-| `goal-auditor` | Is the goal actually met? Overclaims, absences (tests, rollback, bad inputs) | Goal scorecard |
+| `goal-auditor` | Is the goal actually met? Overclaims, tests that pass without the fix, missed callers and siblings, absences (rollback, bad inputs) | Goal scorecard with evidence per row |
 | `outsider` | Right route? Build vs buy? Prior art and competitors | Cold take + prior-art table |
 | `contract-keeper` | Consumers of changed interfaces, migrations, backfill, version skew | Consumer matrix + safe rollout order |
 | `cost-hawk` | Steady-state cost, growth, hot paths, token and dollar spend | Cost sheet |
