@@ -59,9 +59,9 @@ What the skill does:
 
 1. Classifies the artifact and its risk signals.
 2. Picks the core reviewers plus one per signal: 3 to 4 for normal work, 5 to 6 for high-stakes work.
-3. Prints the roster, with why each reviewer was picked and what was skipped.
+3. Prints the roster, with why each reviewer was picked, what was skipped, and the one reviewer who owns claim checks.
 4. Prints one status line with the expected wall time; if a hook or permission refuses the dispatch, it stops and asks instead of working around it.
-5. Dispatches them all in parallel, then runs `noise-filter` over their reports.
+5. Dispatches them all in parallel, then runs `noise-filter` over their reports (a panel of one reviewer skips the filter).
 6. Hands back:
    - the triage's at-a-glance block;
    - Fix before merge;
