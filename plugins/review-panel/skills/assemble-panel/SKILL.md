@@ -35,7 +35,7 @@ Agents are dispatched as `review-panel:<name>`.
 | Normal (a feature, a plan, a PR) | 3 to 4 reviewers |
 | High-stakes (architecture, data, auth, multi-PR stack, irreversible) | 5 to 6 reviewers |
 
-Then add `noise-filter` as the final pass, on top of that count, whenever there's more than one reviewer. Never run every reviewer by reflex. Extra reviewers add cost faster than coverage (see [evidence](references/evidence.md) AP1–AP4).
+Then add `noise-filter` as the final pass, on top of that count, unless this is a **single-reviewer panel**: the user asked for one reviewer here in Step 0. A follow-up that adds one reviewer to an earlier panel is not one; it still re-runs `noise-filter` over all reports. Never run every reviewer by reflex. Extra reviewers add cost faster than coverage (see [evidence](references/evidence.md) AP1–AP4).
 
 What a panel costs, measured once (2026-10-26, six Opus 5.5 reviewers plus the filter):
 - each reviewer peaked at 134k–307k tokens of context and processed about 0.45M–17.1M tokens in total, mostly cache reads;
@@ -86,7 +86,7 @@ Show one line per reviewer, one line naming the claim owner, and one line for wh
 
     Panel running: <n> reviewers + filter. Expect about <a>–<b> min; I'll report once, when the triage is ready.
 
-With a single reviewer, say `1 reviewer, no filter` and "when its findings are ready" instead.
+On a single-reviewer panel, say `1 reviewer, no filter` and "when its findings are ready" instead.
 
 Take `<a>–<b>` from this table, not from memory: 1 reviewer 10–20; 2–3 reviewers 20–35; 4–6 reviewers 25–40. The slowest reviewer gates the filter. One measured run took 8.5–21.6 min per reviewer and 12 min for the filter.
 
@@ -121,10 +121,10 @@ Work through this checklist in order. If you have a task-list tool, copy the che
 
 1. Send every reviewer in **one message**, in the background.
 2. If any call is refused (a hook, a permission rule, a policy, an unknown agent type), stop and follow "If dispatch is blocked". Don't retry it.
-3. As each reviewer finishes, note its one-line return and nothing else. Don't Read, Grep or quote its report, and don't tell the user about it. With a single reviewer, the only exception is the title-and-severity Grep in Step 6.
-4. When every reviewer has returned or failed, say one line: `Reviewers done (<k>/<n>); filter running, about 10–15 min.` Name any reviewer that failed. With a single reviewer, skip this line.
-5. Dispatch `noise-filter` (Step 6) with the report paths. You haven't read the reports, and you don't need to. With a single reviewer, skip this item; there is no filter.
-6. Read the triage, and only the triage (Step 7). With a single reviewer there is no triage: follow Step 6's single-reviewer line instead. If the user asks about one finding, read that finding's section, not the whole report.
+3. As each reviewer finishes, note its one-line return and nothing else. Don't Read, Grep or quote its report, and don't tell the user about it. On a single-reviewer panel, the only exception is the title-and-severity Grep in Step 6.
+4. When every reviewer has returned or failed, say one line: `Reviewers done (<k>/<n>); filter running, about 10–15 min.` Name any reviewer that failed. On a single-reviewer panel, skip this line.
+5. Dispatch `noise-filter` (Step 6) with the report paths. You haven't read the reports, and you don't need to. On a single-reviewer panel, skip this item; there is no filter.
+6. Read the triage, and only the triage (Step 7). On a single-reviewer panel there is no triage: follow Step 6's single-reviewer line instead. If the user asks about one finding, read that finding's section, not the whole report.
 
 ## If dispatch is blocked
 
@@ -147,11 +147,11 @@ If only some calls were refused, let the others finish, filter what you have, an
 
 Dispatch `review-panel:noise-filter` with the goal, the report paths and a triage path. It merges duplicates, marks cross-confirmed findings, spot-checks evidence and drops noise. Don't do this pass yourself in the main context. The reports are long, and the filter's independence is the point. Pass the report paths in any order; `noise-filter` shuffles and logs its own read order.
 
-With a single reviewer, skip the filter. Report its one-line return, then read only its finding titles and severities (`Grep` for `^### F|^- Severity:` in the report), not the whole report.
+On a single-reviewer panel (Step 0), skip the filter. Report its one-line return, then read only its finding titles and severities (`Grep` for `^### F|^- Severity:` in the report), not the whole report.
 
 ## Step 7: Present
 
-Read the triage and give the user:
+On a single-reviewer panel, present the titles and severities from Step 6 instead. Otherwise, read the triage and give the user:
 
 1. The overall verdict and the panel line (`reviewer · verdict`), and the triage's `## At a glance` block.
 2. **Fix before merge**, with cross-confirmed findings first. Keep each to one or two lines with its location.
