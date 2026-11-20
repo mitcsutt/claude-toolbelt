@@ -20,13 +20,13 @@ FAIL_TO_PASS for each new or changed test, plus one PASS_TO_PASS suite run on "a
 ## 3. Preflight
 
 - `git rev-parse --verify "$BASE^{commit}"` (and FIX unless FIX=WORKTREE).
-- Find the per-file test command in the repo's config (`package.json` scripts, `pytest.ini`/`pyproject.toml`, Makefile). Read it; don't guess. Known per-file forms: `node --test <file>`; `<venv>/bin/python -m pytest -q -p no:cacheprovider <file>`, with `PYTHONDONTWRITEBYTECODE=1` added to the `env -i` line.
-- Dependencies: `du -sm node_modules`. At ≤200 MB, `cp -a node_modules "$T/before/"` and `"$T/after/"` after the copy step. Never symlink it: caches such as `node_modules/.cache` would write into the real tree (GA10). Above 200 MB, don't run. The 200 MB threshold is a judgement call, not evidence (R10 §5 open question).
+- Find the per-file test command in the repo's config (`package.json` scripts, `pytest.ini`/`pyproject.toml`, Makefile). Read it; don't guess. Known per-file forms: `node --test <file>`; `.venv/bin/python -m pytest -q -p no:cacheprovider <file>` with `EXTRA_ENV=PYTHONDONTWRITEBYTECODE=1`.
+- Dependencies: `du -sm node_modules` (or the venv). At ≤200 MB, set `DEPS=node_modules` (or `DEPS=.venv`); the recipe copies it into both trees. Never symlink it: caches such as `node_modules/.cache` would write into the real tree (GA10). Above 200 MB, don't run. The 200 MB threshold is a judgement call, not evidence (R10 §5 open question).
 - If `git diff --quiet "$BASE" "$FIX" -- package-lock.json pnpm-lock.yaml yarn.lock poetry.lock uv.lock 'requirements*.txt'` exits non-zero (for FIX=WORKTREE, `git diff-index --quiet "$BASE" -- <same files>`, which can over-report a file whose timestamp changed), "before" runs against "after"'s deps. Say so next to the result.
 
 ## 4. The recipe
 
-Copy it verbatim; the plugin's tests run this exact block. Set `BASE`, `FIX` (a commit, or `WORKTREE` for uncommitted work), `TESTS` (changed test files, space-separated, no spaces in names) and `RUN` (the per-file test command). Run it from the repo root in one Bash call with a timeout of at most 300000 ms.
+Copy it verbatim; the plugin's tests run this exact block. Set `BASE`, `FIX` (a commit, or `WORKTREE` for uncommitted work), `TESTS` (changed test files, space-separated, no spaces in names) and `RUN` (the per-file test command). Optionally set `DEPS` (gitignored paths relative to the repo root, space-separated, copied with `cp -a` into both trees) and `EXTRA_ENV` (`NAME=VALUE` words added to the stripped environment). Never edit the block itself. Run it from the repo root in one Bash call with a timeout of at most 300000 ms.
 
 ```bash
 # revert-check v1
@@ -39,9 +39,10 @@ else
   git archive "$FIX" | tar -x -C "$T/after"
 fi
 for f in $TESTS; do mkdir -p "$T/before/$(dirname "$f")"; cp "$T/after/$f" "$T/before/$f"; done
+for d in ${DEPS:-}; do for side in before after; do mkdir -p "$T/$side/$(dirname "$d")"; cp -a "$d" "$T/$side/$d"; done; done
 for side in before after; do
   for f in $TESTS; do
-    (cd "$T/$side" && env -i PATH="$PATH" HOME="$T/home" TMPDIR="$T" LANG=C.UTF-8 $RUN "$f") > "$T/$side.$(echo "$f" | tr / _).log" 2>&1
+    (cd "$T/$side" && env -i PATH="$PATH" HOME="$T/home" TMPDIR="$T" LANG=C.UTF-8 ${EXTRA_ENV:-} $RUN "$f") > "$T/$side.$(echo "$f" | tr / _).log" 2>&1
     echo "$side $f exit=$?"
   done
 done
@@ -59,7 +60,7 @@ echo "logs: $T"
 
 ## 6. PASS_TO_PASS
 
-`(cd "$T/after" && env -i PATH="$PATH" HOME="$T/home" TMPDIR="$T" LANG=C.UTF-8 <full test cmd>) > "$T/after.full.log" 2>&1; echo "after full exit=$?"`.
+`(cd "$T/after" && env -i PATH="$PATH" HOME="$T/home" TMPDIR="$T" LANG=C.UTF-8 ${EXTRA_ENV:-} <full test cmd>) > "$T/after.full.log" 2>&1; echo "after full exit=$?"`.
 
 - If it fails, rerun once to rule out a flake.
 - If it still fails, run the same command in `$T/before`, which tells a regression from a pre-existing failure.
@@ -70,7 +71,7 @@ echo "logs: $T"
 - A submodule comes out as an empty directory (observed). `git archive` runs configured smudge filters; `GIT_LFS_SKIP_SMUDGE=1` should keep LFS files as pointers with no fetch into `.git/lfs` (UNVERIFIED: git-lfs not installed where this was checked). Other custom filters still run, as they would on checkout.
 - Absolute-path tests fail.
 - In WORKTREE mode, a tracked file deleted in the working tree makes the first `tar` fail with `Cannot stat` and exit 2 (the recipe hides its stderr), but the copy is otherwise complete (observed 2026-11-19).
-- `env -i` drops variables that some toolchains need (pyenv shims, `JAVA_HOME`). If the run fails for that, report "not run (toolchain needs env)"; don't loosen the environment.
+- `env -i` drops variables that some toolchains need (pyenv shims, `JAVA_HOME`). Pass a variable the run needs through `EXTRA_ENV`, never a secret. If it still fails for that, report "not run (toolchain needs env)"; don't loosen the environment.
 - `tar --null -T -` on macOS bsdtar: UNVERIFIED.
 
 ## 8. Clean up
