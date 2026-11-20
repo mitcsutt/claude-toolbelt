@@ -586,7 +586,8 @@ grep -q 'in \*\*one message\*\*' "$SKILL"; assert_true "$?" "skill dispatches in
 grep -q '^## Step 6: Filter' "$SKILL"; assert_true "$?" "skill runs the noise-filter pass"
 
 # Promise: ad-hoc personas for uncovered lenses use the shared contract.
-[ -f "$REFS/persona-contract.md" ]; assert_true "$?" "persona-contract reference exists"
+if [ -f "$REFS/persona-contract.md" ]; then ok=0; else ok=1; fi
+assert_true "$ok" "persona-contract reference exists"
 grep -q 'Severity: BLOCK | SHOULD | COULD' "$REFS/persona-contract.md"; assert_true "$?" "ad-hoc personas use the shared contract"
 
 # Promise: never publishes without the user's go-ahead.
