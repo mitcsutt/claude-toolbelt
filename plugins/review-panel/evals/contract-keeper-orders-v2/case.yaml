@@ -1,0 +1,148 @@
+schema_version: "1.1"
+name: contract-keeper-orders-v2
+description: >-
+  A small orders service whose latest commit (HEAD vs tag `base`) changes
+  its OpenAPI spec, config, migrations and a persisted codec. Eight planted
+  breaks need either a borrowed break rule (oasdiff, Postgres docs) or a
+  named consumer outside the diff: a response enum addition hitting an
+  exhaustive switch, a required request field "safe because it has a
+  default", a response field turned nullable, an env-var rename that a cron
+  script still reads, a volatile column default on PG 16, a constant
+  default on a Postgres pinned to 10, and a request enum value removed
+  while the mobile client still sends it, plus an ordinal enum insert.
+  Two controls: an added optional response field, and removal of an export
+  nothing uses in a private package. Ground truth was checked against the
+  docs quoted in references/contract-keeper/evidence.md on 2026-11-19;
+  version facts are Postgres 10/11/16 behaviour.
+tags: [review-panel, contract-keeper, compatibility]
+runs: 1
+expected_outcome: >-
+  REVIEW.md names each planted break with its consumer and reason, and
+  doesn't grade either control BLOCK or SHOULD.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    The latest commit in this repository (compare HEAD with the tag
+    `base`; the same diff is in CHANGE.diff and the author's description in
+    PR.md) is about to be deployed. Review it for anything that breaks an
+    existing consumer or is unsafe to roll out. If the
+    review-panel:contract-keeper agent is available to you, delegate the
+    review to it and give it REVIEW.md in the repository root as its report
+    path; otherwise do the review yourself. Either way, the full review must
+    end up in REVIEW.md. Then reply with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Bash, Write]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - name: delegated_to_contract_keeper
+    type: tool_used
+    tool: Agent
+    input_match: contract-keeper
+    arm: with-only
+
+  - name: k1_enum_added_hits_switch
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says adding `archived` to the response Order.status
+      enum breaks src/clients/orders.ts, whose switch throws on an unknown
+      status (or says the enum isn't declared extensible and the client has
+      no safe default). FAIL if it only mentions the new value, or calls it
+      safe.
+  - name: k2_required_with_default
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says making `currency` a required request property
+      is breaking even though it has `default: USD` (a default doesn't help
+      a client that omits a required field), naming a client that doesn't
+      send it (src/clients/orders.ts createOrder or the mobile client). FAIL
+      if it accepts the PR's "has a default, safe" claim.
+  - name: k3_nullable_date
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says `shippedAt` becoming nullable breaks the
+      consumer that calls `new Date(o.shippedAt).toISOString()` (null gives
+      1970-01-01 or an error). FAIL if it only notes the schema change.
+  - name: k4_cron_consumer_regex
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "nightly-report"
+    weight: 1
+  - name: k4_env_rename
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says renaming APP_DB_URL to DATABASE_URL breaks
+      scripts/nightly-report.sh (run from deploy/crontab), which still reads
+      $APP_DB_URL. FAIL if the cron script isn't named.
+  - name: k5_volatile_default
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says migrations/004.sql's `DEFAULT
+      clock_timestamp()` forces a full table rewrite under an exclusive lock
+      even on Postgres 11+, because the default is volatile. FAIL if it says
+      PG 11+ avoids the rewrite for this statement, or only mentions NOT
+      NULL in general.
+  - name: k6_pg10_regex
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "(10\\.23|postgres:10|Postgres(QL)? 10|PG ?10)"
+    flags: i
+    weight: 1
+  - name: k6_pg10_rewrite
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says migrations/accounts/005.sql's constant
+      default (`DEFAULT 'free'`) still rewrites the users table because
+      deploy/compose.yaml pins its database (accounts-db) to Postgres 10,
+      where any ADD COLUMN DEFAULT rewrites. FAIL if it calls 005 safe or doesn't tie it to the pinned
+      version.
+  - name: k7_request_enum_removed
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says removing `rush` from the Priority enum breaks
+      the mobile client (apps/mobile/src/api.ts), which still sends
+      priority "rush" in requests. FAIL if it treats the removal as safe
+      narrowing or doesn't name the mobile client.
+  - name: k8_ordinal_insert
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says inserting 'webhook' at index 1 of KINDS in
+      src/codec.js changes the meaning of kind integers already stored in
+      jobs.kind (and/or that old workers mid-rollout misread new rows), and
+      suggests appending or explicit codes. FAIL otherwise.
+  - name: control_optional_field_not_flagged
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review doesn't grade the new optional response property
+      Order.notes BLOCK or SHOULD (not mentioning it, listing it as fine, or
+      COULD all pass). FAIL if any BLOCK or SHOULD finding is about
+      Order.notes.
+  - name: control_unused_export_not_blocked
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review doesn't grade the removal of formatLegacyId from
+      src/util/ids.js BLOCK or SHOULD. FAIL if a BLOCK or SHOULD finding is
+      about removing formatLegacyId.
