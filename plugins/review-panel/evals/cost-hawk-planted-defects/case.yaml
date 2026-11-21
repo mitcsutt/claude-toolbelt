@@ -1,0 +1,149 @@
+schema_version: "1.1"
+name: cost-hawk-planted-defects
+description: >-
+  A review-bot rollout plan plus its repo config (Claude Code hooks, a
+  skill, a subagent, CI workflows, a triage script, a systemd poll timer
+  and a backup script). Eight planted cost defects whose ground truth
+  turns on current prices, Claude Code cost mechanics or a wrong cost
+  claim in the plan. One control (nightly R2 backups) looks expensive
+  but costs under $1/month. Prices are those of 2026-11-19; re-derive
+  the ground truth if the price page changes.
+tags: [review-panel, cost-hawk, recall]
+runs: 1
+expected_outcome: >-
+  REVIEW.md prices each planted defect within range with the right
+  mechanism and leaves the backup alone.
+context:
+  scaffold_script: fixture.sh
+execution:
+  prompt: >-
+    docs/plan.md is our plan to roll out a review bot to 20 developers,
+    and the repo holds its config. Before we approve it, review what it
+    will cost to run: find what's expensive, put numbers on it, and check
+    the plan's own cost claims. If the review-panel:cost-hawk agent is
+    available to you, delegate the review to it and give it REVIEW.md in
+    the repository root as its report path; otherwise do the review
+    yourself. Either way, the full review must end up in REVIEW.md. Then
+    reply with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Write]
+  max_turns: 60
+  timeout_seconds: 2700
+graders:
+  - name: delegated_to_cost_hawk
+    type: tool_used
+    tool: Agent
+    input_match: cost-hawk
+    arm: with-only
+  - name: d1_prompt_hook_on_every_tool_call
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review flags the PostToolUse prompt hook (matcher "*",
+      model claude-opus-5-5) as a model call on every tool call and prices
+      it at roughly $40-75 per day (or $900-1,650 per month) for the plan's
+      volumes, naming the model override or the "*" matcher as the fix.
+      FAIL if it is not flagged or not priced.
+  - name: d2_ci_matrix_figure
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    flags: i
+    weight: 2
+    pattern: '(matrix|macos)[^\n]*\$\s?(0?\.2[2-4]\d*|11[6-9]|1[2-8]\d|19[0-3])(\.\d+)?(?![\d,])|\$\s?(0?\.2[2-4]\d*|11[6-9]|1[2-8]\d|19[0-3])(\.\d+)?(?![\d,])[^\n]*(matrix|macos)'
+  - name: d3_sessionstart_output_is_capped
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says the SessionStart hook's ~40 KB output is
+      over Claude Code's 10,000-character hook output cap, so Claude gets
+      a file path and a preview of about 2,000 characters, and the plan's
+      cost figure for injecting 40 KB is therefore overstated. FAIL if it
+      prices the full 40 KB per session or per request as real cost, or
+      doesn't mention the cap.
+  - name: d4_haiku_long_prompt_cliff
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says the reviewers' 110k-140k-token requests are
+      over Haiku 5.5's 100,000-token threshold, so they pay the higher
+      (5x) Haiku prices and the saving from moving off Opus is roughly
+      5-8x (about $100/week rather than the plan's ~97% cut). FAIL if it
+      accepts the plan's 40x / ~97% saving or never mentions the threshold.
+  - name: d4_opus_weekly_figure
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    flags: i
+    weight: 1
+    pattern: '(reviewer|subagent|per PR)[^\n]*\$\s?(50[89]|5[1-9]\d|[67]\d\d|8[0-3]\d|84[0-6])(\.\d+)?(?![\d,])'
+  - name: d5_timestamp_busts_cache
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says the timestamp at the start of triage.sh's
+      system prompt changes the cached prefix on every call, so the 30k
+      rubric is re-written instead of read from cache, and recommends
+      moving the timestamp after the cached block. FAIL otherwise.
+  - name: d5_daily_figure
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    flags: i
+    weight: 1
+    pattern: '(timestamp|triage)[^\n]*\$\s?(2[89]|3\d|4[0-7])(\.\d+)?(?![\d,])|\$\s?(2[89]|3\d|4[0-7])(\.\d+)?(?![\d,])[^\n]*(timestamp|triage)'
+  - name: d6_minute_poll
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review flags the one-minute poll.timer running
+      `claude -p` as SHOULD or BLOCK, prices it somewhere in $30-$150 per
+      day (or $900-$4,500 per month), and proposes an event-driven or much
+      less frequent trigger. FAIL otherwise.
+  - name: d6_accuracysec
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 1
+    criteria: >-
+      PASS if the review notes that AccuracySec=1us defeats systemd's
+      wakeup coalescing (the 1min default is fine). FAIL otherwise.
+  - name: d7_stop_cap_does_not_bound
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says the plan's "8 continuations, so at most
+      $1.20 per run" bound is wrong because Claude Code's Stop-hook cap
+      counts consecutive continuations and resets whenever Claude calls a
+      tool, and after each block the agent runs tools (to rerun or fix the
+      tests), so in the review-bot job, where tests always fail without
+      DATABASE_URL, the loop is unbounded. Bonus if it suggests
+      stop_hook_active, a counter, --max-turns or --max-budget-usd. FAIL
+      if it accepts the $1.20 bound or calls the loop capped at 8.
+  - name: d8_haiku_skill_switch
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says the summarize skill's `model: haiku` makes
+      each invocation a model switch whose request reads the whole
+      ~150k-token conversation without cache hits (and over Haiku 5.5's
+      100k threshold), so it saves little or costs more than staying on
+      the session model, contrary to the plan's ~95% claim. FAIL if it
+      endorses the pin as a saving.
+  - name: provenance_dated_prices
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    weight: 1
+    pattern: '2026-11-19'
+  - name: control_r2_backup_is_cheap
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review does not raise the nightly R2 backup
+      (ops/backup.sh) as a SHOULD or BLOCK finding and does not price it
+      above $5 per month. Listing it as cheap, under Checked and fine,
+      or not mentioning it passes. FAIL if it calls the backup a material
+      cost (for example egress charges or ~60 GB at S3 prices).

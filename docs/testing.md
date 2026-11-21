@@ -94,7 +94,7 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (15 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (16 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
@@ -173,6 +173,11 @@ document states, not a gate a script enforces.
     unprivileged-user-namespace restriction), run with
     `--disallow-tools Bash` instead, which skips the hook fixture runs in
     both arms.
+  - `cost-hawk-planted-defects` prices a review-bot rollout plan into
+    `REVIEW.md` against prices pinned to 2026-11-19. Web tools are withheld
+    in both arms so it tests the reference, not live fetching:
+    `--case 'cost-hawk-*' --scaffold --runs 2 --allow-tools Write
+    --disallow-tools Bash PowerShell WebFetch WebSearch`.
   - `plugins/review-panel/lib/report-parse.test.mjs` (run by `node --test`)
     parses every agent's output template against the shared report
     contract. New eval cases should prefer `regex` graders over the report
@@ -271,6 +276,7 @@ defects separated the arms: the baseline missed the phony-target false green
 pass of the plan's bar (it asks for two). With the plugin a run cost about
 2.4x the baseline ($0.70 vs $0.30).
 `paranoid-sre-failure-modes`, 2026-11-20: `--runs 2`, Bash withheld (no T2 in this release), $2.88. With plugin 1.00, without 1.00: no measurable gain. The baseline caught every planted failure mode and kept the control in both runs, so the case does not discriminate. A run with the plugin cost about 1.6x the baseline ($0.88 vs $0.56). An earlier attempt run in parallel with three other evals lost runs to an OAuth token refresh race and was discarded.
+`cost-hawk-planted-defects`, 2026-11-20: `--runs 2`, Bash and web tools withheld in both arms, $3.44. With plugin 0.98, without 0.69, delta +0.29, which clears the plan's +0.10 bar. The baseline missed the SessionStart output cap (D3) and the Haiku long-prompt price cliff (D4) in both runs and never dated its prices; the plugin caught both every time and missed one weight-1 weekly figure once. The control passed in all runs. A run with the plugin cost about 2.4x the baseline ($1.22 vs $0.50).
 
 ## Related
 

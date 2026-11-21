@@ -738,5 +738,73 @@ k6_pg10_regex True" "$anchors" "contract-keeper eval: every regex grader's patte
 else
   echo "(contract-keeper fixture checks skipped: git, node or python3 with PyYAML not installed)"
 fi
+# Promise: cost-hawk gains WebFetch for price pages and nothing else.
+assert_eq "Read, Grep, Glob, Bash, Write, WebFetch" "$(fm "$AGENTS/cost-hawk.md" tools)" "cost-hawk: tools allowlist"
+
+# Promise: cost-hawk's price table is dated and sourced, row by row.
+CH_PRICES="$PLUGIN/references/cost-hawk/prices.md"
+CH_ROWS=$(awk -F'|' '/^\|---/{body=1;next} body&&/^\| /{print} body&&!/^\|/{exit}' "$CH_PRICES")
+n=$(printf '%s\n' "$CH_ROWS" | grep -c '^| ')
+if [ "$n" -ge 20 ]; then ok=0; else ok=1; fi
+assert_true "$ok" "cost-hawk prices.md has at least 20 rows ($n)"
+bad_date=$(printf '%s\n' "$CH_ROWS" | awk -F'|' '$6 !~ /^ *[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] *$/' | grep -c '^| ')
+assert_eq "0" "$bad_date" "every cost-hawk price row has a fetched date"
+bad_url=$(printf '%s\n' "$CH_ROWS" | awk -F'|' '{u=$5; sub(/^ +/,"",u); sub(/ +$/,"",u); h=u; sub(/^https:\/\//,"",h); sub(/\/.*/,"",h); if (u !~ /^https:\/\// || h !~ /\./ || h ~ / /) print}' | grep -c '^| ')
+assert_eq "0" "$bad_url" "every cost-hawk price row has an https source URL with a host"
+assert_eq "" "$(grep -oE 'https?://[^ )|`]+' "$CH_PRICES" | grep '^http://')" "every URL in cost-hawk prices.md is https"
+
+# Promise: cost-hawk eval's regex graders compile and discriminate on known
+# pass and fail samples.
+CH_EVAL="$PLUGIN/evals/cost-hawk-planted-defects"
+CH_SAMPLES="$PLUGIN/lib/fixtures/cost-hawk-regex-samples.json"
+if python3 -c 'import yaml' >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  CH_GR=$(mktemp)
+  python3 -I -c '
+import sys, json, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+json.dump([{"name": g["name"], "pattern": g["pattern"], "flags": g.get("flags", "")} for g in c["graders"] if g.get("type") == "regex"], open(sys.argv[2], "w"))
+' "$CH_EVAL/case.yaml" "$CH_GR"
+  ch_out=$(node -e '
+const fs = require("fs");
+const [gf, sf] = process.argv.slice(1);
+const gs = JSON.parse(fs.readFileSync(gf, "utf8"));
+const samples = JSON.parse(fs.readFileSync(sf, "utf8"));
+if (gs.length === 0) console.log("no regex graders");
+for (const g of gs) {
+  let re;
+  try { re = new RegExp(g.pattern, g.flags); } catch (e) { console.log(g.name + ": does not compile"); continue; }
+  const s = samples[g.name];
+  if (!s || !(s.pass || []).length || !(s.fail || []).length) { console.log(g.name + ": no pass and fail samples"); continue; }
+  for (const x of s.pass) if (!re.test(x)) console.log(g.name + ": misses pass sample: " + x);
+  for (const x of s.fail) if (re.test(x)) console.log(g.name + ": matches fail sample: " + x);
+}
+for (const k of Object.keys(samples)) if (!gs.some(g => g.name === k)) console.log(k + ": samples for no grader");
+' "$CH_GR" "$CH_SAMPLES" 2>&1)
+  assert_eq "" "$ch_out" "cost-hawk regex graders compile and discriminate on their samples"
+  rm -f "$CH_GR"
+else
+  echo "(cost-hawk grader checks skipped: python3 with PyYAML or node not installed)"
+fi
+
+# Promise: the cost-hawk fixture builds and plants what the graders assume.
+CH_TMP=$(mktemp -d)
+if (cd "$CH_TMP" && bash "$CH_EVAL/fixture.sh" >/dev/null 2>&1); then ok=0; else ok=1; fi
+assert_true "$ok" "cost-hawk fixture builds and passes its self-checks"
+size=$(wc -c < "$CH_TMP/docs/architecture-full.md" 2>/dev/null || echo 0)
+if [ "$size" -gt 30000 ]; then ok=0; else ok=1; fi
+assert_true "$ok" "cost-hawk fixture's SessionStart file is over 30,000 bytes (D3)"
+if command -v jq >/dev/null 2>&1; then
+  if jq -e '.hooks.PostToolUse[0].hooks[0].type == "prompt" and .hooks.PostToolUse[0].matcher == "*"' "$CH_TMP/.claude/settings.json" >/dev/null 2>&1; then ok=0; else ok=1; fi
+  assert_true "$ok" "cost-hawk fixture's PostToolUse hook is a prompt hook on every tool (D1)"
+else
+  echo "(cost-hawk settings.json check skipped: jq not installed)"
+fi
+if command -v node >/dev/null 2>&1; then
+  if (cd "$CH_TMP" && env -u DATABASE_URL node test/run.mjs >/dev/null 2>&1); then ok=1; else ok=0; fi
+  assert_true "$ok" "cost-hawk fixture's tests fail without DATABASE_URL (D7)"
+else
+  echo "(cost-hawk test-runner check skipped: node not installed)"
+fi
+rm -rf "$CH_TMP"
 
 assert_summary

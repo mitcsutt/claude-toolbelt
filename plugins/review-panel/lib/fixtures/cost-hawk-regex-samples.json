@@ -1,0 +1,21 @@
+{
+  "d2_ci_matrix_figure": {
+    "pass": [
+      "| 2 | ci.yml lint matrix | 9 jobs/push | $0.234 per push | $154/mo | estimated |",
+      "The macOS legs make the matrix cost $154.44 a month."
+    ],
+    "fail": ["ci matrix costs $206/month", "macOS legs $103/mo", "matrix of 9 jobs costs $1,540 a year"]
+  },
+  "d4_opus_weekly_figure": {
+    "pass": ["| 4 | 12 reviewer subagents (Opus 5.5) | 480/wk | $1.41 | $677/wk |"],
+    "fail": ["reviewer subagents $1,062 per week", "reviewer subagents on Haiku: $106/wk"]
+  },
+  "d5_daily_figure": {
+    "pass": ["triage.sh timestamp busts cache: $37.50/day", "$37.50 per day because of the timestamp"],
+    "fail": ["triage costs $56/day", "triage $1.57/day after the fix"]
+  },
+  "provenance_dated_prices": {
+    "pass": ["price as of 2026-11-19"],
+    "fail": ["price as of 2026-12-01"]
+  }
+}

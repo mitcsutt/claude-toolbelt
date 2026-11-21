@@ -66,7 +66,7 @@ Start from the core for the artifact type, then add one reviewer per signal unti
 | Auth, secrets, credentials or deploy tokens (CI secrets included), input from outside, tools an LLM can call, CI that runs on contributor input | `threat-modeller` |
 | A changed API, schema, config, CLI, event or file format; migration or backfill | `contract-keeper` |
 | Processes, ports, installs, hooks, retries, systemd/Compose/cron, re-running a failed migration | `paranoid-sre` |
-| Polling, background work, fan-out, paid APIs or LLM calls | `cost-hawk` |
+| Polling, background work, paid APIs or LLM calls, fan-out, model pins in skills or hooks, prompt hooks, CI matrices | `cost-hawk` |
 | Something new people or agents will set up and use | `dx-advocate` |
 | Claims about how a platform, library or tool behaves | `fact-checker` |
 | A build-vs-buy question; prior art or existing tools | `outsider` |
