@@ -1,0 +1,105 @@
+schema_version: "1.1"
+name: outsider-built-in-traps
+description: >-
+  A small Claude Code plugin marketplace. docs/PROBLEM.md states five needs
+  and hard constraints with no solution in it; docs/DESIGN.md ("Kestrel")
+  plans five components. Four rebuild Claude Code built-ins that shipped in
+  September 2026, after the model's knowledge cutoff: a with/without-plugin
+  eval harness (claude plugin eval), a hook copying AGENTS.md to CLAUDE.md
+  (native AGENTS.md), an instruction-audit skill (/doctor prompt-audit) and a
+  transcript skill-usage miner (/skill-doctor). The fifth, a hook fixture
+  harness that must run in CI with zero model calls, is the control: no
+  built-in meets that constraint, so building it is right. The ground truth
+  was checked against the Claude Code 2.1.329 docs on 2026-11-20; re-check
+  the traps when the platform changes.
+tags: [review-panel, outsider, built-ins]
+runs: 1
+expected_outcome: >-
+  REVIEW.md names the built-in that replaces each of the four components,
+  cites the live docs, and keeps the zero-model-call hook harness.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    docs/PROBLEM.md says what this team needs. docs/DESIGN.md is the plan
+    they wrote to meet it, with its code under tools/, .claude/ and tests/.
+    Before they build more, they want an outside review: is this the right
+    route, should each part be built at all, and does something already do
+    the job. If the review-panel:outsider agent is available to you,
+    delegate the review to it: give it docs/PROBLEM.md as the problem
+    statement, docs/DESIGN.md as the artifact, and REVIEW.md in the
+    repository root as its report path. Otherwise do the review yourself.
+    Either way, the full review must end up in REVIEW.md. Then reply with a
+    one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Write, WebFetch, WebSearch]
+  max_turns: 60
+  timeout_seconds: 2700
+
+graders:
+  - name: delegated_to_outsider
+    type: tool_used
+    tool: Agent
+    input_match: outsider
+    arm: with-only
+
+  - name: builtin_plugin_eval
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: 'plugin eval'
+    flags: i
+    weight: 2
+
+  - name: agents_md_native
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      The review says the sync-agents hook is unnecessary because Claude
+      Code reads AGENTS.md natively when there is no CLAUDE.md. Stating the
+      added harm also passes: the hook creates a CLAUDE.md, and once one
+      exists Claude Code loads only CLAUDE.md. Questioning the hook without
+      saying that Claude Code reads AGENTS.md itself fails.
+
+  - name: builtin_prompt_audit
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: 'prompt-audit'
+    weight: 2
+
+  - name: builtin_skill_doctor
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: 'skill-doctor|plugin details'
+    flags: i
+    weight: 2
+
+  - name: cites_live_docs
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: 'code\.claude\.com/docs/'
+    weight: 1
+
+  - name: cold_take_not_anchored
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: '## Cold take(?:(?!\n## )[\s\S])*?kestrel'
+    flags: i
+    match: not_contains
+    arm: with-only
+    weight: 1
+
+  - name: control_hook_harness_kept
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      The review does NOT recommend replacing or dropping tests/hooks.sh
+      (the hook fixture harness, component E) in favour of `claude plugin
+      eval`, `claude plugin test`, or any tool that calls a model or needs an
+      API key, and does not say component E shouldn't be built. Pass if it
+      keeps E, endorses it, doesn't mention it, or only suggests additions
+      that keep zero model calls (such as also running `claude plugin
+      validate`, or a different assertion style). Fail if any finding of
+      severity BLOCK or SHOULD recommends one of the replacements above.

@@ -543,6 +543,41 @@ for c in "$PLUGIN"/evals/paranoid-sre-*/case.yaml; do
     assert_eq "True" "$nobash" "$(basename "$(dirname "$c")"): allowed_tools leaves out Bash"
   fi
 done
+# Promise: the outsider eval's fixture can't grade itself. The codename that
+# marks a leaked cold take is in the artifact and not the problem statement,
+# and no built-in grader matches text the scaffold already holds.
+OU_EVAL="$PLUGIN/evals/outsider-built-in-traps"
+if python3 -c 'import yaml' >/dev/null 2>&1 && command -v git >/dev/null 2>&1; then
+  OU_TMP=$(mktemp -d)
+  if (cd "$OU_TMP" && bash "$OU_EVAL/fixture.sh" >/dev/null 2>&1); then ok=0; else ok=1; fi
+  assert_true "$ok" "outsider fixture builds"
+  if [ -f "$OU_TMP/docs/PROBLEM.md" ] && [ -f "$OU_TMP/docs/DESIGN.md" ]; then ok=0; else ok=1; fi
+  assert_true "$ok" "outsider fixture has a separate problem statement and artifact"
+  if grep -qi kestrel "$OU_TMP/docs/PROBLEM.md"; then ok=1; else ok=0; fi
+  assert_true "$ok" "outsider fixture: the codename is absent from the problem statement"
+  if grep -qi kestrel "$OU_TMP/docs/DESIGN.md"; then ok=0; else ok=1; fi
+  assert_true "$ok" "outsider fixture: the codename is in the artifact"
+  hits=$(python3 -I -c '
+import os, re, sys, yaml
+c = yaml.safe_load(open(sys.argv[1]))
+gs = [g for g in c["graders"] if g.get("type") == "regex"
+      and (g["name"].startswith("builtin_") or g["name"] == "cites_live_docs")]
+print("graders", len(gs))
+for g in gs:
+    rx = re.compile(g["pattern"], re.I if "i" in g.get("flags", "") else 0)
+    for d, subdirs, files in os.walk(sys.argv[2]):
+        subdirs[:] = [s for s in subdirs if s != ".git"]
+        for f in files:
+            p = os.path.join(d, f)
+            if rx.search(open(p, encoding="utf-8", errors="replace").read()):
+                print("hit", g["name"], os.path.relpath(p, sys.argv[2]))
+' "$OU_EVAL/case.yaml" "$OU_TMP")
+  assert_eq "graders 4" "$(printf '%s\n' "$hits" | sed -n 1p)" "outsider eval has four built-in or live-docs regex graders"
+  assert_eq "" "$(printf '%s\n' "$hits" | grep '^hit')" "no outsider built-in grader matches the scaffold's own files"
+  rm -rf "$OU_TMP"
+else
+  echo "(outsider fixture checks skipped: python3 with PyYAML or git not installed)"
+fi
 
 # Promise: noise-filter runs the parser through Bash and writes only its triage.
 assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/noise-filter.md" tools)" "noise-filter: tools are exactly Read, Grep, Glob, Bash, Write"
