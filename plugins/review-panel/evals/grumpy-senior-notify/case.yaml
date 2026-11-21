@@ -1,0 +1,133 @@
+schema_version: "1.1"
+name: grumpy-senior-notify
+description: >-
+  A small Node service whose last commit ("email the customer when an order
+  ships") carries planted over-engineering that only shows up with a count
+  or a second file: a config key nothing reads, a dry-run flag that is
+  passed but never read, a plugin registry nothing imports, a retry helper
+  that duplicates lib/retry.js, a strategy base class whose only test double
+  is imported by no test, a JSON deep-clone where the declared runtime has
+  structuredClone, and a metrics counter nothing reads. One control (the
+  Clock seam with a fakeClock used by three tests) is sound and should
+  survive. The no-plugin baseline is the same model reviewing unaided.
+tags: [review-panel, grumpy-senior, recall, restraint]
+runs: 2
+expected_outcome: >-
+  REVIEW.md cuts every planted part with the count or file that shows it is
+  unneeded, and keeps the Clock seam.
+
+context:
+  scaffold_script: fixture.sh
+
+execution:
+  prompt: >-
+    The last commit in this repository implements the change described in
+    PR.md. Before it merges, review it as a senior engineer who wants the
+    smallest change that still meets the goal in PR.md: find every part that
+    could be deleted or simplified without losing that goal, and say what
+    you would ship instead. Don't flag parts that earn their place. If the
+    review-panel:grumpy-senior agent is available to you, delegate the
+    review to it and give it REVIEW.md in the repository root as its report
+    path; otherwise do the review yourself. Either way, the full review must
+    end up in REVIEW.md. Then reply with a one-paragraph summary.
+  allowed_tools: [Agent, Read, Grep, Glob, Write]
+  max_turns: 50
+  timeout_seconds: 1800
+
+graders:
+  - name: delegated_to_grumpy_senior
+    type: tool_used
+    tool: Agent
+    input_match: grumpy-senior
+    arm: with-only
+
+  - name: dry_run_flag_never_read
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 3
+    criteria: >-
+      PASS if the review says that EmailNotifier.send accepts a dryRun
+      option (passed from ship.js via DRY_RUN) but never reads it, so
+      DRY_RUN=1 still sends the email (or so the flag does nothing). FAIL if
+      it only mentions dry-run support, praises it, or suggests adding
+      tests for it without saying the option is never read.
+
+  - name: unread_config_key
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says the retryBackoffMs config key (added to
+      config/default.json and documented in the README) is never read by
+      the code, for example because withRetry/EmailNotifier only use
+      config.retries and a hard-coded delay. FAIL if retryBackoffMs is not
+      mentioned, or is mentioned only as a knob to keep or rename.
+
+  - name: dead_plugin_registry
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review says src/notify/plugins/index.js
+      (loadNotifierPlugins) is imported or called by nothing, because
+      ship.js imports plugins/email.js directly, and recommends deleting
+      the registry. FAIL if it only calls the plugin system "premature"
+      without saying nothing uses the loader.
+
+  - name: duplicate_of_lib_retry
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "lib/retry(\\.js)?"
+    weight: 2
+
+  - name: test_double_unused
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review recommends removing or collapsing the
+      NotifierStrategy base class AND supports that by noting that its only
+      other implementation, test/helpers/FakeNotifier.js, is not imported
+      by any test (or that EmailNotifier is the only implementation actually
+      used). FAIL if it keeps NotifierStrategy because FakeNotifier "makes
+      it testable", or recommends removal only for future-SMS reasons
+      without the usage evidence.
+
+  - name: hand_rolled_clone
+    type: regex
+    target: { source: file, path: REVIEW.md }
+    pattern: "structuredClone"
+    weight: 1
+
+  - name: unread_metrics_counter
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 1
+    criteria: >-
+      PASS if the review flags src/metrics.js as outside the goal or
+      useless because counters are only written (inc) and nothing reads or
+      exports them. FAIL otherwise.
+
+  - name: cuts_carry_evidence
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 1
+    arm: with-only
+    criteria: >-
+      PASS if the review has a "Ship it on Friday" section and every cut it
+      lists carries a concrete piece of evidence (a search with a count, a
+      file:line, or a doc line) and an estimated size (lines, files or
+      keys). FAIL if any listed cut has no evidence or no size.
+
+  - name: control_clock_seam_survives
+    type: llm
+    focus: { source: file, path: REVIEW.md }
+    weight: 2
+    criteria: >-
+      PASS if the review keeps an injectable time source for the ship-time
+      tests: it leaves src/clock.js and test/helpers/fakeClock.js alone,
+      endorses them, doesn't mention them, or only proposes an equivalent
+      seam (for example passing a now() function or a Date as a
+      parameter). FAIL if it recommends deleting the clock injection or
+      fakeClock so the code calls new Date() directly, or lists the Clock
+      seam as over-engineering to cut.

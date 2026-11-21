@@ -16,7 +16,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 
 | Component | Kind | What |
 | --- | --- | --- |
-| `grumpy-senior` | agent | Hunts over-engineering; delivers a "ship it on Friday" cut-down version |
+| `grumpy-senior` | agent | Finds parts that can be deleted without losing the goal, each cut backed by a count, a `path:line` or a doc line; delivers a "ship it on Friday" version with size estimates |
 | `paranoid-sre` | agent | Failure modes (restarts, partial failure, races, ports, locks, supervisors, rollback) as event sequences backed by quoted semantics |
 | `fact-checker` | agent | Builds a capped, version-anchored claim ledger (CONFIRMED / WRONG / UNVERIFIED) from harmless probes, source at the matching tag and fetched versioned docs; a WRONG needs a quoted contradiction and survives a refutation pass |
 | `dx-advocate` | agent | Resolves every command, flag, path, env var and link the docs name; walks a new engineer and an unattended agent through each journey the change touches; stale-name sweep and repo-rule ledger |
@@ -103,13 +103,14 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Ten eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
+Eleven eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
 - `fact-checker-planted-claims` seeds a build plan with six version-qualified claims that were true or widely believed before mid-2026 and are wrong for the versions it names, plus two true-but-surprising controls. Regex graders check the verdict on each planted `PLAN.md:<line>`.
 - `noise-filter-planted-triage` seeds a small Node rate limiter, one change under review and five pre-written reports with 15 findings: real bugs worded differently, folklore, a wrong line, a mis-stated duplicate, a doc mismatch that is really a code bug, a pre-existing bug, nits and process noise. Both arms are told the triage format, so the score compares judgement, not format.
 - `goal-auditor-fix-claim` seeds a small Node repo whose branch claims to fix two issues. One fix has a test that passes without it, misses a post-URL path behind a legacy helper and trims only the issue's exact spacing; the other is sound. Every defect can be decided by reading, so the case measures T1, not the revert check.
+- `grumpy-senior-notify` seeds a small Node service whose last commit carries over-engineering that only a count or a second file shows (a flag passed but never read, a config key nothing reads, a registry nothing imports, a copy of `lib/retry.js`, a base class whose only test double no test imports, a JSON deep clone, a write-only counter). Its control is a `Clock` seam with a `fakeClock` that three tests use.
 - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the roster, claim owner and status line the skill prints before it would dispatch, so no reviewer runs. `assemble-panel-route-typo-control` is the control: a one-word fix that should get no panel. `assemble-panel-blocked-add-persona` checks that adding a reviewer doesn't re-read the earlier reports. The blocked-dispatch fallback (`Panel blocked:`) isn't covered, because plugin eval can't stage a refused `Agent` call. Run with `--ablation none` and compare against the same cases on `main`'s skill.
 - `threat-modeller-homelab-agent` seeds a homelab-agent repo whose plan and first cut add a PR review bot, an issue-triage agent, a LAN ops API, a localhost dashboard bridge, a research agent with team memory and a shared MCP setup: ten agentic and design-level attack paths, one restraint item (a committed permission mode that doesn't take effect), a control (AWS's documentation example key in a test fixture) and a grader that fails if the report reproduces the committed ops token.
 - `contract-keeper-orders-v2` seeds a small orders service whose latest commit breaks eight consumers: a response enum value hitting an exhaustive switch, a required request field "safe because it has a default", a field turned nullable, an env var a cron script still reads, a volatile column default, a constant default on a database pinned to Postgres 10, a request enum value an old mobile build still sends, and an ordinal enum insert. Its two controls (an optional response field, an unused export removed) must not be graded BLOCK or SHOULD.
@@ -132,6 +133,7 @@ claude plugin eval plugins/review-panel --case 'contract-keeper-*' --scaffold --
 claude plugin eval plugins/review-panel --case 'dx-advocate-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'paranoid-sre-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'cost-hawk-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell WebFetch WebSearch
+claude plugin eval plugins/review-panel --case 'grumpy-senior-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 ```
 
 Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs. The threat-modeller case always runs without Bash, so its checks go through the Grep tool.

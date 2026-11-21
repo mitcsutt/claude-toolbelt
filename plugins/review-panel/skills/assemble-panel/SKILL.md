@@ -15,7 +15,7 @@ Agents are dispatched as `review-panel:<name>`.
 
 | Agent | Hunts | Signature deliverable |
 | --- | --- | --- |
-| `grumpy-senior` | Over-engineering, scope creep, reinvention | "Ship it on Friday" cut-down version |
+| `grumpy-senior` | Parts that can go: one-caller structure, knobs nothing reads, scope beyond the goal, re-doing what the repo, stdlib or runtime already has | "Ship it on Friday" cut list, each cut with its count and size |
 | `paranoid-sre` | Restarts, partial failure, races, ports, locks, supervisors, rollback | Failure table as event sequences backed by quoted semantics |
 | `fact-checker` | Every concrete technical claim | Claim ledger: CONFIRMED / WRONG / UNVERIFIED |
 | `dx-advocate` | New engineer + unattended agent journeys, stale docs, repo rules | Resolution table + journey walk + stale-docs list |
@@ -77,6 +77,7 @@ Rules:
 
 - **The user's picks win.** If they named a persona ("make one a grumpy senior dev"), include the matching agent and fill the rest yourself. If they named a lens no agent covers (accessibility, test coverage, product owner), write an **ad-hoc persona** with [persona-contract.md](references/persona-contract.md) and dispatch it as `general-purpose`.
 - **No overlap.** If two picks would hunt the same thing for this artifact, keep one. On agent instructions, `rules-lawyer` owns the claim checks and the literal reading, so don't add `fact-checker` or `dx-advocate` for the same text; `dx-advocate` still fits the human docs around it. On agent instructions, `rules-lawyer` owns the text and `threat-modeller` owns attack paths beyond it; for a full code-level security scan, suggest `/claude-security` rather than a bigger panel.
+- `grumpy-senior` and `outsider` both see "this already exists". Replacing or removing a whole component (script, hook, skill, service, harness, or the artifact), by a built-in, a tool or nothing, is `outsider`'s; reinvention inside a component (stdlib, runtime API, in-repo duplicate) is `grumpy-senior`'s.
 - **One claim owner.** Exactly one reviewer checks technical claims: `rules-lawyer` on agent instructions, otherwise `fact-checker` if picked, otherwise `goal-auditor`. Every other reviewer's brief gets the "Lens boundaries" section from [brief-template.md](references/brief-template.md), so the lenses don't all re-check the same claims.
 - **Migrations have two owners.** `contract-keeper` owns lock level, rewrites and version skew; `paranoid-sre` owns partial apply and re-running a failed one. Picking both isn't overlap.
 - **At most one ad-hoc persona per panel**, unless the user asked for more.
