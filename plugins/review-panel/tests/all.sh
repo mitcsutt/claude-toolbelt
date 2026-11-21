@@ -498,6 +498,37 @@ assert_true "$?" "fact-checker marks claims CONFIRMED/WRONG/UNVERIFIED"
 # Promise: grumpy-senior delivers a cut-down version.
 grep -q '## Ship it on Friday' "$AGENTS/grumpy-senior.md"; assert_true "$?" "grumpy-senior delivers 'Ship it on Friday'"
 
+# Promise: grumpy-senior has no web or spawn tools (platform evidence comes from its dated reference plus a local probe).
+assert_eq "Read, Grep, Glob, Bash, Write" "$(fm "$AGENTS/grumpy-senior.md" tools)" "grumpy-senior: tool allowlist unchanged"
+
+# Promise: the grumpy-senior eval's ground truth holds in the seeded fixture (each planted defect and the control).
+GS_EVAL="$PLUGIN/evals/grumpy-senior-notify"
+if command -v git >/dev/null 2>&1; then
+  GS_T=$(mktemp -d "${TMPDIR:-/tmp}/gs-fixture.XXXX")
+  if (cd "$GS_T" && bash "$GS_EVAL/fixture.sh") >/dev/null 2>&1; then ok=0; else ok=1; fi
+  assert_true "$ok" "grumpy-senior-notify: fixture seeds"
+  assert_eq "0" "$(grep -rl 'retryBackoffMs' "$GS_T/src" | wc -l | tr -d ' ')" "D2: retryBackoffMs is read nowhere in src"
+  assert_eq "1" "$(grep -c 'dryRun' "$GS_T/src/notify/EmailNotifier.js")" "D1: dryRun appears only where it is destructured"
+  assert_eq "0" "$(grep -rlE 'plugins/index' "$GS_T/src" "$GS_T/test" | wc -l | tr -d ' ')" "D3: the plugin registry has no importer"
+  if git -C "$GS_T" --no-optional-locks show HEAD~1:lib/retry.js >/dev/null 2>&1; then ok=0; else ok=1; fi
+  assert_true "$ok" "D4: lib/retry.js predates the commit under review"
+  assert_eq "0" "$(grep -rl 'FakeNotifier' "$GS_T/test" --include='*.test.js' | wc -l | tr -d ' ')" "D5: no test imports FakeNotifier"
+  assert_eq "2" "$(grep -rl 'fakeClock' "$GS_T/test" --include='*.test.js' | wc -l | tr -d ' ')" "control: two test files import fakeClock"
+  if command -v node >/dev/null 2>&1; then
+    if (cd "$GS_T" && node --test test/format.test.js test/ship.test.js) >/dev/null 2>&1; then ok=0; else ok=1; fi
+    assert_true "$ok" "control: the fixture's clock-seam tests pass"
+    sent=$(cd "$GS_T" && DRY_RUN=1 node --input-type=module -e "
+import { onOrderShipped } from './src/ship.js';
+const sent = [];
+await onOrderShipped({ id: 'A1', email: 'c@example.invalid' }, { transport: { sendMail: async (m) => { sent.push(m); } } });
+console.log(sent.length);" 2>/dev/null)
+    assert_eq "1" "$sent" "D1: DRY_RUN=1 still sends the email"
+  fi
+  rm -rf "$GS_T"
+else
+  echo "(grumpy-senior-notify fixture checks skipped — git not on PATH)"
+fi
+
 # Promise: outsider writes its cold take before reading the artifact.
 grep -q 'Before opening the artifact' "$AGENTS/outsider.md"; assert_true "$?" "outsider takes a cold read first"
 

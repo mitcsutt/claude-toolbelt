@@ -94,7 +94,7 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (16 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (17 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
@@ -122,6 +122,21 @@ document states, not a gate a script enforces.
     with `--allow-tools Write --disallow-tools Bash PowerShell`.
     `lib/doc-checks-commands.test.mjs` runs the shipped doc checks against
     the same fixture.
+  - `grumpy-senior-notify` reviews a small Node service's feature commit
+    into `REVIEW.md`. Its planted over-engineering needs a count or a second
+    file to see: a `dryRun` option passed but never read, a config key
+    nothing reads, a plugin registry nothing imports, a retry helper that
+    copies `lib/retry.js`, a base class whose only test double no test
+    imports, a JSON deep clone and a write-only counter. The `Clock` seam
+    with a `fakeClock` used by three tests is the control. Every defect can
+    be settled with Grep and Read, so it runs with `--allow-tools Write
+    --disallow-tools Bash PowerShell` and the T2 deletion probe is
+    unmeasured. `tests/all.sh` re-checks each defect's ground truth in the
+    seeded fixture. Bar: control kept 2/2 with the plugin, and a weighted
+    mean (excluding `with-only` graders) at least 0.10 above the baseline,
+    with at least two of the dry-run, config-key, `lib/retry.js` and
+    test-double defects caught with the plugin in a run where the baseline
+    missed them.
   - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the
     roster, claim owner and status line the skill prints before it would
     dispatch, with `regex` graders on the final message. The trace also
@@ -277,6 +292,8 @@ pass of the plan's bar (it asks for two). With the plugin a run cost about
 2.4x the baseline ($0.70 vs $0.30).
 `paranoid-sre-failure-modes`, 2026-11-20: `--runs 2`, Bash withheld (no T2 in this release), $2.88. With plugin 1.00, without 1.00: no measurable gain. The baseline caught every planted failure mode and kept the control in both runs, so the case does not discriminate. A run with the plugin cost about 1.6x the baseline ($0.88 vs $0.56). An earlier attempt run in parallel with three other evals lost runs to an OAuth token refresh race and was discarded.
 `cost-hawk-planted-defects`, 2026-11-20: `--runs 2`, Bash and web tools withheld in both arms, $3.44. With plugin 0.98, without 0.69, delta +0.29, which clears the plan's +0.10 bar. The baseline missed the SessionStart output cap (D3) and the Haiku long-prompt price cliff (D4) in both runs and never dated its prices; the plugin caught both every time and missed one weight-1 weekly figure once. The control passed in all runs. A run with the plugin cost about 2.4x the baseline ($1.22 vs $0.50).
+
+`grumpy-senior-notify`, 2026-11-20: `--runs 2`, Bash withheld, $1.64. With plugin 1.00, without 0.73, delta +0.27, which clears the plan's +0.10 bar. The plugin kept the clock-seam control 2/2; the baseline dropped it once, missed the unused test double and the unread config key once, and never named the hand-rolled clone. A run with the plugin cost about 2.1x the baseline ($0.56 vs $0.27).
 
 ## Related
 
