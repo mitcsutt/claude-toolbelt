@@ -24,7 +24,7 @@ This plugin keeps those pieces in one place, so a panel takes one sentence to as
 | `goal-auditor` | agent | Re-derives "fixed"/"done" claims: reads the pre-fix code, runs a fail-before/pass-after check in a temp copy, hunts missed callers, wrappers and siblings; scores the goal with evidence per row |
 | `outsider` | agent | Cold take before reading the artifact; build vs buy; prior art and competitors |
 | `contract-keeper` | agent | Every consumer of a changed interface, named and quoted; break rules borrowed per interface type (OpenAPI, protobuf, GraphQL, events, exports, CLI, env, config); dated migration-safety rules; version skew and safe rollout order |
-| `cost-hawk` | agent | Steady-state cost, growth, hot paths, token and dollar spend, as a cost sheet |
+| `cost-hawk` | agent | Steady-state cost, growth, hot paths, LLM, CI and cloud spend, priced from a dated table (references/cost-hawk/) as a cost sheet with measured/estimated labels |
 | `rules-lawyer` | agent | Agent instructions (CLAUDE.md, AGENTS.md, rules, skills, commands, hooks, subagents, output styles, MCP descriptions): a load map, literal readings, a claim ledger, hook fixture runs and follower runs on risky lines |
 | `instruction-follower` | agent (helper) | Dispatched only by `rules-lawyer`: follows an artifact on paper for one scenario and reports where it had to guess |
 | `noise-filter` | agent | Final pass: parses every report in code, runs yes/no checks on each finding, spot-checks evidence, merges only same-cause findings, and accounts for every finding (`check-triage`) in a short triage with an at-a-glance block |
@@ -103,7 +103,7 @@ bash plugins/review-panel/tests/all.sh
 node --test plugins/review-panel/lib/*.test.mjs
 ```
 
-Nine eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
+Ten eval cases grade a reviewer against a no-plugin baseline, and six grade the skill's routing. Each planted defect has its own grader, so the score shows which kinds get caught.
 
 - `rules-lawyer-planted-defects` seeds a Terraform repo with familiar defects across CLAUDE.md, a skill, two hooks and a subagent.
 - `rules-lawyer-platform-traps` seeds a Node repo whose instructions rely on Claude Code behaviour that isn't true.
@@ -115,6 +115,7 @@ Nine eval cases grade a reviewer against a no-plugin baseline, and six grade the
 - `contract-keeper-orders-v2` seeds a small orders service whose latest commit breaks eight consumers: a response enum value hitting an exhaustive switch, a required request field "safe because it has a default", a field turned nullable, an env var a cron script still reads, a volatile column default, a constant default on a database pinned to Postgres 10, a request enum value an old mobile build still sends, and an ordinal enum insert. Its two controls (an optional response field, an unused export removed) must not be graded BLOCK or SHOULD.
 - `dx-advocate-planted-defects` seeds a small repo whose 1.4.0 docs name a removed flag, a renamed env var, a Make target that passes without doing anything and other stale instructions; the 14 doc checks in `references/dx-advocate/doc-checks.md` each find one.
 - `paranoid-sre-failure-modes` seeds a small billing service with ten planted failure modes whose ground truth is a documented default (`set -e` inside `if`, systemd's start limit, Debian cron on DST, Node `fetch`'s 300 s default and others) and one sound control script. It needs no Bash: `claude plugin eval plugins/review-panel --case 'paranoid-sre-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell`.
+- `cost-hawk-planted-defects` seeds a review-bot rollout plan and its repo config (Claude Code hooks, a skill, a subagent, CI workflows, a triage script, a systemd poll timer, a backup script) with eight planted cost defects and one control, a nightly R2 backup that looks expensive but costs under $1/month. Web tools are withheld in both arms, so it tests the dated price table and checklists in `references/cost-hawk/` against recall, and its ground truth is pinned to the 2026-11-19 prices: re-derive it if a price page changes.
 
 T2 fault injection deferred: a deny-list gate isn't confinement (threat-model review 2026-11-20); needs OS confinement (Landlock / sandbox-exec) in its own plan.
 
@@ -130,6 +131,7 @@ claude plugin eval plugins/review-panel --case 'threat-modeller-*' --scaffold --
 claude plugin eval plugins/review-panel --case 'contract-keeper-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'dx-advocate-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
 claude plugin eval plugins/review-panel --case 'paranoid-sre-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell
+claude plugin eval plugins/review-panel --case 'cost-hawk-*' --scaffold --runs 2 --allow-tools Write --disallow-tools Bash PowerShell WebFetch WebSearch
 ```
 
 Granting Bash needs a sandbox backend. Without one, use `--allow-tools Write WebFetch WebSearch --disallow-tools Bash` for the rules-lawyer cases and `--allow-tools Write --disallow-tools Bash PowerShell` for the noise-filter case; both arms then skip shell checks, and `noise-filter` runs its no-shell fallback (T0), so record which mode ran. The goal-auditor case is built to run without Bash; on a host with a sandbox, run it once with `--allow-tools Bash Write` and check that `REVIEW.md` shows `before … exit=` and `after … exit=` pairs. The threat-modeller case always runs without Bash, so its checks go through the Grep tool.
