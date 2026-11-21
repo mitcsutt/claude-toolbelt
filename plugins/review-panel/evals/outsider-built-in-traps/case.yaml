@@ -47,7 +47,7 @@ graders:
   - name: builtin_plugin_eval
     type: regex
     target: { source: file, path: REVIEW.md }
-    pattern: 'plugin eval'
+    pattern: 'claude plugin eval\b'
     flags: i
     weight: 2
 
@@ -71,7 +71,7 @@ graders:
   - name: builtin_skill_doctor
     type: regex
     target: { source: file, path: REVIEW.md }
-    pattern: 'skill-doctor|plugin details'
+    pattern: 'skill-doctor|claude plugin details'
     flags: i
     weight: 2
 
