@@ -109,7 +109,7 @@ Build every brief from [brief-template.md](references/brief-template.md). The ag
 
 - **Goal first, fixed.** State the goal and say "don't argue against the goal itself".
 - **Choose a context level for each reviewer on purpose.** Vary it:
-  - `outsider` gets the problem statement first and the artifact second;
+  - `outsider` gets a problem statement with no solution in it (see the template), then the artifact;
   - `grumpy-senior` often does best with the artifact alone;
   - `fact-checker` and `goal-auditor` get the repo.
 - **Draw the lens boundaries.** Fill the brief's "Lens boundaries" section for every reviewer except the claim owner, which gets "You own claim checks for this panel."

@@ -15,10 +15,18 @@ For a branch state: "Read with `git show <ref>:<path>` or `git diff <base>...<re
 <Choose this on purpose; say what is withheld and why, if anything.
 - Full: the artifact, the repo at <path>, the ticket or thread at <link>.
 - Artifact only: "Read only <path>. Don't explore the repo; judge the document as written."
-- Cold (outsider): "Read the problem statement below first and write your cold take before opening <path>.">
+- Cold (outsider): "Read only the problem statement below and the paths it lists. Write your cold take to your report file before opening <path> or exploring the repo.">
 
 ## Problem statement   <!-- outsider only -->
-<The problem as the user would describe it, with no solution in it.>
+<The problem as the user would put it before any design existed. Four parts:
+- Goal: the outcome, in the user's words.
+- Hard constraints: each quoted with its source (`path:line`, or "user, this conversation"). Mark anything you inferred as "inferred".
+- Who uses it, and how often.
+- Paths the outsider may read before its cold take: problem docs only, never the artifact.
+Leave out: the artifact's name and its component, script or tool names; the chosen approach; alternatives already rejected; and who decided ("we decided", "the team agreed"). If the goal can't be stated without naming the solution, state the problem one level up and say so.>
+
+## Author's rationale   <!-- outsider only, optional -->
+<Why the author chose this route and what they rejected, quoted from the artifact or thread. The outsider reads this only after its cold take and treats every line as a claim.>
 
 ## Repo rules that apply
 <Rules that bear on this artifact and live outside the session's CLAUDE.md chain, which reviewers already load: CONTRIBUTING, linked docs, another repo's CLAUDE.md. Paste them or list the files to read.>

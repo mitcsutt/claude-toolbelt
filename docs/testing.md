@@ -94,7 +94,7 @@ document states, not a gate a script enforces.
   "Context7 first, Exa fallback." These cases call real MCP tools, which
   `claude plugin eval` gates by default — grant them explicitly:
   `--allow-tools "mcp__context7__*" "mcp__exa__*"`.
-- **`review-panel`** (17 cases) — all seed a repo with `fixture.sh`, so pass
+- **`review-panel`** (18 cases) — all seed a repo with `fixture.sh`, so pass
   `--scaffold`. In the reviewer cases, one grader per planted defect reads the written report
   (`AUDIT.md`, `TRIAGE.md` or `REVIEW.md`), and the no-plugin arm is the same model
   working unaided.
@@ -137,6 +137,18 @@ document states, not a gate a script enforces.
     with at least two of the dry-run, config-key, `lib/retry.js` and
     test-double defects caught with the plugin in a run where the baseline
     missed them.
+  - `outsider-built-in-traps` reviews a plugin repo's design, into
+    `REVIEW.md`, against a separate problem statement. Four components
+    rebuild Claude Code built-ins that shipped in September 2026, after the
+    model's cutoff (`claude plugin eval`, native AGENTS.md, `/doctor
+    prompt-audit`, `/skill-doctor`), so only a live docs check finds them;
+    the zero-model-call hook harness is the control. Its ground truth was
+    checked against the 2.1.329 docs, so re-check it when the platform
+    changes. It needs no Bash:
+    `claude plugin eval plugins/review-panel --case 'outsider-*' --scaffold --runs 3 --allow-tools Write WebFetch WebSearch --disallow-tools Bash PowerShell`.
+    Estimated 2 arms × 3 runs × $1.5–2 ≈ $10–12 plus judge calls. Bar:
+    with-arm mean ≥ baseline + 0.15, with-arm ≥2/3 where the baseline is
+    ≤1/3 on at least 2 of the 4 traps, and the control ≥2/3 with-arm.
   - `assemble-panel-*` (6 cases) run with `Agent` withheld and grade the
     roster, claim owner and status line the skill prints before it would
     dispatch, with `regex` graders on the final message. The trace also
@@ -294,6 +306,8 @@ pass of the plan's bar (it asks for two). With the plugin a run cost about
 `cost-hawk-planted-defects`, 2026-11-20: `--runs 2`, Bash and web tools withheld in both arms, $3.44. With plugin 0.98, without 0.69, delta +0.29, which clears the plan's +0.10 bar. The baseline missed the SessionStart output cap (D3) and the Haiku long-prompt price cliff (D4) in both runs and never dated its prices; the plugin caught both every time and missed one weight-1 weekly figure once. The control passed in all runs. A run with the plugin cost about 2.4x the baseline ($1.22 vs $0.50).
 
 `grumpy-senior-notify`, 2026-11-20: `--runs 2`, Bash withheld, $1.64. With plugin 1.00, without 0.73, delta +0.27, which clears the plan's +0.10 bar. The plugin kept the clock-seam control 2/2; the baseline dropped it once, missed the unused test double and the unread config key once, and never named the hand-rolled clone. A run with the plugin cost about 2.1x the baseline ($0.56 vs $0.27).
+
+`outsider-built-in-traps`, 2026-11-20: `--runs 3`, Bash withheld, WebFetch and WebSearch granted to both arms, $4.89. With plugin 1.00, without 0.22, delta +0.78, which clears the plan's +0.15 bar on every trap: the baseline never named the native AGENTS.md support, the built-in prompt audit or skill doctor, and named `claude plugin eval` only once in three runs, even with web access. A run with the plugin cost about 3.1x the baseline ($1.24 vs $0.39). The plan's rules-lawyer regression check was not rerun.
 
 ## Related
 
