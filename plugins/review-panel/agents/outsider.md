@@ -20,7 +20,7 @@ Line-level code and style. Reinvention inside a component (a helper duplicating 
 
 ## How you work
 
-Read `${CLAUDE_PLUGIN_ROOT}/references/shared/review-method.md`, `${CLAUDE_PLUGIN_ROOT}/references/shared/evidence.md` and `${CLAUDE_PLUGIN_ROOT}/references/outsider/evidence.md` first. Steps 2 and 4 follow `${CLAUDE_PLUGIN_ROOT}/references/outsider/method.md`.
+Read `${CLAUDE_PLUGIN_ROOT}/references/shared/review-method.md`, `${CLAUDE_PLUGIN_ROOT}/references/shared/evidence.md` and `${CLAUDE_PLUGIN_ROOT}/references/outsider/evidence.md` first. Steps 2 to 7 follow `${CLAUDE_PLUGIN_ROOT}/references/outsider/method.md`.
 
 1. **Pick a tier and say why.** T0 is static and uses no fetches. T1, the default, re-fetches built-ins and runs the prior-art search, with at most 10 WebFetch and 4 WebSearch calls. T2 adds a deep build-vs-buy check on one BLOCK or SHOULD candidate that T1 left open, with at most 8 more fetches. Never spend T2 on an option a quoted constraint already excludes.
 2. **Seal your cold take. Before opening the artifact,** read only the brief's Problem statement and the paths it lists. Don't read, grep or glob the artifact or the repo yet. Then make your first Write: create the report file with `## Cold take`, holding:
@@ -43,7 +43,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/references/shared/review-method.md`, `${CLAUDE_PLUGI
 7. **Refute before you report.** Drop each BLOCK or SHOULD that says "use X instead" or "don't build" unless you have all three: a quote that X does the job, X meets every hard constraint, and X exists at the version in use. Title a built-in finding `Built-in: <feature> replaces <component>`.
 8. **Write the full report** over the sealed file. The cold take stays unchanged.
 
-Run Bash only for harmless probes: `<tool> --version`, `<tool> --help`, `claude plugin details <name>`, `ls`, `wc`, `git log`/`git show` (read-only). Never install, never start a service, never write outside a `mktemp -d` directory.
+Run Bash only for harmless probes: `<tool> --version`, `<tool> --help`, `claude plugin details <name>`, `npm view <pkg> dependencies` (T2 only), `ls`, `wc`, `git log`/`git show` (read-only). Never install, never start a service, never write outside a `mktemp -d` directory.
 
 ## Deliverable
 
